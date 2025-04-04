@@ -4,13 +4,18 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
+
+using System.Runtime;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+
 using DeejNG.Dialogs;
 using DeejNG.Services;
+using Microsoft.VisualBasic.Logging;
+using Microsoft.Win32;
 using NAudio.CoreAudioApi;
 
 namespace DeejNG
@@ -28,7 +33,12 @@ namespace DeejNG
         private SerialPort _serialPort;
 
         private DispatcherTimer _meterTimer;
+        
+
+
         private bool _isConnected = false;  // Track connection state
+
+        private bool isDarkTheme = false;
 
         #endregion Private Fields
 
@@ -37,6 +47,7 @@ namespace DeejNG
         public MainWindow()
         {
             InitializeComponent();
+            string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Square150x150Logo.scale-200.ico");
             _audioService = new AudioService();
             LoadAvailablePorts();  // Load ports when the form is initialized
             LoadSettings();
@@ -46,8 +57,46 @@ namespace DeejNG
             };
             _meterTimer.Tick += UpdateMeters;
             _meterTimer.Start();
+            MyNotifyIcon.Icon = new System.Drawing.Icon(iconPath);
+            CreateNotifyIconContextMenu();
+            IconHandler.AddIconToRemovePrograms("DeejNG");
+            SetDisplayIcon();
         }
+        private static void SetDisplayIcon()
+        {
+            //only run in Release
 
+            try
+            {
+                // executable file
+                var exePath = Environment.ProcessPath;
+                if (!System.IO.File.Exists(exePath))
+                {
+                    return;
+                }
+
+                //DisplayIcon == "dfshim.dll,2" => 
+                var myUninstallKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall");
+                string[]? mySubKeyNames = myUninstallKey?.GetSubKeyNames();
+                for (int i = 0; i < mySubKeyNames?.Length; i++)
+                {
+                    RegistryKey? myKey = myUninstallKey?.OpenSubKey(mySubKeyNames[i], true);
+                    // ClickOnce(Publish)
+                    // Publish -> Settings -> Options 
+                    // Publish Options -> Description -> Product name (is your DisplayName)
+                    var displayName = (string?)myKey?.GetValue("DisplayName");
+                    if (displayName?.Contains("YourApp") == true)
+                    {
+                        myKey?.SetValue("DisplayIcon", exePath + ",0");
+                        break;
+                    }
+                }
+                DeejNG.Settings.Default.IsFirstRun = false;
+                DeejNG.Settings.Default.Save();
+            }
+            catch { }
+
+        }
 
         #endregion Public Constructors
 
@@ -90,7 +139,50 @@ namespace DeejNG
         #endregion Protected Methods
 
         #region Private Methods
+        private void MainWindow_StateChanged(object sender, EventArgs e)
+        {
+            if (WindowState == WindowState.Minimized)
+            {
+                // Hide the window and show the NotifyIcon when minimized
+                this.Hide();
+                MyNotifyIcon.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                // Ensure the NotifyIcon is hidden when the window is not minimized
+                MyNotifyIcon.Visibility = Visibility.Collapsed;
+            }
+        }
+        private void MyNotifyIcon_Click(object sender, EventArgs e)
+        {
+            if (this.WindowState == WindowState.Minimized)
+            {
+                // Restore the window if it's minimized
+                this.Show();
+                this.WindowState = WindowState.Normal;
+            }
+            else
+            {
+                // Minimize the window if it's currently normal or maximized
+                this.WindowState = WindowState.Minimized;
+            }
+        }
+        protected override void OnStateChanged(EventArgs e)
+        {
+            if (WindowState == WindowState.Minimized)
+            {
+                // Only hide the window and show the NotifyIcon when minimized
+                this.Hide();
+                MyNotifyIcon.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                // Ensure the NotifyIcon is hidden when the window is not minimized
+                MyNotifyIcon.Visibility = Visibility.Collapsed;
+            }
 
+            base.OnStateChanged(e);
+        }
         private void Connect_Click(object sender, RoutedEventArgs e)
         {
             if (ComPortSelector.SelectedItem is string selectedPort)
@@ -98,7 +190,35 @@ namespace DeejNG
                 InitSerial(selectedPort, 9600);
             }
         }
+        private void CreateNotifyIconContextMenu()
+        {
+           
+            try
+            {
+                ContextMenu contextMenu = new ContextMenu();
 
+                // Show/Hide Window
+                MenuItem showHideMenuItem = new MenuItem();
+                showHideMenuItem.Header = "Show/Hide";
+                showHideMenuItem.Click += ShowHideMenuItem_Click;
+
+                // Exit
+                MenuItem exitMenuItem = new MenuItem();
+                exitMenuItem.Header = "Exit";
+                exitMenuItem.Click += ExitMenuItem_Click;
+
+                contextMenu.Items.Add(showHideMenuItem);
+               
+                contextMenu.Items.Add(new Separator()); // Separator before exit
+                contextMenu.Items.Add(exitMenuItem);
+
+                MyNotifyIcon.ContextMenu = contextMenu;
+            }
+            catch (Exception ex)
+            {
+               
+            }
+        }
         private void GenerateSliders(int count)
         {
             SliderPanel.Children.Clear();
@@ -193,7 +313,23 @@ namespace DeejNG
         {
             LoadAvailablePorts();  // Re-enumerate COM ports when dropdown is opened
         }
+        private async void ExitMenuItem_Click(object sender, RoutedEventArgs e)
+        {
 
+            Application.Current.Shutdown();
+        }
+        private void ShowHideMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (this.IsVisible)
+            {
+                this.Hide();
+            }
+            else
+            {
+                this.Show();
+                this.WindowState = WindowState.Normal;
+            }
+        }
 
         private void HandleSliderData(string data)
         {
@@ -259,7 +395,22 @@ namespace DeejNG
             // Disable the Connect button if connected
             ConnectButton.IsEnabled = !_isConnected;
         }
+        private void ToggleTheme(bool isDark)
+        {
+            Uri themeUri;
+            if (isDark)
+            {
+                themeUri = new Uri("pack://application:,,,/MaterialDesignInXamlToolkit;component/Themes/MaterialDesignTheme.Dark.xaml", UriKind.RelativeOrAbsolute);
+            }
+            else
+            {
+                themeUri = new Uri("pack://application:,,,/MaterialDesignInXamlToolkit;component/Themes/MaterialDesignTheme.Light.xaml", UriKind.RelativeOrAbsolute);
+            }
 
+            var themeDictionary = (ResourceDictionary)Application.LoadComponent(themeUri);
+            Application.Current.Resources.MergedDictionaries.Clear();
+            Application.Current.Resources.MergedDictionaries.Add(themeDictionary);
+        }
         private void LoadAvailablePorts()
         {
             // Re-enumerate the available COM ports
@@ -312,7 +463,8 @@ namespace DeejNG
                 var settings = new AppSettings
                 {
                     PortName = _serialPort?.PortName ?? string.Empty,
-                    Targets = _channelControls.Select(c => c.TargetExecutable?.Trim() ?? string.Empty).ToList()
+                    Targets = _channelControls.Select(c => c.TargetExecutable?.Trim() ?? string.Empty).ToList(),
+                    Theme = isDarkTheme
                 };
 
                 var json = JsonSerializer.Serialize(settings);
@@ -354,12 +506,98 @@ namespace DeejNG
         {
             #region Public Properties
 
-            public string PortName { get; set; }
+            public string? PortName { get; set; }
             public List<string> Targets { get; set; } = new();
+
+            public bool Theme { get; set; }
 
             #endregion Public Properties
         }
 
         #endregion Private Classes
+
+        private void ToggleTheme_Click(object sender, RoutedEventArgs e)
+        {
+            isDarkTheme = !isDarkTheme;
+            string theme = isDarkTheme ? "Dark" : "Light";
+            ApplyTheme(theme);
+            SaveSettings();
+
+        }
+        private void ApplyTheme(string theme)
+        {
+            isDarkTheme = theme == "Dark";
+            Uri themeUri;
+            if (theme == "Dark")
+            {
+                themeUri = new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml");
+                isDarkTheme = true;
+            }
+            else
+            {
+                themeUri = new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Light.xaml");
+                isDarkTheme = false;
+            }
+
+            // Update the theme
+            var existingTheme = Application.Current.Resources.MergedDictionaries.FirstOrDefault(d => d.Source == themeUri);
+            if (existingTheme == null)
+            {
+                existingTheme = new ResourceDictionary() { Source = themeUri };
+                Application.Current.Resources.MergedDictionaries.Add(existingTheme);
+            }
+
+            // Remove the other theme
+            var otherThemeUri = isDarkTheme
+                ? new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Light.xaml")
+                : new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml");
+
+            var currentTheme = Application.Current.Resources.MergedDictionaries.FirstOrDefault(d => d.Source == otherThemeUri);
+            if (currentTheme != null)
+            {
+                Application.Current.Resources.MergedDictionaries.Remove(currentTheme);
+            }
+        }
+    }
+    static class IconHandler
+    {
+        static string IconPath => Path.Combine(AppContext.BaseDirectory, "icon.ico");
+
+        public static void AddIconToRemovePrograms(string productName)
+        {
+            try
+            {
+                // Ensure the icon exists
+                if (File.Exists(IconPath))
+                {
+                    // Open the Uninstall registry key
+                    var uninstallKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall", writable: true);
+                    if (uninstallKey != null)
+                    {
+                        foreach (var subKeyName in uninstallKey.GetSubKeyNames())
+                        {
+                            using (var subKey = uninstallKey.OpenSubKey(subKeyName, writable: true))
+                            {
+                                if (subKey == null) continue;
+
+                                // Check the display name of the application
+                                var displayName = subKey.GetValue("DisplayName") as string;
+                                if (string.Equals(displayName, productName, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // Set the DisplayIcon value
+                                    subKey.SetValue("DisplayIcon", IconPath);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Handle errors gracefully
+                Console.WriteLine($"Error setting uninstall icon: {ex.Message}");
+            }
+        }
     }
 }
