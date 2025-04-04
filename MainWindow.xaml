@@ -5,16 +5,17 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:DeejNG"
         mc:Ignorable="d"
-        Title="DeejNG" Height="450" Width="800"
-        >
+        Title="DeejNG" Height="450" Width="800">
     <DockPanel>
         <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10">
             <Label Content="COM Port:" VerticalAlignment="Center"/>
-            <ComboBox x:Name="ComPortSelector" Width="100" Margin="5,0"/>
-            <Button Content="Connect" Click="Connect_Click" />
-            <TextBlock x:Name="ConnectionStatus" Text="Disconnected" Margin="10,0,0,0" VerticalAlignment="Center"/>
+            <ComboBox x:Name="ComPortSelector" Width="100" Margin="5,0"
+          DropDownOpened="ComPortSelector_DropDownOpened"/>
 
+            <Button x:Name="ConnectButton" Content="Connect" Click="Connect_Click" />
+            <TextBlock x:Name="ConnectionStatus" Text="Disconnected" Margin="10,0,0,0" VerticalAlignment="Center"/>
         </StackPanel>
+
         <ScrollViewer HorizontalScrollBarVisibility="Auto">
             <StackPanel x:Name="SliderPanel" Orientation="Horizontal" Margin="10"/>
         </ScrollViewer>

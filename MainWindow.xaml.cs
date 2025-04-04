@@ -28,7 +28,7 @@ namespace DeejNG
         private SerialPort _serialPort;
 
         private DispatcherTimer _meterTimer;
-
+        private bool _isConnected = false;  // Track connection state
 
         #endregion Private Fields
 
@@ -38,7 +38,7 @@ namespace DeejNG
         {
             InitializeComponent();
             _audioService = new AudioService();
-            LoadAvailablePorts();
+            LoadAvailablePorts();  // Load ports when the form is initialized
             LoadSettings();
             _meterTimer = new DispatcherTimer
             {
@@ -46,8 +46,8 @@ namespace DeejNG
             };
             _meterTimer.Tick += UpdateMeters;
             _meterTimer.Start();
-
         }
+
 
         #endregion Public Constructors
 
@@ -76,12 +76,16 @@ namespace DeejNG
                     _serialPort.Dispose();
                     _serialPort = null;
                 }
+
+                _isConnected = false;
+                UpdateConnectionStatus();
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Error while closing serial port: {ex.Message}", "Cleanup Error", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
+
 
         #endregion Protected Methods
 
@@ -185,6 +189,10 @@ namespace DeejNG
                 }
             }
         }
+        private void ComPortSelector_DropDownOpened(object sender, EventArgs e)
+        {
+            LoadAvailablePorts();  // Re-enumerate COM ports when dropdown is opened
+        }
 
 
         private void HandleSliderData(string data)
@@ -224,24 +232,51 @@ namespace DeejNG
         {
             try
             {
-                _serialPort?.Close();
+                if (_serialPort != null && _serialPort.IsOpen)
+                {
+                    _serialPort.Close();
+                }
+
                 _serialPort = new SerialPort(portName, baudRate);
                 _serialPort.DataReceived += SerialPort_DataReceived;
                 _serialPort.Open();
 
+                _isConnected = true;
+                UpdateConnectionStatus();
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Failed to open serial port {portName}: {ex.Message}", "Serial Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                _isConnected = false;
+                UpdateConnectionStatus();
             }
+        }
+        private void UpdateConnectionStatus()
+        {
+            // Update the text block with connection status
+            ConnectionStatus.Text = _isConnected ? $"Connected to {_serialPort.PortName}" : "Disconnected";
+
+            // Disable the Connect button if connected
+            ConnectButton.IsEnabled = !_isConnected;
         }
 
         private void LoadAvailablePorts()
         {
-            ComPortSelector.ItemsSource = SerialPort.GetPortNames();
-            if (ComPortSelector.Items.Count > 0)
+            // Re-enumerate the available COM ports
+            var availablePorts = SerialPort.GetPortNames();
+
+            // Populate the ComboBox with the newly enumerated ports
+            ComPortSelector.ItemsSource = availablePorts;
+
+            // Ensure we select the first available port or leave it blank if none exist
+            if (availablePorts.Length > 0)
                 ComPortSelector.SelectedIndex = 0;
+            else
+                ComPortSelector.SelectedIndex = -1;  // No selection if no ports found
         }
+
+
+      
 
         private void LoadSettings()
         {
