@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:tb="http://www.hardcodet.net/taskbar"
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         xmlns:local="clr-namespace:DeejNG"
         mc:Ignorable="d"
@@ -41,5 +42,8 @@
                 </StackPanel>
             </ScrollViewer>
         </Grid>
+        <tb:TaskbarIcon x:Name="MyNotifyIcon"  TrayMouseDoubleClick="MyNotifyIcon_Click" ToolTipText="DeejNG" Visibility="Visible" />
+
     </DockPanel>
+
 </Window>
