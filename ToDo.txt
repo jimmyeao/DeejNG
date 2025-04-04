@@ -1,2 +1,4 @@
 ﻿Invert sliders
 Fix Theme switiching
+add mute buttons
+application chooser?
