@@ -1,0 +1,5 @@
+﻿Invert sliders
+Fix Theme switiching
+add mute buttons
+application chooser?
+fix empty channels showing vu meters
