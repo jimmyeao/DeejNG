@@ -1,3 +1,4 @@
+![example workflow](https://github.com/jimmyeao/DeejNG/actions/workflows/codeql.yml/badge.svg)
 # DeejNG
 
 A simple Windows Companiion app to Deej
