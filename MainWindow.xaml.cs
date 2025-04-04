@@ -59,7 +59,7 @@ namespace DeejNG
             _meterTimer.Start();
             MyNotifyIcon.Icon = new System.Drawing.Icon(iconPath);
             CreateNotifyIconContextMenu();
-            IconHandler.AddIconToRemovePrograms("MP3 Joiner");
+            IconHandler.AddIconToRemovePrograms("DeejNG");
             SetDisplayIcon();
         }
         private static void SetDisplayIcon()
