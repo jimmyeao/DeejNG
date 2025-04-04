@@ -24,6 +24,14 @@
             <Button x:Name="ConnectButton" Content="Connect" Click="Connect_Click" Style="{StaticResource MaterialDesignFlatButton}" />
             <TextBlock x:Name="ConnectionStatus" Text="Disconnected" Margin="10,0,0,0" VerticalAlignment="Center" Style="{DynamicResource MaterialDesignBody2}" />
             <Button Content="Toggle Theme" Click="ToggleTheme_Click" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10" Style="{DynamicResource MaterialDesignFlatButton}"/>
+            <CheckBox x:Name="InvertSliderCheckBox" 
+          Content="Invert Sliders" 
+          Checked="InvertSlider_Checked" 
+          Unchecked="InvertSlider_Unchecked"
+          Margin="10"
+          VerticalAlignment="Center"
+          HorizontalAlignment="Center"/>
+
         </StackPanel>
 
         <!-- Main content area -->

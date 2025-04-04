@@ -27,16 +27,13 @@ namespace DeejNG
         private AudioService _audioService;
 
         private List<ChannelControl> _channelControls = new();
-
-        private StringBuilder _serialBuffer = new();
-
-        private SerialPort _serialPort;
-
+        private bool _isInitializing = true;
+        private bool _isConnected = false;
         private DispatcherTimer _meterTimer;
-        
-
-
-        private bool _isConnected = false;  // Track connection state
+        private StringBuilder _serialBuffer = new();
+       
+        private SerialPort _serialPort;
+          // Track connection state
 
         private bool isDarkTheme = false;
 
@@ -46,11 +43,13 @@ namespace DeejNG
 
         public MainWindow()
         {
+            _isInitializing = true;
             InitializeComponent();
             string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Square150x150Logo.scale-200.ico");
             _audioService = new AudioService();
             LoadAvailablePorts();  // Load ports when the form is initialized
-            LoadSettings();
+         
+           
             _meterTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(100)
@@ -61,6 +60,8 @@ namespace DeejNG
             CreateNotifyIconContextMenu();
             IconHandler.AddIconToRemovePrograms("DeejNG");
             SetDisplayIcon();
+            LoadSettings();
+            _isInitializing = false;
         }
         private static void SetDisplayIcon()
         {
@@ -139,6 +140,208 @@ namespace DeejNG
         #endregion Protected Methods
 
         #region Private Methods
+        protected override void OnStateChanged(EventArgs e)
+        {
+            if (WindowState == WindowState.Minimized)
+            {
+                // Only hide the window and show the NotifyIcon when minimized
+                this.Hide();
+                MyNotifyIcon.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                // Ensure the NotifyIcon is hidden when the window is not minimized
+                MyNotifyIcon.Visibility = Visibility.Collapsed;
+            }
+
+            base.OnStateChanged(e);
+        }
+
+        private void ComPortSelector_DropDownOpened(object sender, EventArgs e)
+        {
+            LoadAvailablePorts();  // Re-enumerate COM ports when dropdown is opened
+        }
+
+        private void Connect_Click(object sender, RoutedEventArgs e)
+        {
+            if (ComPortSelector.SelectedItem is string selectedPort)
+            {
+                InitSerial(selectedPort, 9600);
+            }
+        }
+
+        private void CreateNotifyIconContextMenu()
+        {
+
+            try
+            {
+                ContextMenu contextMenu = new ContextMenu();
+
+                // Show/Hide Window
+                MenuItem showHideMenuItem = new MenuItem();
+                showHideMenuItem.Header = "Show/Hide";
+                showHideMenuItem.Click += ShowHideMenuItem_Click;
+
+                // Exit
+                MenuItem exitMenuItem = new MenuItem();
+                exitMenuItem.Header = "Exit";
+                exitMenuItem.Click += ExitMenuItem_Click;
+
+                contextMenu.Items.Add(showHideMenuItem);
+
+                contextMenu.Items.Add(new Separator()); // Separator before exit
+                contextMenu.Items.Add(exitMenuItem);
+
+                MyNotifyIcon.ContextMenu = contextMenu;
+            }
+            catch (Exception ex)
+            {
+
+            }
+        }
+
+        private async void ExitMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+
+            Application.Current.Shutdown();
+        }
+
+        private void GenerateSliders(int count)
+        {
+            SliderPanel.Children.Clear();
+            _channelControls.Clear();
+
+            // Use savedTargets to load targets
+            var savedTargets = LoadSettingsFromDisk()?.Targets ?? new List<string>();
+
+            for (int i = 0; i < count; i++)
+            {
+                var control = new ChannelControl();
+                if (i == 0)
+                {
+                    control.SetTargetExecutable("system");
+                }
+                else if (i < savedTargets.Count)
+                {
+                    control.SetTargetExecutable(savedTargets[i]);
+                }
+
+                control.TargetChanged += (_, _) => SaveSettings();  // Save settings after target change
+                _channelControls.Add(control);
+                SliderPanel.Children.Add(control);
+            }
+
+            // Call SaveSettings only once after sliders and targets are set
+     
+        }
+
+
+        private void HandleSliderData(string data)
+        {
+            string[] parts = data.Split('|');
+
+            Dispatcher.Invoke(() =>
+            {
+                if (_channelControls.Count != parts.Length)
+                {
+                    GenerateSliders(parts.Length);
+                }
+
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    if (float.TryParse(parts[i].Trim(), out float level))
+                    {
+                        // Normalize the level between 0 and 1
+                        level = Math.Clamp(level / 1023f, 0f, 1f);
+
+                        // Invert the level if InvertSliderCheckBox is checked
+                        if (InvertSliderCheckBox.IsChecked ?? false)
+                        {
+                            level = 1f - level;  // Invert the level for physical volume
+                        }
+
+                        float currentVolume = _channelControls[i].CurrentVolume;
+                        if (Math.Abs(currentVolume - level) >= 0.01f)
+                        {
+                            _channelControls[i].SmoothAndSetVolume(level);
+
+                            var target = _channelControls[i].TargetExecutable?.Trim();
+                            if (!string.IsNullOrEmpty(target))
+                            {
+                                _audioService.ApplyVolumeToTarget(target, level);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+
+        private void InitSerial(string portName, int baudRate)
+        {
+            try
+            {
+                if (_serialPort != null && _serialPort.IsOpen)
+                {
+                    _serialPort.Close();
+                }
+
+                _serialPort = new SerialPort(portName, baudRate);
+                _serialPort.DataReceived += SerialPort_DataReceived;
+                _serialPort.Open();
+
+                _isConnected = true;
+                UpdateConnectionStatus();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to open serial port {portName}: {ex.Message}", "Serial Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                _isConnected = false;
+                UpdateConnectionStatus();
+            }
+        }
+
+        private void LoadAvailablePorts()
+        {
+            // Re-enumerate the available COM ports
+            var availablePorts = SerialPort.GetPortNames();
+
+            // Populate the ComboBox with the newly enumerated ports
+            ComPortSelector.ItemsSource = availablePorts;
+
+            // Ensure we select the first available port or leave it blank if none exist
+            if (availablePorts.Length > 0)
+                ComPortSelector.SelectedIndex = 0;
+            else
+                ComPortSelector.SelectedIndex = -1;  // No selection if no ports found
+        }
+
+        private void LoadSettings()
+        {
+            var settings = LoadSettingsFromDisk();
+            if (!string.IsNullOrWhiteSpace(settings?.PortName))
+            {
+                InitSerial(settings.PortName, 9600);
+            }
+            ApplyTheme(settings?.IsDarkTheme == true ? "Dark" : "Light");
+            InvertSliderCheckBox.IsChecked = settings?.IsSliderInverted ?? false;
+        }
+
+        private AppSettings LoadSettingsFromDisk()
+        {
+            try
+            {
+                if (File.Exists(SettingsPath))
+                {
+                    var json = File.ReadAllText(SettingsPath);
+                    return JsonSerializer.Deserialize<AppSettings>(json);
+                   
+                }
+            }
+            catch { }
+            return null;
+        }
+
         private void MainWindow_StateChanged(object sender, EventArgs e)
         {
             if (WindowState == WindowState.Minimized)
@@ -167,84 +370,76 @@ namespace DeejNG
                 this.WindowState = WindowState.Minimized;
             }
         }
-        protected override void OnStateChanged(EventArgs e)
+        private void SaveSettings()
         {
-            if (WindowState == WindowState.Minimized)
-            {
-                // Only hide the window and show the NotifyIcon when minimized
-                this.Hide();
-                MyNotifyIcon.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                // Ensure the NotifyIcon is hidden when the window is not minimized
-                MyNotifyIcon.Visibility = Visibility.Collapsed;
-            }
-
-            base.OnStateChanged(e);
-        }
-        private void Connect_Click(object sender, RoutedEventArgs e)
-        {
-            if (ComPortSelector.SelectedItem is string selectedPort)
-            {
-                InitSerial(selectedPort, 9600);
-            }
-        }
-        private void CreateNotifyIconContextMenu()
-        {
-           
+            if (_isInitializing) return;
             try
             {
-                ContextMenu contextMenu = new ContextMenu();
+                var settings = new AppSettings
+                {
+                    PortName = _serialPort?.PortName ?? string.Empty,
+                    Targets = _channelControls.Select(c => c.TargetExecutable?.Trim() ?? string.Empty).ToList(),
+                    IsDarkTheme = isDarkTheme,
+                    IsSliderInverted = InvertSliderCheckBox.IsChecked ?? false  // Only save the inversion state
+                };
 
-                // Show/Hide Window
-                MenuItem showHideMenuItem = new MenuItem();
-                showHideMenuItem.Header = "Show/Hide";
-                showHideMenuItem.Click += ShowHideMenuItem_Click;
-
-                // Exit
-                MenuItem exitMenuItem = new MenuItem();
-                exitMenuItem.Header = "Exit";
-                exitMenuItem.Click += ExitMenuItem_Click;
-
-                contextMenu.Items.Add(showHideMenuItem);
-               
-                contextMenu.Items.Add(new Separator()); // Separator before exit
-                contextMenu.Items.Add(exitMenuItem);
-
-                MyNotifyIcon.ContextMenu = contextMenu;
+                var json = JsonSerializer.Serialize(settings);
+                File.WriteAllText(SettingsPath, json);
             }
             catch (Exception ex)
             {
-               
+                MessageBox.Show($"Error saving settings: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
-        private void GenerateSliders(int count)
+
+
+        private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
-            SliderPanel.Children.Clear();
-            _channelControls.Clear();
+            if (_serialPort == null || !_serialPort.IsOpen) return;
 
-            var savedTargets = LoadSettingsFromDisk()?.Targets ?? new List<string>();
-
-            for (int i = 0; i < count; i++)
+            try
             {
-                var control = new ChannelControl();
-                if (i == 0)
-                {
-                    control.SetTargetExecutable("system");
-                }
-                else if (i < savedTargets.Count)
-                {
-                    control.SetTargetExecutable(savedTargets[i]);
-                }
+                string incoming = _serialPort.ReadExisting();
+                _serialBuffer.Append(incoming);
 
-                control.TargetChanged += (_, _) => SaveSettings();
-                _channelControls.Add(control);
-                SliderPanel.Children.Add(control);
+                while (true)
+                {
+                    string buffer = _serialBuffer.ToString();
+                    int newLineIndex = buffer.IndexOf('\n');
+                    if (newLineIndex == -1) break;
 
-                control.TargetChanged += (_, _) => SaveSettings();
+                    string line = buffer.Substring(0, newLineIndex).Trim();
+                    _serialBuffer.Remove(0, newLineIndex + 1);
+
+                    Dispatcher.BeginInvoke(() => HandleSliderData(line));
+                }
+            }
+            catch (IOException) { }
+            catch (InvalidOperationException) { }
+        }
+
+        private void ShowHideMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (this.IsVisible)
+            {
+                this.Hide();
+            }
+            else
+            {
+                this.Show();
+                this.WindowState = WindowState.Normal;
             }
         }
+
+        private void UpdateConnectionStatus()
+        {
+            // Update the text block with connection status
+            ConnectionStatus.Text = _isConnected ? $"Connected to {_serialPort.PortName}" : "Disconnected";
+
+            // Disable the Connect button if connected
+            ConnectButton.IsEnabled = !_isConnected;
+        }
+
         private void UpdateMeters(object? sender, EventArgs e)
         {
             var device = new MMDeviceEnumerator().GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
@@ -309,221 +504,21 @@ namespace DeejNG
                 }
             }
         }
-        private void ComPortSelector_DropDownOpened(object sender, EventArgs e)
-        {
-            LoadAvailablePorts();  // Re-enumerate COM ports when dropdown is opened
-        }
-        private async void ExitMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-
-            Application.Current.Shutdown();
-        }
-        private void ShowHideMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-            if (this.IsVisible)
-            {
-                this.Hide();
-            }
-            else
-            {
-                this.Show();
-                this.WindowState = WindowState.Normal;
-            }
-        }
-
-        private void HandleSliderData(string data)
-        {
-            string[] parts = data.Split('|');
-
-            Dispatcher.Invoke(() =>
-            {
-                if (_channelControls.Count != parts.Length)
-                {
-                    GenerateSliders(parts.Length);
-                }
-
-                for (int i = 0; i < parts.Length; i++)
-                {
-                    if (float.TryParse(parts[i].Trim(), out float level))
-                    {
-                        level = 1f - Math.Clamp(level / 1023f, 0f, 1f);
-
-                        float currentVolume = _channelControls[i].CurrentVolume;
-                        if (Math.Abs(currentVolume - level) >= 0.01f)
-                        {
-                            _channelControls[i].SmoothAndSetVolume(level);
-
-                            var target = _channelControls[i].TargetExecutable?.Trim();
-                            if (!string.IsNullOrEmpty(target))
-                            {
-                                _audioService.ApplyVolumeToTarget(target, level);
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        private void InitSerial(string portName, int baudRate)
-        {
-            try
-            {
-                if (_serialPort != null && _serialPort.IsOpen)
-                {
-                    _serialPort.Close();
-                }
-
-                _serialPort = new SerialPort(portName, baudRate);
-                _serialPort.DataReceived += SerialPort_DataReceived;
-                _serialPort.Open();
-
-                _isConnected = true;
-                UpdateConnectionStatus();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to open serial port {portName}: {ex.Message}", "Serial Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                _isConnected = false;
-                UpdateConnectionStatus();
-            }
-        }
-        private void UpdateConnectionStatus()
-        {
-            // Update the text block with connection status
-            ConnectionStatus.Text = _isConnected ? $"Connected to {_serialPort.PortName}" : "Disconnected";
-
-            // Disable the Connect button if connected
-            ConnectButton.IsEnabled = !_isConnected;
-        }
-        private void ToggleTheme(bool isDark)
-        {
-            Uri themeUri;
-            if (isDark)
-            {
-                themeUri = new Uri("pack://application:,,,/MaterialDesignInXamlToolkit;component/Themes/MaterialDesignTheme.Dark.xaml", UriKind.RelativeOrAbsolute);
-            }
-            else
-            {
-                themeUri = new Uri("pack://application:,,,/MaterialDesignInXamlToolkit;component/Themes/MaterialDesignTheme.Light.xaml", UriKind.RelativeOrAbsolute);
-            }
-
-            var themeDictionary = (ResourceDictionary)Application.LoadComponent(themeUri);
-            Application.Current.Resources.MergedDictionaries.Clear();
-            Application.Current.Resources.MergedDictionaries.Add(themeDictionary);
-        }
-        private void LoadAvailablePorts()
-        {
-            // Re-enumerate the available COM ports
-            var availablePorts = SerialPort.GetPortNames();
-
-            // Populate the ComboBox with the newly enumerated ports
-            ComPortSelector.ItemsSource = availablePorts;
-
-            // Ensure we select the first available port or leave it blank if none exist
-            if (availablePorts.Length > 0)
-                ComPortSelector.SelectedIndex = 0;
-            else
-                ComPortSelector.SelectedIndex = -1;  // No selection if no ports found
-        }
-
-
-      
-
-        private void LoadSettings()
-        {
-            var settings = LoadSettingsFromDisk();
-            if (!string.IsNullOrWhiteSpace(settings?.PortName))
-            {
-                InitSerial(settings.PortName, 9600);
-            }
-        }
-
-        private AppSettings LoadSettingsFromDisk()
-        {
-            try
-            {
-                if (File.Exists(SettingsPath))
-                {
-                    var json = File.ReadAllText(SettingsPath);
-                    return JsonSerializer.Deserialize<AppSettings>(json);
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        private void SaveSettings()
-        {
-            try
-            {
-                var dir = Path.GetDirectoryName(SettingsPath);
-                if (!Directory.Exists(dir))
-                    Directory.CreateDirectory(dir);
-
-                var settings = new AppSettings
-                {
-                    PortName = _serialPort?.PortName ?? string.Empty,
-                    Targets = _channelControls.Select(c => c.TargetExecutable?.Trim() ?? string.Empty).ToList(),
-                    Theme = isDarkTheme
-                };
-
-                var json = JsonSerializer.Serialize(settings);
-                File.WriteAllText(SettingsPath, json);
-            }
-            catch { }
-        }
-
-        private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
-        {
-            if (_serialPort == null || !_serialPort.IsOpen) return;
-
-            try
-            {
-                string incoming = _serialPort.ReadExisting();
-                _serialBuffer.Append(incoming);
-
-                while (true)
-                {
-                    string buffer = _serialBuffer.ToString();
-                    int newLineIndex = buffer.IndexOf('\n');
-                    if (newLineIndex == -1) break;
-
-                    string line = buffer.Substring(0, newLineIndex).Trim();
-                    _serialBuffer.Remove(0, newLineIndex + 1);
-
-                    Dispatcher.BeginInvoke(() => HandleSliderData(line));
-                }
-            }
-            catch (IOException) { }
-            catch (InvalidOperationException) { }
-        }
-
         #endregion Private Methods
 
         #region Private Classes
 
         private class AppSettings
         {
-            #region Public Properties
-
             public string? PortName { get; set; }
             public List<string> Targets { get; set; } = new();
-
-            public bool Theme { get; set; }
-
-            #endregion Public Properties
+            public bool IsDarkTheme { get; set; }
+            public bool IsSliderInverted { get; set; }
         }
+
 
         #endregion Private Classes
 
-        private void ToggleTheme_Click(object sender, RoutedEventArgs e)
-        {
-            isDarkTheme = !isDarkTheme;
-            string theme = isDarkTheme ? "Dark" : "Light";
-            ApplyTheme(theme);
-            SaveSettings();
-
-        }
         private void ApplyTheme(string theme)
         {
             isDarkTheme = theme == "Dark";
@@ -558,10 +553,50 @@ namespace DeejNG
                 Application.Current.Resources.MergedDictionaries.Remove(currentTheme);
             }
         }
+
+        private void InvertSlider_Checked(object sender, RoutedEventArgs e)
+        {
+            SaveInvertState();
+        }
+
+        private void InvertSlider_Unchecked(object sender, RoutedEventArgs e)
+        {
+
+            SaveInvertState();
+        }
+        private void SaveInvertState()
+        {
+            try
+            {
+                var settings = LoadSettingsFromDisk() ?? new AppSettings();
+                settings.IsSliderInverted = InvertSliderCheckBox.IsChecked ?? false;
+                var json = JsonSerializer.Serialize(settings);
+                File.WriteAllText(SettingsPath, json);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error saving inversion settings: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void ToggleTheme_Click(object sender, RoutedEventArgs e)
+        {
+            isDarkTheme = !isDarkTheme;
+            string theme = isDarkTheme ? "Dark" : "Light";
+            ApplyTheme(theme);
+            SaveSettings();
+
+        }
     }
     static class IconHandler
     {
+        #region Private Properties
+
         static string IconPath => Path.Combine(AppContext.BaseDirectory, "icon.ico");
+
+        #endregion Private Properties
+
+        #region Public Methods
 
         public static void AddIconToRemovePrograms(string productName)
         {
@@ -599,5 +634,7 @@ namespace DeejNG
                 Console.WriteLine($"Error setting uninstall icon: {ex.Message}");
             }
         }
+
+        #endregion Public Methods
     }
 }
