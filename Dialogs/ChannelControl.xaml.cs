@@ -8,9 +8,15 @@ namespace DeejNG.Dialogs
         public float CurrentVolume => (float)VolumeSlider.Value;
         private float _smoothedVolume;
         private const float SmoothingFactor = 0.1f;
+        public event EventHandler TargetChanged;
+
         public ChannelControl()
         {
             InitializeComponent();
+        }
+        private void TargetTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            TargetChanged?.Invoke(this, EventArgs.Empty);
         }
 
         public void SetVolume(float level)

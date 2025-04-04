@@ -6,7 +6,7 @@
         xmlns:local="clr-namespace:DeejNG"
         mc:Ignorable="d"
         Title="DeejNG" Height="450" Width="800"
-        Closing="Window_Closed">
+        >
     <DockPanel>
         <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10">
             <Label Content="COM Port:" VerticalAlignment="Center"/>
