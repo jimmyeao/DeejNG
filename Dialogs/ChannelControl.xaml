@@ -4,12 +4,92 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d"
-             d:DesignHeight="200" d:DesignWidth="100">
-    <Border BorderBrush="Gray" BorderThickness="1" Padding="8" CornerRadius="6" Margin="4">
-        <StackPanel>
-            <Slider x:Name="VolumeSlider" Orientation="Vertical" Minimum="0" Maximum="1" Height="100" IsEnabled="False"/>
-            <ProgressBar x:Name="LevelMeter" Minimum="0" Maximum="1" Height="10" Margin="0,5,0,0"/>
-            <TextBox x:Name="TargetTextBox" Margin="0,5,0,0"/>
+             d:DesignHeight="250" d:DesignWidth="80">
+
+    <Border BorderThickness="1" BorderBrush="Gray" Margin="5" Padding="5" CornerRadius="4">
+        <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40"/>
+                    <!-- Slider -->
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="20"/>
+                    <!-- Meter -->
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="20"/>
+                    <!-- Labels -->
+                </Grid.ColumnDefinitions>
+
+                <!-- Slider -->
+                <Slider x:Name="VolumeSlider"
+            Grid.Column="0"
+            Orientation="Vertical"
+            Minimum="0"
+            Maximum="1"
+            Width="30"
+            Height="180"
+            VerticalAlignment="Bottom"/>
+
+                <!-- Meter -->
+                <Grid Grid.Column="2"
+          Width="12"
+          Height="{Binding ElementName=VolumeSlider, Path=ActualHeight}"
+          VerticalAlignment="Bottom">
+
+                    <!-- Gradient background -->
+                    <Rectangle RadiusX="2" RadiusY="2">
+                        <Rectangle.Fill>
+                            <LinearGradientBrush StartPoint="0,1" EndPoint="0,0">
+                                <GradientStop Color="Green" Offset="0.0" />
+                                <GradientStop Color="Yellow" Offset="0.6" />
+                                <GradientStop Color="Red" Offset="0.9" />
+                            </LinearGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+
+                    <!-- Audio mask -->
+                    <Rectangle x:Name="AudioMask"
+                   Fill="Black"
+                   RadiusX="2" RadiusY="2"
+                   VerticalAlignment="Top"/>
+
+                    <!-- Peak Hold -->
+                    <Rectangle x:Name="PeakHoldBar"
+                   Height="2"
+                   Width="12"
+                   Fill="White"
+                   VerticalAlignment="Top"
+                   Visibility="Collapsed"/>
+
+                    <!-- Clip -->
+                    <Ellipse x:Name="ClipLight"
+                 Width="8" Height="8"
+                 HorizontalAlignment="Right"
+                 VerticalAlignment="Top"
+                 Fill="Red"
+                 Stroke="Black"
+                 StrokeThickness="1"
+                 Margin="0,2,2,0"
+                 Visibility="Collapsed"/>
+                </Grid>
+
+                <!-- dB Labels -->
+                <StackPanel Grid.Column="4" VerticalAlignment="Stretch" HorizontalAlignment="Left" Margin="2,4,0,4">
+                    <TextBlock Text="0" FontSize="8" />
+                    <TextBlock Text="-6" FontSize="8" Margin="0,30,0,0"/>
+                    <TextBlock Text="-12" FontSize="8" Margin="0,30,0,0"/>
+                    <TextBlock Text="-18" FontSize="8" Margin="0,30,0,0"/>
+                </StackPanel>
+            </Grid>
+
+
+            <!-- Executable TextBox -->
+            <TextBox x:Name="TargetTextBox"
+                     Margin="0,10,0,0"
+                     Width="60"
+                     HorizontalAlignment="Center"
+                     TextAlignment="Center"
+                     TextChanged="TargetTextBox_TextChanged"/>
         </StackPanel>
     </Border>
 </UserControl>

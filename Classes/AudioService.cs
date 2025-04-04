@@ -1,5 +1,4 @@
-﻿// AudioService.cs
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Linq;
 using NAudio.CoreAudioApi;
@@ -22,29 +21,38 @@ namespace DeejNG.Services
 
             if (string.IsNullOrWhiteSpace(executable) || executable.Equals("system", StringComparison.OrdinalIgnoreCase))
             {
-                _defaultDevice.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                var freshDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                freshDevice.AudioEndpointVolume.MasterVolumeLevelScalar = level;
                 return;
             }
 
-            var sessionManager = _defaultDevice.AudioSessionManager;
-            var sessions = sessionManager.Sessions;
+            var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            var sessions = device.AudioSessionManager.Sessions;
 
             for (int i = 0; i < sessions.Count; i++)
             {
                 var session = sessions[i];
-                if (session.GetSessionIdentifier.Contains(executable, StringComparison.OrdinalIgnoreCase) ||
-                    session.GetSessionInstanceIdentifier.Contains(executable, StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    try
+                    var sessionId = session.GetSessionIdentifier;
+                    var instanceId = session.GetSessionInstanceIdentifier;
+
+                    Debug.WriteLine($"[Session {i}] ID: {sessionId}\nInstance: {instanceId}");
+
+                    if (!string.IsNullOrWhiteSpace(sessionId) && sessionId.Contains(executable, StringComparison.OrdinalIgnoreCase) ||
+                        !string.IsNullOrWhiteSpace(instanceId) && instanceId.Contains(executable, StringComparison.OrdinalIgnoreCase))
                     {
+                        Debug.WriteLine($"[Match] Found match for '{executable}' in session {i}");
                         session.SimpleAudioVolume.Volume = level;
+                        return;
                     }
-                    catch
-                    {
-                        // Log or ignore errors applying volume
-                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[Error] Session {i}: {ex.Message}");
                 }
             }
         }
+
     }
 }
