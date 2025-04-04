@@ -1,0 +1,2 @@
+﻿Invert sliders
+Fix Theme switiching
