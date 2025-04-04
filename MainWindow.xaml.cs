@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
+using System.Runtime;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
@@ -28,7 +29,12 @@ namespace DeejNG
         private SerialPort _serialPort;
 
         private DispatcherTimer _meterTimer;
+
+     
+
         private bool _isConnected = false;  // Track connection state
+
+        private bool isDarkTheme = false;
 
         #endregion Private Fields
 
@@ -259,7 +265,22 @@ namespace DeejNG
             // Disable the Connect button if connected
             ConnectButton.IsEnabled = !_isConnected;
         }
+        private void ToggleTheme(bool isDark)
+        {
+            Uri themeUri;
+            if (isDark)
+            {
+                themeUri = new Uri("pack://application:,,,/MaterialDesignInXamlToolkit;component/Themes/MaterialDesignTheme.Dark.xaml", UriKind.RelativeOrAbsolute);
+            }
+            else
+            {
+                themeUri = new Uri("pack://application:,,,/MaterialDesignInXamlToolkit;component/Themes/MaterialDesignTheme.Light.xaml", UriKind.RelativeOrAbsolute);
+            }
 
+            var themeDictionary = (ResourceDictionary)Application.LoadComponent(themeUri);
+            Application.Current.Resources.MergedDictionaries.Clear();
+            Application.Current.Resources.MergedDictionaries.Add(themeDictionary);
+        }
         private void LoadAvailablePorts()
         {
             // Re-enumerate the available COM ports
@@ -312,7 +333,8 @@ namespace DeejNG
                 var settings = new AppSettings
                 {
                     PortName = _serialPort?.PortName ?? string.Empty,
-                    Targets = _channelControls.Select(c => c.TargetExecutable?.Trim() ?? string.Empty).ToList()
+                    Targets = _channelControls.Select(c => c.TargetExecutable?.Trim() ?? string.Empty).ToList(),
+                    Theme = isDarkTheme
                 };
 
                 var json = JsonSerializer.Serialize(settings);
@@ -354,12 +376,57 @@ namespace DeejNG
         {
             #region Public Properties
 
-            public string PortName { get; set; }
+            public string? PortName { get; set; }
             public List<string> Targets { get; set; } = new();
+
+            public bool Theme { get; set; }
 
             #endregion Public Properties
         }
 
         #endregion Private Classes
+
+        private void ToggleTheme_Click(object sender, RoutedEventArgs e)
+        {
+            isDarkTheme = !isDarkTheme;
+            string theme = isDarkTheme ? "Dark" : "Light";
+            ApplyTheme(theme);
+            SaveSettings();
+
+        }
+        private void ApplyTheme(string theme)
+        {
+            isDarkTheme = theme == "Dark";
+            Uri themeUri;
+            if (theme == "Dark")
+            {
+                themeUri = new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml");
+                isDarkTheme = true;
+            }
+            else
+            {
+                themeUri = new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Light.xaml");
+                isDarkTheme = false;
+            }
+
+            // Update the theme
+            var existingTheme = Application.Current.Resources.MergedDictionaries.FirstOrDefault(d => d.Source == themeUri);
+            if (existingTheme == null)
+            {
+                existingTheme = new ResourceDictionary() { Source = themeUri };
+                Application.Current.Resources.MergedDictionaries.Add(existingTheme);
+            }
+
+            // Remove the other theme
+            var otherThemeUri = isDarkTheme
+                ? new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Light.xaml")
+                : new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml");
+
+            var currentTheme = Application.Current.Resources.MergedDictionaries.FirstOrDefault(d => d.Source == otherThemeUri);
+            if (currentTheme != null)
+            {
+                Application.Current.Resources.MergedDictionaries.Remove(currentTheme);
+            }
+        }
     }
 }
