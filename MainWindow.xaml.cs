@@ -150,6 +150,8 @@ namespace DeejNG
                 }
                 else
                 {
+                    bool sessionFound = false;
+
                     for (int j = 0; j < sessions.Count; j++)
                     {
                         var session = sessions[j];
@@ -161,9 +163,11 @@ namespace DeejNG
                             if ((sessionId?.Contains(target, StringComparison.OrdinalIgnoreCase) ?? false) ||
                                 (instanceId?.Contains(target, StringComparison.OrdinalIgnoreCase) ?? false))
                             {
+                                // Session found, apply the meter
                                 float peak = session.AudioMeterInformation.MasterPeakValue * session.SimpleAudioVolume.Volume;
                                 float boosted = Math.Min(peak * visualGain, 1.0f);
                                 ctrl.UpdateAudioMeter(boosted);
+                                sessionFound = true;
                                 break;
                             }
                         }
@@ -172,10 +176,15 @@ namespace DeejNG
                             // Ignore bad sessions
                         }
                     }
+
+                    // If no session is found, reset the level to 0 (empty meter)
+                    if (!sessionFound)
+                    {
+                        ctrl.UpdateAudioMeter(0); // Reset meter to 0 if no session is found
+                    }
                 }
             }
         }
-
 
 
         private void HandleSliderData(string data)
