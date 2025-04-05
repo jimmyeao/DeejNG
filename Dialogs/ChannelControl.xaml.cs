@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 
 namespace DeejNG.Dialogs
@@ -23,6 +24,7 @@ namespace DeejNG.Dialogs
         {
             InitializeComponent();
             Loaded += ChannelControl_Loaded;
+            MouseDoubleClick += ChannelControl_MouseDoubleClick;
         }
         private void TargetTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
@@ -31,6 +33,16 @@ namespace DeejNG.Dialogs
         private void ChannelControl_Loaded(object sender, RoutedEventArgs e)
         {
             _layoutReady = true;
+        }
+        private void ChannelControl_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            var picker = new SessionPickerDialog(TargetTextBox.Text);
+            if (picker.ShowDialog() == true)
+            {
+                SetTargetExecutable(picker.SessionComboBox.Text);
+
+                TargetChanged?.Invoke(this, EventArgs.Empty);
+            }
         }
 
         public void UpdateAudioMeter(float rawLevel)

@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Square150x150Logo.scale-200.ico</ApplicationIcon>
-    <PlatformTarget>AnyCPU</PlatformTarget>
+    <PlatformTarget>x64</PlatformTarget>
     <Title>DeejNG</Title>
     <PackageIcon>logo.png</PackageIcon>
   </PropertyGroup>

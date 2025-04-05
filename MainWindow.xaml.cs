@@ -202,6 +202,14 @@ namespace DeejNG
         }
 
 
+        public List<string> GetCurrentTargets()
+        {
+            return _channelControls
+                .Select(c => c.TargetExecutable?.Trim().ToLowerInvariant())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct()
+                .ToList();
+        }
 
 
         private void ComPortSelector_DropDownOpened(object sender, EventArgs e)
