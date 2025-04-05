@@ -529,18 +529,15 @@ namespace DeejNG
                 _lastDeviceRefresh = DateTime.Now;
             }
 
-
             if ((DateTime.Now - _lastSessionRefresh).TotalSeconds > 2)
             {
                 _cachedSessions = _audioDevice.AudioSessionManager.Sessions;
                 _lastSessionRefresh = DateTime.Now;
                 RefreshSessionLookup();
-             }
-         
+            }
 
-
-            const float visualGain = 1.5f; // Boost perceived level for visual effect
-            const float systemCalibrationFactor = 2.0f; // Boost for system volume to reach realistic levels
+            const float visualGain = 1.5f;
+            const float systemCalibrationFactor = 2.0f;
 
             for (int i = 0; i < _channelControls.Count; i++)
             {
@@ -549,14 +546,20 @@ namespace DeejNG
 
                 if (string.IsNullOrWhiteSpace(target) || target == "system")
                 {
+                    // Apply system mute
+                    if (_audioDevice.AudioEndpointVolume.Mute != ctrl.IsMuted)
+                    {
+                        _audioDevice.AudioEndpointVolume.Mute = ctrl.IsMuted;
+                    }
+
                     float systemVolume = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
                     float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
-                    float boosted = Math.Min(peak * systemVolume * systemCalibrationFactor * visualGain, 1.0f);
+
+                    float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * systemVolume * systemCalibrationFactor * visualGain, 1.0f);
                     ctrl.UpdateAudioMeter(boosted);
                     continue;
                 }
 
-                // 🧠 Fuzzy match using cached ID strings
                 var match = _sessionIdCache.FirstOrDefault(tuple =>
                     tuple.sessionId.Contains(target) || tuple.instanceId.Contains(target));
 
@@ -564,29 +567,32 @@ namespace DeejNG
                 {
                     try
                     {
+                        // Apply session mute
+                        if (match.session.SimpleAudioVolume.Mute != ctrl.IsMuted)
+                        {
+                            match.session.SimpleAudioVolume.Mute = ctrl.IsMuted;
+                        }
+
                         float peak = match.session.AudioMeterInformation.MasterPeakValue;
                         float sliderVol = ctrl.CurrentVolume;
-                        float boosted = Math.Min(peak * sliderVol * visualGain, 1.0f);
+                        float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * sliderVol * visualGain, 1.0f);
                         ctrl.UpdateAudioMeter(boosted);
-
-
-                        //Debug.WriteLine($"MATCH: target={target} → peak={peak}, volume={volume}");
                     }
                     catch
                     {
-                        ctrl.UpdateAudioMeter(0); // fallback
+                        ctrl.UpdateAudioMeter(0);
                     }
                 }
                 else
                 {
                     ctrl.UpdateAudioMeter(0);
-                   // Debug.WriteLine($"NO MATCH: target={target}");
                 }
             }
+
             Dispatcher.BeginInvoke(() => SliderPanel.InvalidateVisual(), DispatcherPriority.Render);
-
-
         }
+
+
         private void ShowSlidersCheckBox_Checked(object sender, RoutedEventArgs e)
         {
             foreach (var ctrl in _channelControls)
