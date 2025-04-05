@@ -44,6 +44,8 @@ namespace DeejNG
         private DateTime _lastDeviceRefresh = DateTime.MinValue;
         private bool _hasSyncedMuteStates = false;
 
+        private AudioEndpointVolume _systemVolume;
+
 
 
         // Track connection state
@@ -66,7 +68,9 @@ namespace DeejNG
             _audioService = new AudioService();
             LoadAvailablePorts();
             _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-            _audioDevice.AudioEndpointVolume.OnVolumeNotification += AudioEndpointVolume_OnVolumeNotification;
+            _systemVolume = _audioDevice.AudioEndpointVolume;
+            _systemVolume.OnVolumeNotification += AudioEndpointVolume_OnVolumeNotification;
+
 
             _meterTimer = new DispatcherTimer
             {
@@ -94,15 +98,20 @@ namespace DeejNG
             Dispatcher.Invoke(() =>
             {
                 var systemControl = _channelControls.FirstOrDefault(c =>
-                    c.TargetExecutable.Equals("system", StringComparison.OrdinalIgnoreCase));
+                    string.Equals(c.TargetExecutable, "system", StringComparison.OrdinalIgnoreCase));
 
                 if (systemControl != null)
                 {
-                    bool isMuted = data.Muted;
-                    systemControl.SetMuted(isMuted);
+                    Debug.WriteLine($"[System Mute Event] Windows muted = {data.Muted}");
+                    systemControl.SetMuted(data.Muted);
+                }
+                else
+                {
+                    Debug.WriteLine("[System Mute Event] No system control found.");
                 }
             });
         }
+
 
 
         private static void SetDisplayIcon()
@@ -346,13 +355,13 @@ namespace DeejNG
                     _audioService.ApplyVolumeToTarget(target, ctrl.CurrentVolume, isMuted);
 
                     // 🔔 Subscribe to system volume notifications
-                    audioDevice.AudioEndpointVolume.OnVolumeNotification += (data) =>
-                    {
-                        Dispatcher.Invoke(() =>
-                        {
-                            ctrl.SetMuted(data.Muted);
-                        });
-                    };
+                    //audioDevice.AudioEndpointVolume.OnVolumeNotification += (data) =>
+                    //{
+                    //    Dispatcher.Invoke(() =>
+                    //    {
+                    //        ctrl.SetMuted(data.Muted);
+                    //    });
+                    //};
 
                     continue;
                 }
@@ -624,16 +633,22 @@ namespace DeejNG
 
             if ((DateTime.Now - _lastDeviceRefresh).TotalSeconds > 5)
             {
-                _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                _cachedSessions = _audioDevice.AudioSessionManager.Sessions;
                 _lastDeviceRefresh = DateTime.Now;
             }
-
             if ((DateTime.Now - _lastSessionRefresh).TotalSeconds > 2)
             {
                 _cachedSessions = _audioDevice.AudioSessionManager.Sessions;
                 _lastSessionRefresh = DateTime.Now;
-                RefreshSessionLookup();
+                RefreshSessionLookup(); // <- keep this if you're caching sessionId/instanceId
             }
+
+            //if ((DateTime.Now - _lastSessionRefresh).TotalSeconds > 2)
+            //{
+            //    _cachedSessions = _audioDevice.AudioSessionManager.Sessions;
+            //    _lastSessionRefresh = DateTime.Now;
+            //    RefreshSessionLookup();
+            //}
 
             const float visualGain = 1.5f;
             const float systemCalibrationFactor = 2.0f;
