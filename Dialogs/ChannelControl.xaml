@@ -46,7 +46,7 @@
                 Style="{DynamicResource MaterialDesignSlider}" />
 
                     <!-- Meter -->
-                    <Grid Grid.Column="2"
+                    <Grid x:Name="MeterVisuals" Grid.Column="2"
               Width="12"
               VerticalAlignment="Stretch">
 

@@ -26,7 +26,7 @@ namespace DeejNG
         #region Private Fields
 
         private AudioService _audioService;
-
+        private bool _metersEnabled = true;
         private List<ChannelControl> _channelControls = new();
         private bool _isInitializing = true;
         private bool _isConnected = false;
@@ -53,11 +53,15 @@ namespace DeejNG
         {
             _isInitializing = true;
             InitializeComponent();
-            string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Square150x150Logo.scale-200.ico");
-            _audioService = new AudioService();
-            LoadAvailablePorts();  // Load ports when the form is initialized
-            _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
 
+            // Hook into the Loaded event to safely access SliderScrollViewer
+            this.Loaded += MainWindow_Loaded;
+
+            string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Square150x150Logo.scale-200.ico");
+
+            _audioService = new AudioService();
+            LoadAvailablePorts();
+            _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
 
             _meterTimer = new DispatcherTimer
             {
@@ -65,6 +69,7 @@ namespace DeejNG
             };
             _meterTimer.Tick += UpdateMeters;
             _meterTimer.Start();
+
             MyNotifyIcon.Icon = new System.Drawing.Icon(iconPath);
             CreateNotifyIconContextMenu();
             IconHandler.AddIconToRemovePrograms("DeejNG");
@@ -72,6 +77,12 @@ namespace DeejNG
             LoadSettings();
             _isInitializing = false;
         }
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            SliderScrollViewer.Visibility = Visibility.Visible;
+        }
+
+
         private static void SetDisplayIcon()
         {
             //only run in Release
@@ -267,8 +278,10 @@ namespace DeejNG
                 SliderPanel.Children.Add(control);
             }
 
-            // Call SaveSettings only once after sliders and targets are set
-     
+            // ✅ Apply visibility immediately based on checkbox
+            bool show = ShowSlidersCheckBox.IsChecked ?? true;
+            SetMeterVisibilityForAll(show);
+
         }
 
 
@@ -361,6 +374,16 @@ namespace DeejNG
             }
             ApplyTheme(settings?.IsDarkTheme == true ? "Dark" : "Light");
             InvertSliderCheckBox.IsChecked = settings?.IsSliderInverted ?? false;
+            ShowSlidersCheckBox.IsChecked = settings?.VuMeters ?? true;
+
+            bool showMeters = settings?.VuMeters ?? true;
+            ShowSlidersCheckBox.IsChecked = showMeters;
+            SetMeterVisibilityForAll(showMeters);
+
+            foreach (var ctrl in _channelControls)
+                ctrl.SetMeterVisibility(showMeters);
+
+
         }
 
         private AppSettings LoadSettingsFromDisk()
@@ -416,8 +439,10 @@ namespace DeejNG
                     PortName = _serialPort?.PortName ?? string.Empty,
                     Targets = _channelControls.Select(c => c.TargetExecutable?.Trim() ?? string.Empty).ToList(),
                     IsDarkTheme = isDarkTheme,
-                    IsSliderInverted = InvertSliderCheckBox.IsChecked ?? false  // Only save the inversion state
+                    IsSliderInverted = InvertSliderCheckBox.IsChecked ?? false,
+                    VuMeters = ShowSlidersCheckBox.IsChecked ?? true
                 };
+
 
                 var json = JsonSerializer.Serialize(settings);
                 File.WriteAllText(SettingsPath, json);
@@ -466,6 +491,15 @@ namespace DeejNG
                 this.WindowState = WindowState.Normal;
             }
         }
+        private void SetMeterVisibilityForAll(bool show)
+        {
+            _metersEnabled = show;
+
+            foreach (var ctrl in _channelControls)
+            {
+                ctrl.SetMeterVisibility(show);
+            }
+        }
 
         private void UpdateConnectionStatus()
         {
@@ -478,6 +512,8 @@ namespace DeejNG
 
         private void UpdateMeters(object? sender, EventArgs e)
         {
+            if (!_metersEnabled)
+                return;
 
             if ((DateTime.Now - _lastDeviceRefresh).TotalSeconds > 5)
             {
@@ -491,26 +527,7 @@ namespace DeejNG
                 _cachedSessions = _audioDevice.AudioSessionManager.Sessions;
                 _lastSessionRefresh = DateTime.Now;
                 RefreshSessionLookup();
-                //for (int s = 0; s < _cachedSessions.Count; s++)
-                //{
-                //    var session = _cachedSessions[s];
-
-                //    try
-                //    {
-                //        string sessionId = session.GetSessionIdentifier;
-                //        string instanceId = session.GetSessionInstanceIdentifier;
-                //        string displayName = session.DisplayName;
-
-                //        System.Diagnostics.Debug.WriteLine($"[Session] DisplayName: {displayName}, ID: {sessionId}, Instance: {instanceId}");
-                //    }
-                //    catch
-                //    {
-                //        // ignore bad sessions
-                //    }
-                //}
-
-
-            }
+             }
          
 
 
@@ -562,6 +579,24 @@ namespace DeejNG
 
 
         }
+        private void ShowSlidersCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            foreach (var ctrl in _channelControls)
+                ctrl.SetMeterVisibility(true);
+            SetMeterVisibilityForAll(true);
+            SaveSettings();
+        }
+
+        private void ShowSlidersCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            foreach (var ctrl in _channelControls)
+                ctrl.SetMeterVisibility(false);
+            SetMeterVisibilityForAll(false);
+            SaveSettings();
+        }
+
+
+
         #endregion Private Methods
 
         #region Private Classes
@@ -572,6 +607,8 @@ namespace DeejNG
             public List<string> Targets { get; set; } = new();
             public bool IsDarkTheme { get; set; }
             public bool IsSliderInverted { get; set; }
+
+            public bool VuMeters { get; set; } = true;
         }
 
 

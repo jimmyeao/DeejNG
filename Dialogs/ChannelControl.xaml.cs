@@ -35,6 +35,8 @@ namespace DeejNG.Dialogs
 
         public void UpdateAudioMeter(float rawLevel)
         {
+            if (AudioMask.Visibility != Visibility.Visible)
+                return;
             _meterLevel += (rawLevel - _meterLevel) * 0.3f;
             // Use fallback height if layout hasn't completed
             double maxHeight = VolumeSlider.ActualHeight > 0 ? VolumeSlider.ActualHeight : 180;
@@ -61,6 +63,12 @@ namespace DeejNG.Dialogs
             // Clip light
             ClipLight.Visibility = rawLevel >= ClipThreshold ? Visibility.Visible : Visibility.Collapsed;
         }
+        public void SetMeterVisibility(bool visible)
+        {
+            MeterVisuals.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+
 
 
 
