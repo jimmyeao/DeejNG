@@ -119,13 +119,26 @@ namespace DeejNG.Dialogs
 
         private void ChannelControl_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            var picker = new SessionPickerDialog(TargetTextBox.Text);
+            var picker = new SessionPickerDialog(TargetTextBox.Text)
+            {
+                Owner = Application.Current.MainWindow,
+                WindowStartupLocation = WindowStartupLocation.Manual
+            };
+
+            if (picker.Owner != null)
+            {
+                var mainWindow = picker.Owner;
+                picker.Left = mainWindow.Left + (mainWindow.Width - picker.Width) / 2;
+                picker.Top = mainWindow.Top + (mainWindow.Height - picker.Height) / 2;
+            }
+
             if (picker.ShowDialog() == true)
             {
                 SetTargetExecutable(picker.SessionComboBox.Text);
                 TargetChanged?.Invoke(this, EventArgs.Empty);
             }
         }
+
 
         private void UpdateMuteButtonEnabled()
         {
