@@ -18,6 +18,8 @@ using DeejNG.Services;
 using Microsoft.VisualBasic.Logging;
 using Microsoft.Win32;
 using NAudio.CoreAudioApi;
+using NAudio.CoreAudioApi.Interfaces;
+using DeejNG.Classes;
 
 namespace DeejNG
 {
@@ -40,6 +42,9 @@ namespace DeejNG
         private Dictionary<string, AudioSessionControl> _sessionLookup = new();
         private List<(AudioSessionControl session, string sessionId, string instanceId)> _sessionIdCache = new();
         private DateTime _lastDeviceRefresh = DateTime.MinValue;
+        private bool _hasSyncedMuteStates = false;
+
+
 
         // Track connection state
 
@@ -52,34 +57,51 @@ namespace DeejNG
         public MainWindow()
         {
             _isInitializing = true;
-            InitializeComponent();
 
-            // Hook into the Loaded event to safely access SliderScrollViewer
-            this.Loaded += MainWindow_Loaded;
+            InitializeComponent();
+            Loaded += MainWindow_Loaded;
 
             string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Square150x150Logo.scale-200.ico");
 
             _audioService = new AudioService();
             LoadAvailablePorts();
             _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            _audioDevice.AudioEndpointVolume.OnVolumeNotification += AudioEndpointVolume_OnVolumeNotification;
 
             _meterTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(100)
             };
             _meterTimer.Tick += UpdateMeters;
-            _meterTimer.Start();
 
             MyNotifyIcon.Icon = new System.Drawing.Icon(iconPath);
             CreateNotifyIconContextMenu();
             IconHandler.AddIconToRemovePrograms("DeejNG");
             SetDisplayIcon();
             LoadSettings();
+
             _isInitializing = false;
+            // ⚠️ REMOVE THIS LINE FROM HERE:
+            // _meterTimer.Start(); <-- DELETE THIS LINE
         }
+
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             SliderScrollViewer.Visibility = Visibility.Visible;
+        }
+        private void AudioEndpointVolume_OnVolumeNotification(AudioVolumeNotificationData data)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                var systemControl = _channelControls.FirstOrDefault(c =>
+                    c.TargetExecutable.Equals("system", StringComparison.OrdinalIgnoreCase));
+
+                if (systemControl != null)
+                {
+                    bool isMuted = data.Muted;
+                    systemControl.SetMuted(isMuted);
+                }
+            });
         }
 
 
@@ -266,37 +288,115 @@ namespace DeejNG
             SliderPanel.Children.Clear();
             _channelControls.Clear();
 
-            var savedTargets = LoadSettingsFromDisk()?.Targets ?? new List<string>();
+            var savedSettings = LoadSettingsFromDisk();
+            var savedTargets = savedSettings?.Targets ?? new List<string>();
+
+            _isInitializing = true; // ensure this is explicitly set at start
 
             for (int i = 0; i < count; i++)
             {
                 var control = new ChannelControl();
 
-                if (i == 0)
-                    control.SetTargetExecutable("system");
-                else if (i < savedTargets.Count)
-                    control.SetTargetExecutable(savedTargets[i]);
+                string target = (i == 0) ? "system" : (i < savedTargets.Count ? savedTargets[i] : "");
+                control.SetTargetExecutable(target);
+                control.SetMuted(false);
+                control.SetVolume(0.5f);
 
                 control.TargetChanged += (_, _) => SaveSettings();
-
-                control.VolumeOrMuteChanged += (target, vol, mute) =>
+                control.VolumeOrMuteChanged += (t, vol, mute) =>
                 {
-                    _audioService.ApplyVolumeToTarget(target, vol, mute); // ✅ important
+                    if (!_isInitializing)
+                        _audioService.ApplyVolumeToTarget(t, vol, mute);
                 };
 
                 _channelControls.Add(control);
                 SliderPanel.Children.Add(control);
             }
 
+            SetMeterVisibilityForAll(ShowSlidersCheckBox.IsChecked ?? true);
 
-            bool show = ShowSlidersCheckBox.IsChecked ?? true;
-            SetMeterVisibilityForAll(show);
+            Dispatcher.InvokeAsync(async () =>
+            {
+               // await Task.Delay(2000);
+                SyncMuteStates();
+                _isInitializing = false; // clearly reset AFTER SyncMuteStates
+                _meterTimer.Start();
+            });
         }
+        private void SyncMuteStates()
+        {
+            var audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            var sessions = audioDevice.AudioSessionManager.Sessions;
 
+            foreach (var ctrl in _channelControls)
+            {
+                string target = ctrl.TargetExecutable?.Trim().ToLower();
+                bool isMuted = false;
+
+                if (string.IsNullOrEmpty(target))
+                {
+                    ctrl.SetMuted(false);
+                    continue;
+                }
+
+                if (target == "system")
+                {
+                    isMuted = audioDevice.AudioEndpointVolume.Mute;
+                    ctrl.SetMuted(isMuted);
+                    _audioService.ApplyVolumeToTarget(target, ctrl.CurrentVolume, isMuted);
+
+                    // 🔔 Subscribe to system volume notifications
+                    audioDevice.AudioEndpointVolume.OnVolumeNotification += (data) =>
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            ctrl.SetMuted(data.Muted);
+                        });
+                    };
+
+                    continue;
+                }
+
+                var matchedSession = Enumerable.Range(0, sessions.Count)
+                    .Select(i => sessions[i])
+                    .FirstOrDefault(s =>
+                    {
+                        try
+                        {
+                            var sessionId = s.GetSessionIdentifier?.ToLower() ?? "";
+                            var instanceId = s.GetSessionInstanceIdentifier?.ToLower() ?? "";
+                            return sessionId.Contains(target) || instanceId.Contains(target);
+                        }
+                        catch { return false; }
+                    });
+
+                if (matchedSession != null)
+                {
+                    isMuted = matchedSession.SimpleAudioVolume.Mute;
+
+                    // ✅ Register proper IAudioSessionEvents handler
+                    try
+                    {
+                        matchedSession.RegisterEventClient(new AudioSessionEventsHandler(ctrl));
+
+
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Failed to register session event: {ex.Message}");
+                    }
+
+                    ctrl.SetMuted(isMuted);
+                    _audioService.ApplyVolumeToTarget(target, ctrl.CurrentVolume, isMuted);
+                }
+            }
+        }
 
 
         private void HandleSliderData(string data)
         {
+            if (_isInitializing) return;
+
             string[] parts = data.Split('|');
 
             Dispatcher.Invoke(() =>
@@ -310,31 +410,27 @@ namespace DeejNG
                 {
                     if (float.TryParse(parts[i].Trim(), out float level))
                     {
-                        // Normalize the level between 0 and 1
                         level = Math.Clamp(level / 1023f, 0f, 1f);
-
-                        // Invert the level if InvertSliderCheckBox is checked
                         if (InvertSliderCheckBox.IsChecked ?? false)
-                        {
-                            level = 1f - level;  // Invert the level for physical volume
-                        }
+                            level = 1f - level;
 
                         float currentVolume = _channelControls[i].CurrentVolume;
                         if (Math.Abs(currentVolume - level) >= 0.01f)
                         {
-                            _channelControls[i].SmoothAndSetVolume(level);
+                            // ✅ Explicitly suppress events here to avoid unmute at startup
+                            _channelControls[i].SmoothAndSetVolume(level, suppressEvent: _isInitializing);
 
                             var target = _channelControls[i].TargetExecutable?.Trim();
-                            if (!string.IsNullOrEmpty(target))
+                            if (!string.IsNullOrEmpty(target) && !_isInitializing)
                             {
                                 _audioService.ApplyVolumeToTarget(target, level, _channelControls[i].IsMuted);
-
                             }
                         }
                     }
                 }
             });
         }
+
 
 
         private void InitSerial(string portName, int baudRate)
@@ -542,16 +638,12 @@ namespace DeejNG
             const float visualGain = 1.5f;
             const float systemCalibrationFactor = 2.0f;
 
-            for (int i = 0; i < _channelControls.Count; i++)
+            foreach (var ctrl in _channelControls)
             {
-                var ctrl = _channelControls[i];
                 var target = ctrl.TargetExecutable?.Trim().ToLower();
 
                 if (string.IsNullOrWhiteSpace(target) || target == "system")
                 {
-                    // Apply system mute
-                
-
                     float systemVolume = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
                     float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
 
@@ -567,12 +659,6 @@ namespace DeejNG
                 {
                     try
                     {
-                        // Apply session mute
-                        if (match.session.SimpleAudioVolume.Mute != ctrl.IsMuted)
-                        {
-                            match.session.SimpleAudioVolume.Mute = ctrl.IsMuted;
-                        }
-
                         float peak = match.session.AudioMeterInformation.MasterPeakValue;
                         float sliderVol = ctrl.CurrentVolume;
                         float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * sliderVol * visualGain, 1.0f);
@@ -619,9 +705,9 @@ namespace DeejNG
         {
             public string? PortName { get; set; }
             public List<string> Targets { get; set; } = new();
+            public List<bool> MuteStates { get; set; } = new(); // ✅ Add exactly this
             public bool IsDarkTheme { get; set; }
             public bool IsSliderInverted { get; set; }
-
             public bool VuMeters { get; set; } = true;
         }
 

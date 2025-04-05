@@ -91,7 +91,7 @@ namespace DeejNG.Dialogs
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"Failed to get process name: {ex.Message}");
+                        //Debug.WriteLine($"Failed to get process name: {ex.Message}");
                     }
                 }
 

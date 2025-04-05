@@ -21,7 +21,7 @@ namespace DeejNG.Dialogs
         private DateTime _peakTimestamp;
         private float _smoothedVolume;
         public event Action<string, float, bool> VolumeOrMuteChanged;
-
+        private bool _suppressEvents = false;
         private readonly Brush _muteOnBrush = new SolidColorBrush(Color.FromRgb(255, 64, 64)); // Bright red
         private readonly Brush _muteOffBrush = Brushes.Gray;
 
@@ -68,14 +68,20 @@ namespace DeejNG.Dialogs
 
         public void SetVolume(float level)
         {
+            _suppressEvents = true; // ✅ prevent events
             VolumeSlider.Value = level;
+            _suppressEvents = false;
         }
 
-        public void SmoothAndSetVolume(float rawLevel)
+
+        public void SmoothAndSetVolume(float rawLevel, bool suppressEvent = false)
         {
+            _suppressEvents = suppressEvent;
             _smoothedVolume = _smoothedVolume == 0 ? rawLevel : _smoothedVolume + (rawLevel - _smoothedVolume) * SmoothingFactor;
             SetVolume(_smoothedVolume);
+            _suppressEvents = false;
         }
+
 
         public void UpdateAudioMeter(float rawLevel)
         {
@@ -131,22 +137,29 @@ namespace DeejNG.Dialogs
 
         private void MuteButton_Checked(object sender, RoutedEventArgs e)
         {
-            _isMuted = !_isMuted;
-            Debug.WriteLine($"[ChannelControl] Toggled mute. New state: {_isMuted}");
+            if (_suppressEvents) return;
 
+            _isMuted = true;
             UpdateMuteButtonVisual();
-            VolumeOrMuteChanged?.Invoke(TargetExecutable, CurrentVolume, _isMuted); // ✅ this is what MainWindow uses
+            VolumeOrMuteChanged?.Invoke(TargetExecutable, CurrentVolume, _isMuted);
         }
 
         private void MuteButton_Unchecked(object sender, RoutedEventArgs e)
         {
+            if (_suppressEvents) return;
+
             _isMuted = false;
-            Debug.WriteLine($"[ChannelControl] Toggled unmuted. New state: {_isMuted}");
-
             UpdateMuteButtonVisual();
-            VolumeOrMuteChanged?.Invoke(TargetExecutable, CurrentVolume, _isMuted); // ✅ this is what MainWindow uses
+            VolumeOrMuteChanged?.Invoke(TargetExecutable, CurrentVolume, _isMuted);
         }
-
+        public void SetMuted(bool muted)
+        {
+            _suppressEvents = true;
+            _isMuted = muted;
+            MuteButton.IsChecked = muted;
+            UpdateMuteButtonVisual();
+            _suppressEvents = false;
+        }
         private void UpdateMuteButtonVisual()
         {
             if (MuteButton != null)

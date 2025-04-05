@@ -21,7 +21,7 @@ namespace DeejNG.Services
 
             if (string.IsNullOrWhiteSpace(executable) || executable.Trim().Equals("system", StringComparison.OrdinalIgnoreCase))
             {
-                Debug.WriteLine($"[System Mute] isMuted={isMuted}, level={level}");
+                //Debug.WriteLine($"[System Mute] isMuted={isMuted}, level={level}");
 
                 var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 device.AudioEndpointVolume.Mute = isMuted;
@@ -60,7 +60,7 @@ namespace DeejNG.Services
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[Error] Session {i}: {ex.Message}");
+                  //  Debug.WriteLine($"[Error] Session {i}: {ex.Message}");
                 }
             }
         }
