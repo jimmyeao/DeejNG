@@ -491,7 +491,27 @@ namespace DeejNG
                 _cachedSessions = _audioDevice.AudioSessionManager.Sessions;
                 _lastSessionRefresh = DateTime.Now;
                 RefreshSessionLookup();
+                //for (int s = 0; s < _cachedSessions.Count; s++)
+                //{
+                //    var session = _cachedSessions[s];
+
+                //    try
+                //    {
+                //        string sessionId = session.GetSessionIdentifier;
+                //        string instanceId = session.GetSessionInstanceIdentifier;
+                //        string displayName = session.DisplayName;
+
+                //        System.Diagnostics.Debug.WriteLine($"[Session] DisplayName: {displayName}, ID: {sessionId}, Instance: {instanceId}");
+                //    }
+                //    catch
+                //    {
+                //        // ignore bad sessions
+                //    }
+                //}
+
+
             }
+         
 
 
             const float visualGain = 1.5f; // Boost perceived level for visual effect
