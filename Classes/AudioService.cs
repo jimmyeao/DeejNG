@@ -14,20 +14,59 @@ namespace DeejNG.Services
         {
             _defaultDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
         }
+        public void ApplyMuteStateToTarget(string target, bool isMuted)
+        {
+            if (string.IsNullOrWhiteSpace(target)) return;
 
-        public void ApplyVolumeToTarget(string executable, float level)
+            if (target == "system")
+            {
+                var dev = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                dev.AudioEndpointVolume.Mute = isMuted;
+            }
+            else
+            {
+                var dev = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                var sessions = dev.AudioSessionManager.Sessions;
+
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        string sessionId = session.GetSessionIdentifier?.ToLower() ?? "";
+                        string instanceId = session.GetSessionInstanceIdentifier?.ToLower() ?? "";
+
+                        if (sessionId.Contains(target) || instanceId.Contains(target))
+                        {
+                            session.SimpleAudioVolume.Mute = isMuted;
+                        }
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        public void ApplyVolumeToTarget(string executable, float level, bool isMuted = false)
         {
             level = Math.Clamp(level, 0.0f, 1.0f);
 
-            if (string.IsNullOrWhiteSpace(executable) || executable.Equals("system", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(executable) || executable.Trim().Equals("system", StringComparison.OrdinalIgnoreCase))
             {
-                var freshDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                freshDevice.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                //Debug.WriteLine($"[System Mute] isMuted={isMuted}, level={level}");
+
+                var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                device.AudioEndpointVolume.Mute = isMuted;
+
+                if (!isMuted)
+                {
+                    device.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                }
+
                 return;
             }
 
-            var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-            var sessions = device.AudioSessionManager.Sessions;
+            // Normal session logic...
+            var sessions = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia).AudioSessionManager.Sessions;
 
             for (int i = 0; i < sessions.Count; i++)
             {
@@ -37,22 +76,26 @@ namespace DeejNG.Services
                     var sessionId = session.GetSessionIdentifier;
                     var instanceId = session.GetSessionInstanceIdentifier;
 
-                    Debug.WriteLine($"[Session {i}] ID: {sessionId}\nInstance: {instanceId}");
-
-                    if (!string.IsNullOrWhiteSpace(sessionId) && sessionId.Contains(executable, StringComparison.OrdinalIgnoreCase) ||
-                        !string.IsNullOrWhiteSpace(instanceId) && instanceId.Contains(executable, StringComparison.OrdinalIgnoreCase))
+                    if ((!string.IsNullOrWhiteSpace(sessionId) && sessionId.Contains(executable, StringComparison.OrdinalIgnoreCase)) ||
+                        (!string.IsNullOrWhiteSpace(instanceId) && instanceId.Contains(executable, StringComparison.OrdinalIgnoreCase)))
                     {
-                        Debug.WriteLine($"[Match] Found match for '{executable}' in session {i}");
-                        session.SimpleAudioVolume.Volume = level;
+                        session.SimpleAudioVolume.Mute = isMuted;
+
+                        if (!isMuted)
+                        {
+                            session.SimpleAudioVolume.Volume = level;
+                        }
+
                         return;
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[Error] Session {i}: {ex.Message}");
+                  //  Debug.WriteLine($"[Error] Session {i}: {ex.Message}");
                 }
             }
         }
+
 
     }
 }
