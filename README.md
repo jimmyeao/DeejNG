@@ -3,11 +3,8 @@
 
 A simple Windows Companion app to Deej
 
-![image](https://github.com/user-attachments/assets/360d7b88-dcb0-4cf9-af68-010651217fab)
+![Screen Recording 2025-04-05 174452](https://github.com/user-attachments/assets/dbe792ff-c8e4-4fe5-94c9-37ba37958af6)
 
-
-
-https://github.com/user-attachments/assets/53543dbc-8d7f-4616-b0e6-5e48b1624452
 
 
 
