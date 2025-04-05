@@ -266,31 +266,33 @@ namespace DeejNG
             SliderPanel.Children.Clear();
             _channelControls.Clear();
 
-            // Use savedTargets to load targets
             var savedTargets = LoadSettingsFromDisk()?.Targets ?? new List<string>();
 
             for (int i = 0; i < count; i++)
             {
                 var control = new ChannelControl();
-                if (i == 0)
-                {
-                    control.SetTargetExecutable("system");
-                }
-                else if (i < savedTargets.Count)
-                {
-                    control.SetTargetExecutable(savedTargets[i]);
-                }
 
-                control.TargetChanged += (_, _) => SaveSettings();  // Save settings after target change
+                if (i == 0)
+                    control.SetTargetExecutable("system");
+                else if (i < savedTargets.Count)
+                    control.SetTargetExecutable(savedTargets[i]);
+
+                control.TargetChanged += (_, _) => SaveSettings();
+
+                control.VolumeOrMuteChanged += (target, vol, mute) =>
+                {
+                    _audioService.ApplyVolumeToTarget(target, vol, mute); // ✅ important
+                };
+
                 _channelControls.Add(control);
                 SliderPanel.Children.Add(control);
             }
 
-            // ✅ Apply visibility immediately based on checkbox
+
             bool show = ShowSlidersCheckBox.IsChecked ?? true;
             SetMeterVisibilityForAll(show);
-
         }
+
 
 
         private void HandleSliderData(string data)
@@ -547,10 +549,7 @@ namespace DeejNG
                 if (string.IsNullOrWhiteSpace(target) || target == "system")
                 {
                     // Apply system mute
-                    if (_audioDevice.AudioEndpointVolume.Mute != ctrl.IsMuted)
-                    {
-                        _audioDevice.AudioEndpointVolume.Mute = ctrl.IsMuted;
-                    }
+                
 
                     float systemVolume = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
                     float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;

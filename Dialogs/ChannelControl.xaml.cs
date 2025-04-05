@@ -20,6 +20,7 @@ namespace DeejNG.Dialogs
         private float _peakLevel;
         private DateTime _peakTimestamp;
         private float _smoothedVolume;
+        public event Action<string, float, bool> VolumeOrMuteChanged;
 
         private readonly Brush _muteOnBrush = new SolidColorBrush(Color.FromRgb(255, 64, 64)); // Bright red
         private readonly Brush _muteOffBrush = Brushes.Gray;
@@ -61,7 +62,9 @@ namespace DeejNG.Dialogs
         public void SetTargetExecutable(string target)
         {
             TargetTextBox.Text = target;
+            UpdateMuteButtonEnabled(); // 👈 now it disables the mute button if empty
         }
+
 
         public void SetVolume(float level)
         {
@@ -118,23 +121,30 @@ namespace DeejNG.Dialogs
             }
         }
 
-        private void MuteButton_Click(object sender, RoutedEventArgs e)
+        private void UpdateMuteButtonEnabled()
         {
-            _isMuted = !_isMuted;
-            UpdateMuteButtonVisual();
-            TargetChanged?.Invoke(this, EventArgs.Empty);
+            var target = TargetExecutable?.Trim();
+            MuteButton.IsEnabled = !string.IsNullOrWhiteSpace(target) && !string.Equals(target, "(empty)", StringComparison.OrdinalIgnoreCase);
         }
+
+
 
         private void MuteButton_Checked(object sender, RoutedEventArgs e)
         {
-            _isMuted = true;
+            _isMuted = !_isMuted;
+            Debug.WriteLine($"[ChannelControl] Toggled mute. New state: {_isMuted}");
+
             UpdateMuteButtonVisual();
+            VolumeOrMuteChanged?.Invoke(TargetExecutable, CurrentVolume, _isMuted); // ✅ this is what MainWindow uses
         }
 
         private void MuteButton_Unchecked(object sender, RoutedEventArgs e)
         {
             _isMuted = false;
+            Debug.WriteLine($"[ChannelControl] Toggled unmuted. New state: {_isMuted}");
+
             UpdateMuteButtonVisual();
+            VolumeOrMuteChanged?.Invoke(TargetExecutable, CurrentVolume, _isMuted); // ✅ this is what MainWindow uses
         }
 
         private void UpdateMuteButtonVisual()
@@ -149,8 +159,10 @@ namespace DeejNG.Dialogs
 
         private void TargetTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
+            UpdateMuteButtonEnabled(); // 👈 keep in sync
             TargetChanged?.Invoke(this, EventArgs.Empty);
         }
+
 
         #endregion Private Methods
     }
