@@ -142,10 +142,10 @@ namespace DeejNG
         private void EnableStartup()
         {
             string appName = "DeejNG";
-            string exePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+            string exePath = Environment.ProcessPath;
             try
             {
-                using RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\\Microsoft\\Windows\\CurrentVersion\\Run", true);
+                using RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
                 key?.SetValue(appName, $"\"{exePath}\"", RegistryValueKind.String);
             }
             catch (Exception ex)
@@ -153,6 +153,7 @@ namespace DeejNG
                 MessageBox.Show($"Failed to set startup key: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
+
 
         private void DisableStartup()
         {
