@@ -352,7 +352,8 @@ namespace DeejNG
                 {
                     isMuted = audioDevice.AudioEndpointVolume.Mute;
                     ctrl.SetMuted(isMuted);
-                    _audioService.ApplyVolumeToTarget(target, ctrl.CurrentVolume, isMuted);
+                    _audioService.ApplyMuteStateToTarget(target, isMuted);
+
 
                     // 🔔 Subscribe to system volume notifications
                     //audioDevice.AudioEndpointVolume.OnVolumeNotification += (data) =>
@@ -432,7 +433,11 @@ namespace DeejNG
                             var target = _channelControls[i].TargetExecutable?.Trim();
                             if (!string.IsNullOrEmpty(target) && !_isInitializing)
                             {
-                                _audioService.ApplyVolumeToTarget(target, level, _channelControls[i].IsMuted);
+                                if (!_isInitializing)
+                                {
+                                    _audioService.ApplyVolumeToTarget(target, level, _channelControls[i].IsMuted);
+                                }
+
                             }
                         }
                     }
@@ -643,13 +648,6 @@ namespace DeejNG
                 RefreshSessionLookup(); // <- keep this if you're caching sessionId/instanceId
             }
 
-            //if ((DateTime.Now - _lastSessionRefresh).TotalSeconds > 2)
-            //{
-            //    _cachedSessions = _audioDevice.AudioSessionManager.Sessions;
-            //    _lastSessionRefresh = DateTime.Now;
-            //    RefreshSessionLookup();
-            //}
-
             const float visualGain = 1.5f;
             const float systemCalibrationFactor = 2.0f;
 
@@ -657,7 +655,14 @@ namespace DeejNG
             {
                 var target = ctrl.TargetExecutable?.Trim().ToLower();
 
-                if (string.IsNullOrWhiteSpace(target) || target == "system")
+                // ✅ Skip unassigned channels and clear meter
+                if (string.IsNullOrWhiteSpace(target))
+                {
+                    ctrl.UpdateAudioMeter(0);
+                    continue;
+                }
+
+                if (target == "system")
                 {
                     float systemVolume = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
                     float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
@@ -692,6 +697,7 @@ namespace DeejNG
 
             Dispatcher.BeginInvoke(() => SliderPanel.InvalidateVisual(), DispatcherPriority.Render);
         }
+
 
 
         private void ShowSlidersCheckBox_Checked(object sender, RoutedEventArgs e)

@@ -14,6 +14,37 @@ namespace DeejNG.Services
         {
             _defaultDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
         }
+        public void ApplyMuteStateToTarget(string target, bool isMuted)
+        {
+            if (string.IsNullOrWhiteSpace(target)) return;
+
+            if (target == "system")
+            {
+                var dev = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                dev.AudioEndpointVolume.Mute = isMuted;
+            }
+            else
+            {
+                var dev = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                var sessions = dev.AudioSessionManager.Sessions;
+
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        string sessionId = session.GetSessionIdentifier?.ToLower() ?? "";
+                        string instanceId = session.GetSessionInstanceIdentifier?.ToLower() ?? "";
+
+                        if (sessionId.Contains(target) || instanceId.Contains(target))
+                        {
+                            session.SimpleAudioVolume.Mute = isMuted;
+                        }
+                    }
+                    catch { }
+                }
+            }
+        }
 
         public void ApplyVolumeToTarget(string executable, float level, bool isMuted = false)
         {
