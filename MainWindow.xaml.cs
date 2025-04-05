@@ -327,7 +327,8 @@ namespace DeejNG
                             var target = _channelControls[i].TargetExecutable?.Trim();
                             if (!string.IsNullOrEmpty(target))
                             {
-                                _audioService.ApplyVolumeToTarget(target, level);
+                                _audioService.ApplyVolumeToTarget(target, level, _channelControls[i].IsMuted);
+
                             }
                         }
                     }
