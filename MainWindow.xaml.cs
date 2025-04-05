@@ -42,6 +42,8 @@ namespace DeejNG
         private SessionCollection _cachedSessions;
         private Dictionary<string, AudioSessionControl> _sessionLookup = new();
         private List<(AudioSessionControl session, string sessionId, string instanceId)> _sessionIdCache = new();
+
+
         private DateTime _lastDeviceRefresh = DateTime.MinValue;
         private bool _hasSyncedMuteStates = false;
         private AppSettings _appSettings = new();
@@ -78,6 +80,8 @@ namespace DeejNG
                 Interval = TimeSpan.FromMilliseconds(10)
             };
             _meterTimer.Tick += UpdateMeters;
+            _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            StartSessionCacheUpdater(); // ← call here
 
             MyNotifyIcon.Icon = new System.Drawing.Icon(iconPath);
             CreateNotifyIconContextMenu();
@@ -110,12 +114,12 @@ namespace DeejNG
 
                 if (systemControl != null)
                 {
-                    Debug.WriteLine($"[System Mute Event] Windows muted = {data.Muted}");
+                  
                     systemControl.SetMuted(data.Muted);
                 }
                 else
                 {
-                    Debug.WriteLine("[System Mute Event] No system control found.");
+                   
                 }
             });
         }
@@ -126,6 +130,64 @@ namespace DeejNG
             _appSettings.StartOnBoot = true;
             SaveSettings();
         }
+        private void StartSessionCacheUpdater()
+        {
+            var sessionTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(5)
+            };
+
+            sessionTimer.Tick += (_, _) =>
+            {
+                try
+                {
+                    var sessions = new MMDeviceEnumerator()
+                        .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
+                        .AudioSessionManager.Sessions;
+
+                    var targets = GetCurrentTargets(); // <- your method that gets all active targets
+
+                    for (int i = 0; i < sessions.Count; i++)
+                    {
+                        var session = sessions[i];
+                        try
+                        {
+                            string sid = session.GetSessionIdentifier?.ToLowerInvariant() ?? "";
+                            string iid = session.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
+
+                            if (!_sessionIdCache.Any(t => t.sessionId == sid && t.instanceId == iid))
+                            {
+                                foreach (var target in targets)
+                                {
+                                    if (sid.Contains(target) || iid.Contains(target))
+                                    {
+                                        _sessionIdCache.Add((session, sid, iid));
+
+                                       
+
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                           
+
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                   
+
+                }
+            };
+
+            sessionTimer.Start();
+        }
+
+
 
         private void StartOnBootCheckBox_Unchecked(object sender, RoutedEventArgs e)
         {
@@ -264,30 +326,7 @@ namespace DeejNG
 
             base.OnStateChanged(e);
         }
-        private void RefreshSessionLookup()
-        {
-            _sessionIdCache.Clear();
-
-            for (int i = 0; i < _cachedSessions.Count; i++)
-            {
-                var session = _cachedSessions[i];
-
-                try
-                {
-                    string sessionId = session.GetSessionIdentifier ?? string.Empty;
-                    string instanceId = session.GetSessionInstanceIdentifier ?? string.Empty;
-
-                    _sessionIdCache.Add((session, sessionId.ToLower(), instanceId.ToLower()));
-
-                    // Debug: log what we're caching
-                   // Debug.WriteLine($"[Session] ID: {sessionId}, Instance: {instanceId}");
-                }
-                catch
-                {
-                    // Skip bad sessions
-                }
-            }
-        }
+     
 
 
         public List<string> GetCurrentTargets()
@@ -450,7 +489,8 @@ namespace DeejNG
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"Failed to register session event: {ex.Message}");
+                       
+
                     }
 
                     ctrl.SetMuted(isMuted);
@@ -720,29 +760,23 @@ namespace DeejNG
 
         private void UpdateMeters(object? sender, EventArgs e)
         {
-            if (!_metersEnabled)
-                return;
-
-            if ((DateTime.Now - _lastDeviceRefresh).TotalSeconds > 5)
-            {
-                _cachedSessions = _audioDevice.AudioSessionManager.Sessions;
-                _lastDeviceRefresh = DateTime.Now;
-            }
-            if ((DateTime.Now - _lastSessionRefresh).TotalSeconds > 2)
-            {
-                _cachedSessions = _audioDevice.AudioSessionManager.Sessions;
-                _lastSessionRefresh = DateTime.Now;
-                RefreshSessionLookup(); // <- keep this if you're caching sessionId/instanceId
-            }
+            if (!_metersEnabled) return;
 
             const float visualGain = 1.5f;
             const float systemCalibrationFactor = 2.0f;
 
+            // Only refresh audio device every 5 seconds to save CPU
+            if ((DateTime.Now - _lastDeviceRefresh).TotalSeconds > 5)
+            {
+                _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                _lastDeviceRefresh = DateTime.Now;
+            }
+
+            var sessions = _audioDevice.AudioSessionManager.Sessions;
+
             foreach (var ctrl in _channelControls)
             {
                 var target = ctrl.TargetExecutable?.Trim().ToLower();
-
-                // ✅ Skip unassigned channels and clear meter
                 if (string.IsNullOrWhiteSpace(target))
                 {
                     ctrl.UpdateAudioMeter(0);
@@ -751,24 +785,48 @@ namespace DeejNG
 
                 if (target == "system")
                 {
-                    float systemVolume = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
                     float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
-
-                    float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * systemVolume * systemCalibrationFactor * visualGain, 1.0f);
+                    float systemVol = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
+                    float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * systemVol * systemCalibrationFactor * visualGain, 1.0f);
                     ctrl.UpdateAudioMeter(boosted);
                     continue;
                 }
 
-                var match = _sessionIdCache.FirstOrDefault(tuple =>
-                    tuple.sessionId.Contains(target) || tuple.instanceId.Contains(target));
+                AudioSessionControl? matchingSession = null;
 
-                if (match.session != null)
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    var s = sessions[i];
+                    try
+                    {
+                        string sid = s.GetSessionIdentifier?.ToLowerInvariant() ?? "";
+                        string iid = s.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
+                        int pid = (int)s.GetProcessID;
+
+                        string procName = "";
+                        try { procName = Process.GetProcessById(pid).ProcessName.ToLowerInvariant(); } catch { }
+
+                     
+
+                        var sidFile = Path.GetFileNameWithoutExtension(sid);
+                        var iidFile = Path.GetFileNameWithoutExtension(iid);
+
+                        if (sidFile == target || iidFile == target || procName == target ||
+                            sid.Contains(target) || iid.Contains(target))
+                        {
+                            matchingSession = s;
+                            break;
+                        }
+                    }
+                    catch { }
+                }
+
+                if (matchingSession != null)
                 {
                     try
                     {
-                        float peak = match.session.AudioMeterInformation.MasterPeakValue;
-                        float sliderVol = ctrl.CurrentVolume;
-                        float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * sliderVol * visualGain, 1.0f);
+                        float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
+                        float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * ctrl.CurrentVolume * visualGain, 1.0f);
                         ctrl.UpdateAudioMeter(boosted);
                     }
                     catch
@@ -778,12 +836,15 @@ namespace DeejNG
                 }
                 else
                 {
+                   
                     ctrl.UpdateAudioMeter(0);
                 }
             }
 
-            Dispatcher.BeginInvoke(() => SliderPanel.InvalidateVisual(), DispatcherPriority.Render);
+            Dispatcher.InvokeAsync(() => SliderPanel.InvalidateVisual(), DispatcherPriority.Render);
         }
+
+
 
 
         private void StartMinimizedCheckBox_Checked(object sender, RoutedEventArgs e)
