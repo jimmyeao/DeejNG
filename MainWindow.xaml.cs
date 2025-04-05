@@ -1,6 +1,7 @@
 ﻿// MainWindow.xaml.cs
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
@@ -31,9 +32,15 @@ namespace DeejNG
         private bool _isConnected = false;
         private DispatcherTimer _meterTimer;
         private StringBuilder _serialBuffer = new();
-       
+        private readonly MMDeviceEnumerator _deviceEnumerator = new();
         private SerialPort _serialPort;
-          // Track connection state
+        private MMDevice _audioDevice;
+        private DateTime _lastSessionRefresh = DateTime.MinValue;
+        private SessionCollection _cachedSessions;
+        private Dictionary<string, AudioSessionControl> _sessionLookup = new();
+        private List<(AudioSessionControl session, string sessionId, string instanceId)> _sessionIdCache = new();
+
+        // Track connection state
 
         private bool isDarkTheme = false;
 
@@ -156,6 +163,33 @@ namespace DeejNG
 
             base.OnStateChanged(e);
         }
+        private void RefreshSessionLookup()
+        {
+            _sessionIdCache.Clear();
+
+            for (int i = 0; i < _cachedSessions.Count; i++)
+            {
+                var session = _cachedSessions[i];
+
+                try
+                {
+                    string sessionId = session.GetSessionIdentifier ?? string.Empty;
+                    string instanceId = session.GetSessionInstanceIdentifier ?? string.Empty;
+
+                    _sessionIdCache.Add((session, sessionId.ToLower(), instanceId.ToLower()));
+
+                    // Debug: log what we're caching
+                   // Debug.WriteLine($"[Session] ID: {sessionId}, Instance: {instanceId}");
+                }
+                catch
+                {
+                    // Skip bad sessions
+                }
+            }
+        }
+
+
+
 
         private void ComPortSelector_DropDownOpened(object sender, EventArgs e)
         {
@@ -442,8 +476,16 @@ namespace DeejNG
 
         private void UpdateMeters(object? sender, EventArgs e)
         {
-            var device = new MMDeviceEnumerator().GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-            var sessions = device.AudioSessionManager.Sessions;
+          
+            _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+
+            if ((DateTime.Now - _lastSessionRefresh).TotalSeconds > 2)
+            {
+                _cachedSessions = _audioDevice.AudioSessionManager.Sessions;
+                _lastSessionRefresh = DateTime.Now;
+                RefreshSessionLookup();
+            }
+
 
             const float visualGain = 1.5f; // Boost perceived level for visual effect
             const float systemCalibrationFactor = 2.0f; // Boost for system volume to reach realistic levels
@@ -451,58 +493,45 @@ namespace DeejNG
             for (int i = 0; i < _channelControls.Count; i++)
             {
                 var ctrl = _channelControls[i];
-                var target = ctrl.TargetExecutable?.Trim();
+                var target = ctrl.TargetExecutable?.Trim().ToLower();
 
-                if (string.IsNullOrWhiteSpace(target) || target.Equals("system", StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrWhiteSpace(target) || target == "system")
                 {
-                    // Get system volume level (0.0 - 1.0)
-                    float systemVolume = device.AudioEndpointVolume.MasterVolumeLevelScalar;
+                    float systemVolume = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
+                    float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
+                    float boosted = Math.Min(peak * systemVolume * systemCalibrationFactor * visualGain, 1.0f);
+                    ctrl.UpdateAudioMeter(boosted);
+                    continue;
+                }
 
-                    // Get the peak value for system audio (0.0 - 1.0)
-                    float peak = device.AudioMeterInformation.MasterPeakValue;
+                // 🧠 Fuzzy match using cached ID strings
+                var match = _sessionIdCache.FirstOrDefault(tuple =>
+                    tuple.sessionId.Contains(target) || tuple.instanceId.Contains(target));
 
-                    // Apply system volume scaling, then apply stronger calibration
-                    float boostedPeak = Math.Min(peak * systemVolume * systemCalibrationFactor * visualGain, 1.0f);
+                if (match.session != null)
+                {
+                    try
+                    {
+                        float peak = match.session.AudioMeterInformation.MasterPeakValue;
+                        float sliderVol = ctrl.CurrentVolume;
+                        float boosted = Math.Min(peak * sliderVol * visualGain, 1.0f);
+                        ctrl.UpdateAudioMeter(boosted);
 
-                    // Update the meter
-                    ctrl.UpdateAudioMeter(boostedPeak);
+
+                        //Debug.WriteLine($"MATCH: target={target} → peak={peak}, volume={volume}");
+                    }
+                    catch
+                    {
+                        ctrl.UpdateAudioMeter(0); // fallback
+                    }
                 }
                 else
                 {
-                    bool sessionFound = false;
-
-                    for (int j = 0; j < sessions.Count; j++)
-                    {
-                        var session = sessions[j];
-                        try
-                        {
-                            var sessionId = session.GetSessionIdentifier;
-                            var instanceId = session.GetSessionInstanceIdentifier;
-
-                            if ((sessionId?.Contains(target, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                                (instanceId?.Contains(target, StringComparison.OrdinalIgnoreCase) ?? false))
-                            {
-                                // Session found, apply the meter
-                                float peak = session.AudioMeterInformation.MasterPeakValue * session.SimpleAudioVolume.Volume;
-                                float boosted = Math.Min(peak * visualGain, 1.0f);
-                                ctrl.UpdateAudioMeter(boosted);
-                                sessionFound = true;
-                                break;
-                            }
-                        }
-                        catch
-                        {
-                            // Ignore bad sessions
-                        }
-                    }
-
-                    // If no session is found, reset the level to 0 (empty meter)
-                    if (!sessionFound)
-                    {
-                        ctrl.UpdateAudioMeter(0); // Reset meter to 0 if no session is found
-                    }
+                    ctrl.UpdateAudioMeter(0);
+                   // Debug.WriteLine($"NO MATCH: target={target}");
                 }
             }
+
         }
         #endregion Private Methods
 

@@ -37,19 +37,19 @@ namespace DeejNG.Services
                     var sessionId = session.GetSessionIdentifier;
                     var instanceId = session.GetSessionInstanceIdentifier;
 
-                    Debug.WriteLine($"[Session {i}] ID: {sessionId}\nInstance: {instanceId}");
+                    //Debug.WriteLine($"[Session {i}] ID: {sessionId}\nInstance: {instanceId}");
 
                     if (!string.IsNullOrWhiteSpace(sessionId) && sessionId.Contains(executable, StringComparison.OrdinalIgnoreCase) ||
                         !string.IsNullOrWhiteSpace(instanceId) && instanceId.Contains(executable, StringComparison.OrdinalIgnoreCase))
                     {
-                        Debug.WriteLine($"[Match] Found match for '{executable}' in session {i}");
+                        //Debug.WriteLine($"[Match] Found match for '{executable}' in session {i}");
                         session.SimpleAudioVolume.Volume = level;
                         return;
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[Error] Session {i}: {ex.Message}");
+                    //Debug.WriteLine($"[Error] Session {i}: {ex.Message}");
                 }
             }
         }
