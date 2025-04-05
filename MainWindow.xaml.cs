@@ -143,16 +143,32 @@ namespace DeejNG
         {
             string appName = "DeejNG";
             string exePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-            RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
-            key.SetValue(appName, $"\"{exePath}\"");
+            try
+            {
+                using RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\\Microsoft\\Windows\\CurrentVersion\\Run", true);
+                key?.SetValue(appName, $"\"{exePath}\"", RegistryValueKind.String);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to set startup key: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void DisableStartup()
         {
             string appName = "DeejNG";
-            RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
-            if (key.GetValue(appName) != null)
-                key.DeleteValue(appName);
+            try
+            {
+                using RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\\Microsoft\\Windows\\CurrentVersion\\Run", true);
+                if (key?.GetValue(appName) != null)
+                {
+                    key.DeleteValue(appName);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to delete startup key: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
 
