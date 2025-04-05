@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
+using Microsoft.Win32;
 
 using System.Runtime;
 using System.Text;
@@ -43,7 +44,7 @@ namespace DeejNG
         private List<(AudioSessionControl session, string sessionId, string instanceId)> _sessionIdCache = new();
         private DateTime _lastDeviceRefresh = DateTime.MinValue;
         private bool _hasSyncedMuteStates = false;
-
+        private AppSettings _appSettings = new();
         private AudioEndpointVolume _systemVolume;
 
 
@@ -74,7 +75,7 @@ namespace DeejNG
 
             _meterTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(100)
+                Interval = TimeSpan.FromMilliseconds(10)
             };
             _meterTimer.Tick += UpdateMeters;
 
@@ -85,13 +86,20 @@ namespace DeejNG
             LoadSettings();
 
             _isInitializing = false;
-            // ⚠️ REMOVE THIS LINE FROM HERE:
-            // _meterTimer.Start(); <-- DELETE THIS LINE
+            if (_appSettings.StartMinimized)
+            {
+                WindowState = WindowState.Minimized;
+                Hide();
+                MyNotifyIcon.Visibility = Visibility.Visible;
+            }
+
+   
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             SliderScrollViewer.Visibility = Visibility.Visible;
+            StartOnBootCheckBox.IsChecked = _appSettings.StartOnBoot;
         }
         private void AudioEndpointVolume_OnVolumeNotification(AudioVolumeNotificationData data)
         {
@@ -111,7 +119,41 @@ namespace DeejNG
                 }
             });
         }
+        private void StartOnBootCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_isInitializing) return;
+            EnableStartup();
+            _appSettings.StartOnBoot = true;
+            SaveSettings();
+        }
 
+        private void StartOnBootCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (_isInitializing) return;
+            //check the value in _settings
+            
+            DisableStartup();
+            _appSettings.StartOnBoot = false;
+            SaveSettings();
+        }
+
+
+
+        private void EnableStartup()
+        {
+            string appName = "DeejNG";
+            string exePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+            RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
+            key.SetValue(appName, $"\"{exePath}\"");
+        }
+
+        private void DisableStartup()
+        {
+            string appName = "DeejNG";
+            RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
+            if (key.GetValue(appName) != null)
+                key.DeleteValue(appName);
+        }
 
 
         private static void SetDisplayIcon()
@@ -326,11 +368,11 @@ namespace DeejNG
 
             Dispatcher.InvokeAsync(async () =>
             {
-               // await Task.Delay(2000);
                 SyncMuteStates();
-                _isInitializing = false; // clearly reset AFTER SyncMuteStates
                 _meterTimer.Start();
+                _isInitializing = false; // ✅ Set this **last**, after the UI has settled
             });
+
         }
         private void SyncMuteStates()
         {
@@ -493,6 +535,7 @@ namespace DeejNG
             {
                 InitSerial(settings.PortName, 9600);
             }
+
             ApplyTheme(settings?.IsDarkTheme == true ? "Dark" : "Light");
             InvertSliderCheckBox.IsChecked = settings?.IsSliderInverted ?? false;
             ShowSlidersCheckBox.IsChecked = settings?.VuMeters ?? true;
@@ -501,10 +544,30 @@ namespace DeejNG
             ShowSlidersCheckBox.IsChecked = showMeters;
             SetMeterVisibilityForAll(showMeters);
 
+            // ✅ Unsubscribe events temporarily
+            StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
+            StartOnBootCheckBox.Unchecked -= StartOnBootCheckBox_Unchecked;
+
+            bool isInStartup = IsStartupEnabled();
+            _appSettings.StartOnBoot = isInStartup;
+            StartOnBootCheckBox.IsChecked = isInStartup;
+
+            // ✅ Re-subscribe after setting the value
+            StartOnBootCheckBox.Checked += StartOnBootCheckBox_Checked;
+            StartOnBootCheckBox.Unchecked += StartOnBootCheckBox_Unchecked;
+
+            StartMinimizedCheckBox.IsChecked = settings?.StartMinimized ?? false;
+            StartMinimizedCheckBox.Checked += StartMinimizedCheckBox_Checked;
             foreach (var ctrl in _channelControls)
                 ctrl.SetMeterVisibility(showMeters);
+        }
 
-
+        private bool IsStartupEnabled()
+        {
+            const string appName = "DeejNG";
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", false);
+            var value = key?.GetValue(appName) as string;
+            return !string.IsNullOrEmpty(value);
         }
 
         private AppSettings LoadSettingsFromDisk()
@@ -514,13 +577,16 @@ namespace DeejNG
                 if (File.Exists(SettingsPath))
                 {
                     var json = File.ReadAllText(SettingsPath);
-                    return JsonSerializer.Deserialize<AppSettings>(json);
-                   
+                    _appSettings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+                    return _appSettings; // ✅ return the same reference
                 }
             }
             catch { }
-            return null;
+
+            _appSettings = new AppSettings();
+            return _appSettings;
         }
+
 
         private void MainWindow_StateChanged(object sender, EventArgs e)
         {
@@ -540,16 +606,20 @@ namespace DeejNG
         {
             if (this.WindowState == WindowState.Minimized)
             {
-                // Restore the window if it's minimized
                 this.Show();
                 this.WindowState = WindowState.Normal;
+
+                // ✅ Force WPF to recalculate layout now that we're visible
+                this.InvalidateMeasure();
+                this.UpdateLayout();
             }
             else
             {
-                // Minimize the window if it's currently normal or maximized
                 this.WindowState = WindowState.Minimized;
+                this.Hide();
             }
         }
+
         private void SaveSettings()
         {
             if (_isInitializing) return;
@@ -561,7 +631,9 @@ namespace DeejNG
                     Targets = _channelControls.Select(c => c.TargetExecutable?.Trim() ?? string.Empty).ToList(),
                     IsDarkTheme = isDarkTheme,
                     IsSliderInverted = InvertSliderCheckBox.IsChecked ?? false,
-                    VuMeters = ShowSlidersCheckBox.IsChecked ?? true
+                    VuMeters = ShowSlidersCheckBox.IsChecked ?? true,
+                    StartOnBoot = StartOnBootCheckBox.IsChecked ?? false,
+                    StartMinimized = StartMinimizedCheckBox.IsChecked ?? false
                 };
 
 
@@ -699,6 +771,19 @@ namespace DeejNG
         }
 
 
+        private void StartMinimizedCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_isInitializing) return;
+            _appSettings.StartMinimized = true;
+            SaveSettings();
+        }
+
+        private void StartMinimizedCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (_isInitializing) return;
+            _appSettings.StartMinimized = false;
+            SaveSettings();
+        }
 
         private void ShowSlidersCheckBox_Checked(object sender, RoutedEventArgs e)
         {
@@ -726,11 +811,14 @@ namespace DeejNG
         {
             public string? PortName { get; set; }
             public List<string> Targets { get; set; } = new();
-            public List<bool> MuteStates { get; set; } = new(); // ✅ Add exactly this
+            public List<bool> MuteStates { get; set; } = new();
             public bool IsDarkTheme { get; set; }
             public bool IsSliderInverted { get; set; }
             public bool VuMeters { get; set; } = true;
+            public bool StartOnBoot { get; set; }
+            public bool StartMinimized { get; set; } = false; 
         }
+
 
 
         #endregion Private Classes

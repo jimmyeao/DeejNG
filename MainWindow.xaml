@@ -42,7 +42,19 @@
                   Unchecked="ShowSlidersCheckBox_Unchecked"
                   VerticalAlignment="Center"
                   HorizontalAlignment="Left" />
-    </StackPanel>
+        <CheckBox x:Name="StartOnBootCheckBox"
+                  Content="Start on boot"
+                  Margin="10"
+                  
+                  Checked="StartOnBootCheckBox_Checked"
+                  Unchecked="StartOnBootCheckBox_Unchecked"/>
+        <CheckBox x:Name="StartMinimizedCheckBox"
+                    Content="Start minimized"
+                    Margin="10"
+                    Checked="StartMinimizedCheckBox_Checked"
+                    Unchecked="StartMinimizedCheckBox_Unchecked"/>
+
+        </StackPanel>
 
     <!-- Main content area -->
     <Grid>
