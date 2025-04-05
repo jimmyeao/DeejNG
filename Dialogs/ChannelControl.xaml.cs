@@ -35,6 +35,7 @@ namespace DeejNG.Dialogs
 
         public void UpdateAudioMeter(float rawLevel)
         {
+            _meterLevel += (rawLevel - _meterLevel) * 0.3f;
             // Use fallback height if layout hasn't completed
             double maxHeight = VolumeSlider.ActualHeight > 0 ? VolumeSlider.ActualHeight : 180;
 

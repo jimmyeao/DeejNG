@@ -39,6 +39,7 @@ namespace DeejNG
         private SessionCollection _cachedSessions;
         private Dictionary<string, AudioSessionControl> _sessionLookup = new();
         private List<(AudioSessionControl session, string sessionId, string instanceId)> _sessionIdCache = new();
+        private DateTime _lastDeviceRefresh = DateTime.MinValue;
 
         // Track connection state
 
@@ -55,8 +56,9 @@ namespace DeejNG
             string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Square150x150Logo.scale-200.ico");
             _audioService = new AudioService();
             LoadAvailablePorts();  // Load ports when the form is initialized
-         
-           
+            _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+
+
             _meterTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(100)
@@ -476,8 +478,13 @@ namespace DeejNG
 
         private void UpdateMeters(object? sender, EventArgs e)
         {
-          
-            _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+
+            if ((DateTime.Now - _lastDeviceRefresh).TotalSeconds > 5)
+            {
+                _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                _lastDeviceRefresh = DateTime.Now;
+            }
+
 
             if ((DateTime.Now - _lastSessionRefresh).TotalSeconds > 2)
             {
@@ -531,6 +538,8 @@ namespace DeejNG
                    // Debug.WriteLine($"NO MATCH: target={target}");
                 }
             }
+            Dispatcher.BeginInvoke(() => SliderPanel.InvalidateVisual(), DispatcherPriority.Render);
+
 
         }
         #endregion Private Methods
