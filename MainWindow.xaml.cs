@@ -42,7 +42,7 @@ namespace DeejNG
         private SessionCollection _cachedSessions;
         private Dictionary<string, AudioSessionControl> _sessionLookup = new();
         private List<(AudioSessionControl session, string sessionId, string instanceId)> _sessionIdCache = new();
-
+        private Dictionary<int, string> _processNameCache = new();
 
         private DateTime _lastDeviceRefresh = DateTime.MinValue;
         private bool _hasSyncedMuteStates = false;
@@ -803,10 +803,21 @@ namespace DeejNG
                         string iid = s.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
                         int pid = (int)s.GetProcessID;
 
-                        string procName = "";
-                        try { procName = Process.GetProcessById(pid).ProcessName.ToLowerInvariant(); } catch { }
+                        if (!_processNameCache.TryGetValue(pid, out string procName))
+                        {
+                            try
+                            {
+                                procName = Process.GetProcessById(pid).ProcessName.ToLowerInvariant();
+                                _processNameCache[pid] = procName;
+                            }
+                            catch
+                            {
+                                procName = "";
+                                _processNameCache[pid] = procName;
+                            }
+                        }
 
-                     
+
 
                         var sidFile = Path.GetFileNameWithoutExtension(sid);
                         var iidFile = Path.GetFileNameWithoutExtension(iid);
