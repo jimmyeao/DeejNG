@@ -204,11 +204,25 @@ namespace DeejNG
         private void EnableStartup()
         {
             string appName = "DeejNG";
-            string exePath = Environment.ProcessPath;
+
             try
             {
-                using RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
-                key?.SetValue(appName, $"\"{exePath}\"", RegistryValueKind.String);
+                string shortcutPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "Microsoft", "Windows", "Start Menu", "Programs",
+                    "Jimmy White", // ← Publisher name
+                    "DeejNG",      // ← Product name
+                    "DeejNG.appref-ms");
+
+                if (File.Exists(shortcutPath))
+                {
+                    using RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+                    key?.SetValue(appName, $"\"{shortcutPath}\"", RegistryValueKind.String);
+                }
+                else
+                {
+                    MessageBox.Show($"Startup shortcut not found:\n{shortcutPath}", "Startup Setup", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
             }
             catch (Exception ex)
             {
@@ -222,14 +236,15 @@ namespace DeejNG
             string appName = "DeejNG";
             try
             {
-                using RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
-                key?.DeleteValue(appName, false); // `false` avoids exception if not found
+                using RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+                key?.DeleteValue(appName, false);
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Failed to delete startup key: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
+
 
 
 
