@@ -3,21 +3,77 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:tb="http://www.hardcodet.net/taskbar"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         xmlns:local="clr-namespace:DeejNG"
         mc:Ignorable="d"
-        Title="DeejNG" Height="450" Width="800">
-    <DockPanel>
-        <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10">
-            <Label Content="COM Port:" VerticalAlignment="Center"/>
-            <ComboBox x:Name="ComPortSelector" Width="100" Margin="5,0"
-          DropDownOpened="ComPortSelector_DropDownOpened"/>
+        Title="DeejNG"       
+        SizeToContent="WidthAndHeight"  
+    TextElement.Foreground="{DynamicResource MaterialDesign.Brush.Foreground}"
+        Background="{DynamicResource MaterialDesign.Brush.Background}"
+        TextElement.FontWeight="Regular"
+        TextElement.FontSize="12"
+        FontFamily="{materialDesign:MaterialDesignFont}"
+        TextOptions.TextFormattingMode="Ideal">
+<DockPanel>
+   
+    <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10">
+        <TextBlock Text="COM Port:" VerticalAlignment="Center" Style="{DynamicResource MaterialDesignBody2}" />
+        <ComboBox x:Name="ComPortSelector" Width="100" Margin="5,0" Style="{StaticResource MaterialDesignComboBox}" DropDownOpened="ComPortSelector_DropDownOpened"/>
+        <Button x:Name="ConnectButton" Content="Connect" Click="Connect_Click" Style="{StaticResource MaterialDesignFlatButton}" />
+        <TextBlock x:Name="ConnectionStatus" Text="Disconnected" Margin="10,0,0,0" VerticalAlignment="Center" Style="{DynamicResource MaterialDesignBody2}" />
+        <Button Content="Toggle Theme" Click="ToggleTheme_Click" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10" Style="{DynamicResource MaterialDesignFlatButton}"/>
+    </StackPanel>
 
-            <Button x:Name="ConnectButton" Content="Connect" Click="Connect_Click" />
-            <TextBlock x:Name="ConnectionStatus" Text="Disconnected" Margin="10,0,0,0" VerticalAlignment="Center"/>
+    <!-- Settings row -->
+    <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10,0,10,5">
+        <CheckBox x:Name="InvertSliderCheckBox"
+                  Content="Invert Sliders"
+                  Checked="InvertSlider_Checked"
+                  Unchecked="InvertSlider_Unchecked"
+                  Margin="0,0,20,0"
+                  VerticalAlignment="Center"
+                  HorizontalAlignment="Left" />
+
+        <CheckBox x:Name="ShowSlidersCheckBox"
+                  Content="Show Meters"
+                  IsChecked="True"
+                  Checked="ShowSlidersCheckBox_Checked"
+                  Unchecked="ShowSlidersCheckBox_Unchecked"
+                  VerticalAlignment="Center"
+                  HorizontalAlignment="Left" />
+        <CheckBox x:Name="StartOnBootCheckBox"
+                  Content="Start on boot"
+                  Margin="10"
+                  
+                  Checked="StartOnBootCheckBox_Checked"
+                  Unchecked="StartOnBootCheckBox_Unchecked"/>
+        <CheckBox x:Name="StartMinimizedCheckBox"
+                    Content="Start minimized"
+                    Margin="10"
+                    Checked="StartMinimizedCheckBox_Checked"
+                    Unchecked="StartMinimizedCheckBox_Unchecked"/>
+
         </StackPanel>
 
-        <ScrollViewer HorizontalScrollBarVisibility="Auto">
-            <StackPanel x:Name="SliderPanel" Orientation="Horizontal" Margin="10"/>
+    <!-- Main content area -->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Auto"
+                      x:Name="SliderScrollViewer">
+            <StackPanel x:Name="SliderPanel" Orientation="Horizontal" Margin="10">
+                <!-- Dynamically added user controls (ChannelControl) go here -->
+            </StackPanel>
         </ScrollViewer>
+    </Grid>
+
+    <tb:TaskbarIcon x:Name="MyNotifyIcon" TrayMouseDoubleClick="MyNotifyIcon_Click" ToolTipText="DeejNG" Visibility="Visible"/>
     </DockPanel>
+
+
 </Window>
