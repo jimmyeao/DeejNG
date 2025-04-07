@@ -1,0 +1,3 @@
+﻿//TODO: Add refresh to ports list for devices connected whilst app running.
+//TDOD: Stop click on connect with no port selected
+//TODO: Add ability to invert sliders
