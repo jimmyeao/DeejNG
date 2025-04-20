@@ -27,6 +27,7 @@ namespace DeejNG
     public partial class MainWindow : Window
     {
         #region Private Fields
+        private readonly Dictionary<string, float> _lastInputVolume = new(StringComparer.OrdinalIgnoreCase);
 
         private AudioService _audioService;
         private bool _metersEnabled = true;
@@ -43,11 +44,12 @@ namespace DeejNG
         private Dictionary<string, AudioSessionControl> _sessionLookup = new();
         private List<(AudioSessionControl session, string sessionId, string instanceId)> _sessionIdCache = new();
         private Dictionary<int, string> _processNameCache = new();
-
+        private bool _disableSmoothing = false;
         private DateTime _lastDeviceRefresh = DateTime.MinValue;
         private bool _hasSyncedMuteStates = false;
         private AppSettings _appSettings = new();
         private AudioEndpointVolume _systemVolume;
+        private Dictionary<string, MMDevice> _inputDeviceMap = new();
 
 
 
@@ -69,6 +71,7 @@ namespace DeejNG
             string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Square150x150Logo.scale-200.ico");
 
             _audioService = new AudioService();
+            BuildInputDeviceCache();
             LoadAvailablePorts();
             _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
             _systemVolume = _audioDevice.AudioEndpointVolume;
@@ -99,12 +102,48 @@ namespace DeejNG
 
    
         }
+        private void DisableSmoothingCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            _disableSmoothing = true;
+            SaveSettings();
+        }
+
+        private void DisableSmoothingCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _disableSmoothing = false;
+            SaveSettings();
+        }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             SliderScrollViewer.Visibility = Visibility.Visible;
             StartOnBootCheckBox.IsChecked = _appSettings.StartOnBoot;
         }
+        private void BuildInputDeviceCache()
+        {
+            try
+            {
+                _inputDeviceMap.Clear();
+                var devices = new MMDeviceEnumerator()
+                    .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
+
+                foreach (var d in devices)
+                {
+                    var key = d.FriendlyName.Trim().ToLowerInvariant();
+                    if (!_inputDeviceMap.ContainsKey(key))
+                    {
+                        _inputDeviceMap[key] = d;
+                    }
+                }
+
+                Debug.WriteLine($"[Init] Cached {_inputDeviceMap.Count} input devices.");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Init] Failed to build input device cache: {ex.Message}");
+            }
+        }
+
         private void AudioEndpointVolume_OnVolumeNotification(AudioVolumeNotificationData data)
         {
             Dispatcher.Invoke(() =>
@@ -417,17 +456,54 @@ namespace DeejNG
             {
                 var control = new ChannelControl();
 
-                string target = (i == 0) ? "system" : (i < savedTargets.Count ? savedTargets[i] : "");
+                string target = (i < savedTargets.Count)
+                    ? savedTargets[i]
+                    : (i == 0 ? "system" : "");
                 control.SetTargetExecutable(target);
+                if (i < savedSettings.InputModes.Count)
+                    control.IsInputMode = savedSettings.InputModes[i];
+
                 control.SetMuted(false);
                 control.SetVolume(0.5f);
 
                 control.TargetChanged += (_, _) => SaveSettings();
                 control.VolumeOrMuteChanged += (t, vol, mute) =>
                 {
-                    if (!_isInitializing)
+                    if (_isInitializing) return;
+
+                    if (control.IsInputMode)
+                    {
+                        if (!_inputDeviceMap.TryGetValue(t.ToLowerInvariant(), out var mic))
+                        {
+                            mic = new MMDeviceEnumerator()
+                                .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                                .FirstOrDefault(d => d.FriendlyName.Equals(t, StringComparison.OrdinalIgnoreCase));
+
+                            if (mic != null)
+                                _inputDeviceMap[t.ToLowerInvariant()] = mic;
+                        }
+
+                        if (mic != null)
+                        {
+                            try
+                            {
+                                mic.AudioEndpointVolume.Mute = mute || vol <= 0.01f;
+                                mic.AudioEndpointVolume.MasterVolumeLevelScalar = vol;
+                                Debug.WriteLine($"[MicVolume] Applied mute={mute} + vol={vol:F2} to {mic.FriendlyName}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"[MicVolume] Error applying mute: {ex.Message}");
+                            }
+                        }
+                    }
+                    else
+                    {
                         _audioService.ApplyVolumeToTarget(t, vol, mute);
+                    }
                 };
+
+
 
                 _channelControls.Add(control);
                 SliderPanel.Children.Add(control);
@@ -530,28 +606,70 @@ namespace DeejNG
 
                 for (int i = 0; i < parts.Length; i++)
                 {
-                    if (float.TryParse(parts[i].Trim(), out float level))
+                    if (!float.TryParse(parts[i].Trim(), out float level)) continue;
+
+                    level = Math.Clamp(level / 1023f, 0f, 1f);
+                    if (InvertSliderCheckBox.IsChecked ?? false)
+                        level = 1f - level;
+
+                    var ctrl = _channelControls[i];
+                    var target = ctrl.TargetExecutable?.Trim();
+
+                    if (string.IsNullOrWhiteSpace(target)) continue;
+
+                    float currentVolume = ctrl.CurrentVolume;
+                    if (Math.Abs(currentVolume - level) < 0.01f) continue;
+
+                    ctrl.SmoothAndSetVolume(level, suppressEvent: _isInitializing, disableSmoothing: _disableSmoothing);
+
+                    // Don't apply audio if we're still initializing
+                    if (_isInitializing) continue;
+
+                    if (ctrl.IsInputMode)
                     {
-                        level = Math.Clamp(level / 1023f, 0f, 1f);
-                        if (InvertSliderCheckBox.IsChecked ?? false)
-                            level = 1f - level;
-
-                        float currentVolume = _channelControls[i].CurrentVolume;
-                        if (Math.Abs(currentVolume - level) >= 0.01f)
+                        if (!_inputDeviceMap.TryGetValue(target, out var mic))
                         {
-                            // ✅ Explicitly suppress events here to avoid unmute at startup
-                            _channelControls[i].SmoothAndSetVolume(level, suppressEvent: _isInitializing);
+                            mic = new MMDeviceEnumerator()
+                                .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                                .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
 
-                            var target = _channelControls[i].TargetExecutable?.Trim();
-                            if (!string.IsNullOrEmpty(target) && !_isInitializing)
+                            if (mic != null)
                             {
-                                if (!_isInitializing)
-                                {
-                                    _audioService.ApplyVolumeToTarget(target, level, _channelControls[i].IsMuted);
-                                }
-
+                                _inputDeviceMap[target] = mic;
+                                Debug.WriteLine($"[MicVolume] Cached mic: {mic.FriendlyName}");
+                            }
+                            else
+                            {
+                                Debug.WriteLine($"[MicVolume] Mic not found for '{target}'");
                             }
                         }
+
+                        if (mic != null)
+                        {
+                            try
+                            {
+                                float previous = _lastInputVolume.TryGetValue(target, out var lastVol) ? lastVol : -1f;
+
+                                if (Math.Abs(previous - level) > 0.01f)
+                                {
+                                    mic.AudioEndpointVolume.Mute = ctrl.IsMuted || level <= 0.01f;
+
+                                    mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                                    _lastInputVolume[target] = level;
+
+                                  //  Debug.WriteLine($"[MicVolume] Set input volume to {level:F2} for {mic.FriendlyName}");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                              //  Debug.WriteLine($"[MicVolume] Error: {ex.Message}");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // ✅ Output mode — apply session volume
+                        _audioService.ApplyVolumeToTarget(target, level, ctrl.IsMuted);
                     }
                 }
             });
@@ -613,6 +731,7 @@ namespace DeejNG
             bool showMeters = settings?.VuMeters ?? true;
             ShowSlidersCheckBox.IsChecked = showMeters;
             SetMeterVisibilityForAll(showMeters);
+            DisableSmoothingCheckBox.IsChecked = settings?.DisableSmoothing ?? false;
 
             // ✅ Unsubscribe events temporarily
             StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
@@ -703,7 +822,11 @@ namespace DeejNG
                     IsSliderInverted = InvertSliderCheckBox.IsChecked ?? false,
                     VuMeters = ShowSlidersCheckBox.IsChecked ?? true,
                     StartOnBoot = StartOnBootCheckBox.IsChecked ?? false,
-                    StartMinimized = StartMinimizedCheckBox.IsChecked ?? false
+                    StartMinimized = StartMinimizedCheckBox.IsChecked ?? false,
+                    InputModes = _channelControls.Select(c => c.IsInputMode).ToList(),
+
+                    DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false
+
                 };
 
 
@@ -780,7 +903,7 @@ namespace DeejNG
             const float visualGain = 1.5f;
             const float systemCalibrationFactor = 2.0f;
 
-            // Only refresh audio device every 5 seconds to save CPU
+            // Refresh output device reference every 5 seconds
             if ((DateTime.Now - _lastDeviceRefresh).TotalSeconds > 5)
             {
                 _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
@@ -798,6 +921,40 @@ namespace DeejNG
                     continue;
                 }
 
+                if (ctrl.IsInputMode)
+                {
+                    // Mic input mode
+                    if (!_inputDeviceMap.TryGetValue(target, out var mic))
+                    {
+                        mic = new MMDeviceEnumerator()
+                            .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                            .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
+
+                        if (mic != null)
+                            _inputDeviceMap[target] = mic;
+                    }
+
+                    if (mic != null)
+                    {
+                        try
+                        {
+                            float peak = mic.AudioMeterInformation.MasterPeakValue;
+                            float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * ctrl.CurrentVolume * visualGain, 1.0f);
+                            ctrl.UpdateAudioMeter(boosted);
+                        }
+                        catch
+                        {
+                            ctrl.UpdateAudioMeter(0);
+                        }
+                    }
+                    else
+                    {
+                        ctrl.UpdateAudioMeter(0);
+                    }
+
+                    continue; // done with input device
+                }
+
                 if (target == "system")
                 {
                     float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
@@ -807,6 +964,7 @@ namespace DeejNG
                     continue;
                 }
 
+                // Output sessions
                 AudioSessionControl? matchingSession = null;
 
                 for (int i = 0; i < sessions.Count; i++)
@@ -832,17 +990,18 @@ namespace DeejNG
                             }
                         }
 
-
-
                         var sidFile = Path.GetFileNameWithoutExtension(sid);
                         var iidFile = Path.GetFileNameWithoutExtension(iid);
 
                         if (sidFile == target || iidFile == target || procName == target ||
-                            sid.Contains(target) || iid.Contains(target))
+     sid.Contains(target, StringComparison.OrdinalIgnoreCase) ||
+     iid.Contains(target, StringComparison.OrdinalIgnoreCase) ||
+     target != null && target.Length > 2 && sid.Contains(target, StringComparison.OrdinalIgnoreCase))
                         {
                             matchingSession = s;
                             break;
                         }
+
                     }
                     catch { }
                 }
@@ -862,7 +1021,6 @@ namespace DeejNG
                 }
                 else
                 {
-                   
                     ctrl.UpdateAudioMeter(0);
                 }
             }
@@ -918,7 +1076,10 @@ namespace DeejNG
             public bool IsSliderInverted { get; set; }
             public bool VuMeters { get; set; } = true;
             public bool StartOnBoot { get; set; }
-            public bool StartMinimized { get; set; } = false; 
+            public bool StartMinimized { get; set; } = false;
+            public bool DisableSmoothing { get; set; }
+            // 👇 ADD THIS:
+            public List<bool> InputModes { get; set; } = new();
         }
 
 

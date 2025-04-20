@@ -53,6 +53,11 @@
                     Margin="10"
                     Checked="StartMinimizedCheckBox_Checked"
                     Unchecked="StartMinimizedCheckBox_Unchecked"/>
+            <CheckBox x:Name="DisableSmoothingCheckBox"
+          Content="Disable Smoothing"
+          Checked="DisableSmoothingCheckBox_Checked"
+          Unchecked="DisableSmoothingCheckBox_Unchecked" />
+
 
         </StackPanel>
 

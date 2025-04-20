@@ -9,10 +9,13 @@ namespace DeejNG.Dialogs
 {
     public partial class ChannelControl : UserControl
     {
+
         #region Private Fields
 
         private const float ClipThreshold = 0.98f;
         private const float SmoothingFactor = 0.1f;
+        private readonly Brush _muteOffBrush = Brushes.Gray;
+        private readonly Brush _muteOnBrush = new SolidColorBrush(Color.FromRgb(255, 64, 64));
         private readonly TimeSpan PeakHoldDuration = TimeSpan.FromSeconds(1);
         private bool _isMuted = false;
         private bool _layoutReady = false;
@@ -20,15 +23,13 @@ namespace DeejNG.Dialogs
         private float _peakLevel;
         private DateTime _peakTimestamp;
         private float _smoothedVolume;
-        public event Action<string, float, bool> VolumeOrMuteChanged;
         private bool _suppressEvents = false;
-        private readonly Brush _muteOnBrush = new SolidColorBrush(Color.FromRgb(255, 64, 64)); // Bright red
-        private readonly Brush _muteOffBrush = Brushes.Gray;
 
         #endregion Private Fields
 
         #region Public Constructors
 
+        // Bright red
         public ChannelControl()
         {
             InitializeComponent();
@@ -42,11 +43,18 @@ namespace DeejNG.Dialogs
 
         public event EventHandler TargetChanged;
 
+        public event Action<string, float, bool> VolumeOrMuteChanged;
+
         #endregion Public Events
 
         #region Public Properties
 
         public float CurrentVolume => (float)VolumeSlider.Value;
+        public bool IsInputMode
+        {
+            get => InputModeCheckBox.IsChecked == true;
+            set => InputModeCheckBox.IsChecked = value;
+        }
         public bool IsMuted => _isMuted;
         public string TargetExecutable => TargetTextBox.Text;
 
@@ -57,6 +65,15 @@ namespace DeejNG.Dialogs
         public void SetMeterVisibility(bool visible)
         {
             MeterVisuals.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        public void SetMuted(bool muted)
+        {
+            _suppressEvents = true;
+            _isMuted = muted;
+            MuteButton.IsChecked = muted;
+            UpdateMuteButtonVisual();
+            _suppressEvents = false;
         }
 
         public void SetTargetExecutable(string target)
@@ -74,13 +91,21 @@ namespace DeejNG.Dialogs
         }
 
 
-        public void SmoothAndSetVolume(float rawLevel, bool suppressEvent = false)
+        public void SmoothAndSetVolume(float rawLevel, bool suppressEvent = false, bool disableSmoothing = false)
         {
             _suppressEvents = suppressEvent;
-            _smoothedVolume = _smoothedVolume == 0 ? rawLevel : _smoothedVolume + (rawLevel - _smoothedVolume) * SmoothingFactor;
-            SetVolume(_smoothedVolume);
+            if (disableSmoothing)
+            {
+                SetVolume(rawLevel);
+            }
+            else
+            {
+                _smoothedVolume = _smoothedVolume == 0 ? rawLevel : _smoothedVolume + (rawLevel - _smoothedVolume) * SmoothingFactor;
+                SetVolume(_smoothedVolume);
+            }
             _suppressEvents = false;
         }
+
 
 
         public void UpdateAudioMeter(float rawLevel)
@@ -119,7 +144,7 @@ namespace DeejNG.Dialogs
 
         private void ChannelControl_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            var picker = new SessionPickerDialog(TargetTextBox.Text)
+            var picker = new SessionPickerDialog(IsInputMode) // 👈 THIS IS THE CHANGE
             {
                 Owner = Application.Current.MainWindow,
                 WindowStartupLocation = WindowStartupLocation.Manual
@@ -139,15 +164,24 @@ namespace DeejNG.Dialogs
             }
         }
 
-
-        private void UpdateMuteButtonEnabled()
+        private void InputModeCheckBox_Checked(object sender, RoutedEventArgs e)
         {
-            var target = TargetExecutable?.Trim();
-            MuteButton.IsEnabled = !string.IsNullOrWhiteSpace(target) && !string.Equals(target, "(empty)", StringComparison.OrdinalIgnoreCase);
+            RaiseTargetChanged(); // You already track state via IsInputMode
+        }
+
+        private void InputModeCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            RaiseTargetChanged();
         }
 
 
 
+    
+        private void RaiseTargetChanged()
+        {
+            TargetChanged?.Invoke(this, EventArgs.Empty);
+        }
+        
         private void MuteButton_Checked(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
@@ -165,13 +199,17 @@ namespace DeejNG.Dialogs
             UpdateMuteButtonVisual();
             VolumeOrMuteChanged?.Invoke(TargetExecutable, CurrentVolume, _isMuted);
         }
-        public void SetMuted(bool muted)
+
+        private void TargetTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
-            _suppressEvents = true;
-            _isMuted = muted;
-            MuteButton.IsChecked = muted;
-            UpdateMuteButtonVisual();
-            _suppressEvents = false;
+            UpdateMuteButtonEnabled(); // 👈 keep in sync
+            TargetChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void UpdateMuteButtonEnabled()
+        {
+            var target = TargetExecutable?.Trim();
+            MuteButton.IsEnabled = !string.IsNullOrWhiteSpace(target) && !string.Equals(target, "(empty)", StringComparison.OrdinalIgnoreCase);
         }
         private void UpdateMuteButtonVisual()
         {
@@ -183,13 +221,7 @@ namespace DeejNG.Dialogs
             }
         }
 
-        private void TargetTextBox_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            UpdateMuteButtonEnabled(); // 👈 keep in sync
-            TargetChanged?.Invoke(this, EventArgs.Empty);
-        }
-
-
         #endregion Private Methods
+
     }
 }

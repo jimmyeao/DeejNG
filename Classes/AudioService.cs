@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using NAudio.CoreAudioApi;
 
@@ -52,8 +53,6 @@ namespace DeejNG.Services
 
             if (string.IsNullOrWhiteSpace(executable) || executable.Trim().Equals("system", StringComparison.OrdinalIgnoreCase))
             {
-                //Debug.WriteLine($"[System Mute] isMuted={isMuted}, level={level}");
-
                 var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 device.AudioEndpointVolume.Mute = isMuted;
 
@@ -65,19 +64,35 @@ namespace DeejNG.Services
                 return;
             }
 
-            // Normal session logic...
-            var sessions = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia).AudioSessionManager.Sessions;
+            var sessions = _deviceEnumerator
+                .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
+                .AudioSessionManager.Sessions;
 
             for (int i = 0; i < sessions.Count; i++)
             {
                 var session = sessions[i];
                 try
                 {
-                    var sessionId = session.GetSessionIdentifier;
-                    var instanceId = session.GetSessionInstanceIdentifier;
+                    string sessionId = session.GetSessionIdentifier ?? "";
+                    string instanceId = session.GetSessionInstanceIdentifier ?? "";
 
-                    if ((!string.IsNullOrWhiteSpace(sessionId) && sessionId.Contains(executable, StringComparison.OrdinalIgnoreCase)) ||
-                        (!string.IsNullOrWhiteSpace(instanceId) && instanceId.Contains(executable, StringComparison.OrdinalIgnoreCase)))
+                    string procName = "";
+                    try
+                    {
+                        int pid = (int)session.GetProcessID;
+                        procName = Process.GetProcessById(pid).ProcessName.ToLowerInvariant();
+                    }
+                    catch
+                    {
+                        procName = ""; // fallback
+                    }
+
+                    // Strip file extensions and normalize for comparison
+                    string cleanedExecutable = Path.GetFileNameWithoutExtension(executable).ToLowerInvariant();
+                    string cleanedProcName = Path.GetFileNameWithoutExtension(procName).ToLowerInvariant();
+
+                    if (cleanedProcName.Equals(cleanedExecutable, StringComparison.OrdinalIgnoreCase))
+
                     {
                         session.SimpleAudioVolume.Mute = isMuted;
 
@@ -91,7 +106,7 @@ namespace DeejNG.Services
                 }
                 catch (Exception ex)
                 {
-                  //  Debug.WriteLine($"[Error] Session {i}: {ex.Message}");
+                    Debug.WriteLine($"[ApplyVolume] Error processing session {i}: {ex.Message}");
                 }
             }
         }
