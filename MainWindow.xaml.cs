@@ -27,6 +27,7 @@ namespace DeejNG
     public partial class MainWindow : Window
     {
         #region Private Fields
+        private readonly Dictionary<string, float> _lastInputVolume = new(StringComparer.OrdinalIgnoreCase);
 
         private AudioService _audioService;
         private bool _metersEnabled = true;
@@ -466,9 +467,41 @@ namespace DeejNG
                 control.TargetChanged += (_, _) => SaveSettings();
                 control.VolumeOrMuteChanged += (t, vol, mute) =>
                 {
-                    if (!_isInitializing)
+                    if (_isInitializing) return;
+
+                    if (control.IsInputMode)
+                    {
+                        if (!_inputDeviceMap.TryGetValue(t.ToLowerInvariant(), out var mic))
+                        {
+                            mic = new MMDeviceEnumerator()
+                                .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                                .FirstOrDefault(d => d.FriendlyName.Equals(t, StringComparison.OrdinalIgnoreCase));
+
+                            if (mic != null)
+                                _inputDeviceMap[t.ToLowerInvariant()] = mic;
+                        }
+
+                        if (mic != null)
+                        {
+                            try
+                            {
+                                mic.AudioEndpointVolume.Mute = mute || vol <= 0.01f;
+                                mic.AudioEndpointVolume.MasterVolumeLevelScalar = vol;
+                                Debug.WriteLine($"[MicVolume] Applied mute={mute} + vol={vol:F2} to {mic.FriendlyName}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"[MicVolume] Error applying mute: {ex.Message}");
+                            }
+                        }
+                    }
+                    else
+                    {
                         _audioService.ApplyVolumeToTarget(t, vol, mute);
+                    }
                 };
+
+
 
                 _channelControls.Add(control);
                 SliderPanel.Children.Add(control);
@@ -571,56 +604,70 @@ namespace DeejNG
 
                 for (int i = 0; i < parts.Length; i++)
                 {
-                    if (float.TryParse(parts[i].Trim(), out float level))
+                    if (!float.TryParse(parts[i].Trim(), out float level)) continue;
+
+                    level = Math.Clamp(level / 1023f, 0f, 1f);
+                    if (InvertSliderCheckBox.IsChecked ?? false)
+                        level = 1f - level;
+
+                    var ctrl = _channelControls[i];
+                    var target = ctrl.TargetExecutable?.Trim();
+
+                    if (string.IsNullOrWhiteSpace(target)) continue;
+
+                    float currentVolume = ctrl.CurrentVolume;
+                    if (Math.Abs(currentVolume - level) < 0.01f) continue;
+
+                    ctrl.SmoothAndSetVolume(level, suppressEvent: _isInitializing, disableSmoothing: _disableSmoothing);
+
+                    // Don't apply audio if we're still initializing
+                    if (_isInitializing) continue;
+
+                    if (ctrl.IsInputMode)
                     {
-                        level = Math.Clamp(level / 1023f, 0f, 1f);
-                        if (InvertSliderCheckBox.IsChecked ?? false)
-                            level = 1f - level;
-
-                        float currentVolume = _channelControls[i].CurrentVolume;
-                        if (Math.Abs(currentVolume - level) >= 0.01f)
+                        if (!_inputDeviceMap.TryGetValue(target, out var mic))
                         {
-                            _channelControls[i].SmoothAndSetVolume(level, suppressEvent: _isInitializing, disableSmoothing: _disableSmoothing);
+                            mic = new MMDeviceEnumerator()
+                                .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                                .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
 
-                            var ctrl = _channelControls[i];
-                            var target = ctrl.TargetExecutable?.Trim();
-                            if (string.IsNullOrWhiteSpace(target) || _isInitializing)
-                                continue;
-
-                            if (ctrl.IsInputMode)
+                            if (mic != null)
                             {
-                                // Mic volume - run in background
-                                Task.Run(() =>
-                                {
-                                    try
-                                    {
-                                        var mic = new MMDeviceEnumerator()
-                                            .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-                                            .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
-
-                                        if (mic != null)
-                                        {
-                                            mic.AudioEndpointVolume.Mute = level <= 0.01f;
-                                            mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
-                                            Debug.WriteLine($"[MicVolume] Set input volume to {level:F2} for {mic.FriendlyName}");
-                                        }
-                                        else
-                                        {
-                                            Debug.WriteLine($"[MicVolume] Mic not found for '{target}'");
-                                        }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        Debug.WriteLine($"[MicVolume] Error: {ex.Message}");
-                                    }
-                                });
+                                _inputDeviceMap[target] = mic;
+                                Debug.WriteLine($"[MicVolume] Cached mic: {mic.FriendlyName}");
                             }
                             else
                             {
-                                // Normal output session volume
-                                _audioService.ApplyVolumeToTarget(target, level, ctrl.IsMuted);
+                                Debug.WriteLine($"[MicVolume] Mic not found for '{target}'");
                             }
                         }
+
+                        if (mic != null)
+                        {
+                            try
+                            {
+                                float previous = _lastInputVolume.TryGetValue(target, out var lastVol) ? lastVol : -1f;
+
+                                if (Math.Abs(previous - level) > 0.01f)
+                                {
+                                    mic.AudioEndpointVolume.Mute = ctrl.IsMuted || level <= 0.01f;
+
+                                    mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                                    _lastInputVolume[target] = level;
+
+                                  //  Debug.WriteLine($"[MicVolume] Set input volume to {level:F2} for {mic.FriendlyName}");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                              //  Debug.WriteLine($"[MicVolume] Error: {ex.Message}");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // ✅ Output mode — apply session volume
+                        _audioService.ApplyVolumeToTarget(target, level, ctrl.IsMuted);
                     }
                 }
             });
