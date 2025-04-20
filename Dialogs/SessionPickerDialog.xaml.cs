@@ -113,6 +113,7 @@ namespace DeejNG.Dialogs
     public partial class SessionPickerDialog : Window
     {
         #region Public Constructors
+
         public string? SelectedTarget { get; private set; }
 
         public SessionPickerDialog(bool isInputMode)
@@ -120,6 +121,7 @@ namespace DeejNG.Dialogs
             InitializeComponent();
             LoadSessions(isInputMode);
         }
+
         public SessionPickerDialog(string current)
         {
             InitializeComponent();
@@ -131,7 +133,6 @@ namespace DeejNG.Dialogs
             SessionComboBox.DisplayMemberPath = "FriendlyName";
             SessionComboBox.SelectedValuePath = "Id";
 
-            // Pre-select if it matches
             SessionComboBox.SelectedValue = current;
         }
 
@@ -155,9 +156,10 @@ namespace DeejNG.Dialogs
             DialogResult = true;
             Close();
         }
+
         private void LoadSessions(bool isInputMode)
         {
-            SessionComboBox.Items.Clear();
+            var items = new List<KeyValuePair<string, string>>();
 
             if (isInputMode)
             {
@@ -166,7 +168,8 @@ namespace DeejNG.Dialogs
 
                 foreach (var device in devices)
                 {
-                    SessionComboBox.Items.Add(device.FriendlyName);
+                    string display = device.FriendlyName;
+                    items.Add(new(display, display));
                 }
             }
             else
@@ -180,17 +183,39 @@ namespace DeejNG.Dialogs
                     var session = sessions[i];
                     try
                     {
-                        string label = session.GetSessionIdentifier ?? $"PID {session.GetProcessID}";
-                        SessionComboBox.Items.Add(label);
+                        string sid = session.GetSessionIdentifier ?? "";
+                        int pid = (int)session.GetProcessID;
+
+                        string procName;
+                        try
+                        {
+                            procName = Process.GetProcessById(pid).ProcessName.ToLowerInvariant();
+                        }
+                        catch
+                        {
+                            procName = "unknown";
+                        }
+
+                        // ✅ Show user-friendly name (Spotify), store the identifier (spotify)
+                        items.Add(new(procName, procName));
                     }
                     catch { }
                 }
+
+                // Eliminate duplicates
+                items = items
+                    .GroupBy(kv => kv.Value)
+                    .Select(g => g.First())
+                    .ToList();
             }
 
-            if (SessionComboBox.Items.Count > 0)
+            SessionComboBox.ItemsSource = items;
+            SessionComboBox.DisplayMemberPath = "Key";   // e.g. Spotify
+            SessionComboBox.SelectedValuePath = "Value"; // e.g. spotify
+
+            if (items.Count > 0)
                 SessionComboBox.SelectedIndex = 0;
         }
-
 
         #endregion Private Methods
     }
