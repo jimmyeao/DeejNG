@@ -456,7 +456,9 @@ namespace DeejNG
             {
                 var control = new ChannelControl();
 
-                string target = (i == 0) ? "system" : (i < savedTargets.Count ? savedTargets[i] : "");
+                string target = (i < savedTargets.Count)
+                    ? savedTargets[i]
+                    : (i == 0 ? "system" : "");
                 control.SetTargetExecutable(target);
                 if (i < savedSettings.InputModes.Count)
                     control.IsInputMode = savedSettings.InputModes[i];
@@ -992,11 +994,14 @@ namespace DeejNG
                         var iidFile = Path.GetFileNameWithoutExtension(iid);
 
                         if (sidFile == target || iidFile == target || procName == target ||
-                            sid.Contains(target) || iid.Contains(target))
+     sid.Contains(target, StringComparison.OrdinalIgnoreCase) ||
+     iid.Contains(target, StringComparison.OrdinalIgnoreCase) ||
+     target != null && target.Length > 2 && sid.Contains(target, StringComparison.OrdinalIgnoreCase))
                         {
                             matchingSession = s;
                             break;
                         }
+
                     }
                     catch { }
                 }

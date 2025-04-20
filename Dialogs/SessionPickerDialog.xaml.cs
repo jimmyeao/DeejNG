@@ -94,21 +94,6 @@ namespace DeejNG.Dialogs
         #endregion Public Classes
     }
 
-    public class SessionInfo
-    {
-        #region Public Properties
-
-        public string FriendlyName { get; set; }
-        public string Id { get; set; }
-
-        #endregion Public Properties
-
-        #region Public Methods
-
-        public override string ToString() => FriendlyName;
-
-        #endregion Public Methods
-    }
 
     public partial class SessionPickerDialog : Window
     {
@@ -132,6 +117,7 @@ namespace DeejNG.Dialogs
             SessionComboBox.ItemsSource = sessions;
             SessionComboBox.DisplayMemberPath = "FriendlyName";
             SessionComboBox.SelectedValuePath = "Id";
+      
 
             SessionComboBox.SelectedValue = current;
         }
@@ -163,55 +149,59 @@ namespace DeejNG.Dialogs
 
             if (isInputMode)
             {
+                // Always include "system" for microphone input control fallback (optional)
+                items.Add(new("System", "system"));
+
                 var devices = new MMDeviceEnumerator()
                     .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
 
                 foreach (var device in devices)
                 {
-                    string display = device.FriendlyName;
-                    items.Add(new(display, display));
+                    string name = device.FriendlyName;
+                    items.Add(new(name, name));
                 }
             }
             else
             {
+                // Always include system
+                items.Add(new("System", "system"));
+
                 var sessions = new MMDeviceEnumerator()
                     .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
                     .AudioSessionManager.Sessions;
+
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                 for (int i = 0; i < sessions.Count; i++)
                 {
                     var session = sessions[i];
                     try
                     {
-                        string sid = session.GetSessionIdentifier ?? "";
                         int pid = (int)session.GetProcessID;
 
                         string procName;
                         try
                         {
-                            procName = Process.GetProcessById(pid).ProcessName.ToLowerInvariant();
+                            procName = Process.GetProcessById(pid).ProcessName;
                         }
                         catch
                         {
                             procName = "unknown";
                         }
 
-                        // ✅ Show user-friendly name (Spotify), store the identifier (spotify)
-                        items.Add(new(procName, procName));
+                        if (!seen.Contains(procName))
+                        {
+                            items.Add(new($"{procName}", procName.ToLowerInvariant()));
+                            seen.Add(procName);
+                        }
                     }
                     catch { }
                 }
-
-                // Eliminate duplicates
-                items = items
-                    .GroupBy(kv => kv.Value)
-                    .Select(g => g.First())
-                    .ToList();
             }
 
             SessionComboBox.ItemsSource = items;
-            SessionComboBox.DisplayMemberPath = "Key";   // e.g. Spotify
-            SessionComboBox.SelectedValuePath = "Value"; // e.g. spotify
+            SessionComboBox.DisplayMemberPath = "Key";   // what the user sees
+            SessionComboBox.SelectedValuePath = "Value"; // what we use internally
 
             if (items.Count > 0)
                 SessionComboBox.SelectedIndex = 0;
