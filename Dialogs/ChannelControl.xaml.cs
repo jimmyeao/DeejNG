@@ -24,7 +24,7 @@ namespace DeejNG.Dialogs
         private bool _suppressEvents = false;
         private readonly Brush _muteOnBrush = new SolidColorBrush(Color.FromRgb(255, 64, 64)); // Bright red
         private readonly Brush _muteOffBrush = Brushes.Gray;
-
+      
         #endregion Private Fields
 
         #region Public Constructors
@@ -74,13 +74,21 @@ namespace DeejNG.Dialogs
         }
 
 
-        public void SmoothAndSetVolume(float rawLevel, bool suppressEvent = false)
+        public void SmoothAndSetVolume(float rawLevel, bool suppressEvent = false, bool disableSmoothing = false)
         {
             _suppressEvents = suppressEvent;
-            _smoothedVolume = _smoothedVolume == 0 ? rawLevel : _smoothedVolume + (rawLevel - _smoothedVolume) * SmoothingFactor;
-            SetVolume(_smoothedVolume);
+            if (disableSmoothing)
+            {
+                SetVolume(rawLevel);
+            }
+            else
+            {
+                _smoothedVolume = _smoothedVolume == 0 ? rawLevel : _smoothedVolume + (rawLevel - _smoothedVolume) * SmoothingFactor;
+                SetVolume(_smoothedVolume);
+            }
             _suppressEvents = false;
         }
+
 
 
         public void UpdateAudioMeter(float rawLevel)

@@ -43,7 +43,7 @@ namespace DeejNG
         private Dictionary<string, AudioSessionControl> _sessionLookup = new();
         private List<(AudioSessionControl session, string sessionId, string instanceId)> _sessionIdCache = new();
         private Dictionary<int, string> _processNameCache = new();
-
+        private bool _disableSmoothing = false;
         private DateTime _lastDeviceRefresh = DateTime.MinValue;
         private bool _hasSyncedMuteStates = false;
         private AppSettings _appSettings = new();
@@ -98,6 +98,17 @@ namespace DeejNG
             }
 
    
+        }
+        private void DisableSmoothingCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            _disableSmoothing = true;
+            SaveSettings();
+        }
+
+        private void DisableSmoothingCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _disableSmoothing = false;
+            SaveSettings();
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -540,7 +551,8 @@ namespace DeejNG
                         if (Math.Abs(currentVolume - level) >= 0.01f)
                         {
                             // ✅ Explicitly suppress events here to avoid unmute at startup
-                            _channelControls[i].SmoothAndSetVolume(level, suppressEvent: _isInitializing);
+                            _channelControls[i].SmoothAndSetVolume(level, suppressEvent: _isInitializing, disableSmoothing: _disableSmoothing);
+
 
                             var target = _channelControls[i].TargetExecutable?.Trim();
                             if (!string.IsNullOrEmpty(target) && !_isInitializing)
@@ -613,6 +625,7 @@ namespace DeejNG
             bool showMeters = settings?.VuMeters ?? true;
             ShowSlidersCheckBox.IsChecked = showMeters;
             SetMeterVisibilityForAll(showMeters);
+            DisableSmoothingCheckBox.IsChecked = settings?.DisableSmoothing ?? false;
 
             // ✅ Unsubscribe events temporarily
             StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
@@ -703,7 +716,9 @@ namespace DeejNG
                     IsSliderInverted = InvertSliderCheckBox.IsChecked ?? false,
                     VuMeters = ShowSlidersCheckBox.IsChecked ?? true,
                     StartOnBoot = StartOnBootCheckBox.IsChecked ?? false,
-                    StartMinimized = StartMinimizedCheckBox.IsChecked ?? false
+                    StartMinimized = StartMinimizedCheckBox.IsChecked ?? false,
+                    DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false
+
                 };
 
 
@@ -918,7 +933,9 @@ namespace DeejNG
             public bool IsSliderInverted { get; set; }
             public bool VuMeters { get; set; } = true;
             public bool StartOnBoot { get; set; }
-            public bool StartMinimized { get; set; } = false; 
+            public bool StartMinimized { get; set; } = false;
+            public bool DisableSmoothing { get; set; }
+
         }
 
 
