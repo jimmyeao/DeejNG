@@ -901,7 +901,7 @@ namespace DeejNG
             const float visualGain = 1.5f;
             const float systemCalibrationFactor = 2.0f;
 
-            // Only refresh audio device every 5 seconds to save CPU
+            // Refresh output device reference every 5 seconds
             if ((DateTime.Now - _lastDeviceRefresh).TotalSeconds > 5)
             {
                 _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
@@ -919,6 +919,40 @@ namespace DeejNG
                     continue;
                 }
 
+                if (ctrl.IsInputMode)
+                {
+                    // Mic input mode
+                    if (!_inputDeviceMap.TryGetValue(target, out var mic))
+                    {
+                        mic = new MMDeviceEnumerator()
+                            .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                            .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
+
+                        if (mic != null)
+                            _inputDeviceMap[target] = mic;
+                    }
+
+                    if (mic != null)
+                    {
+                        try
+                        {
+                            float peak = mic.AudioMeterInformation.MasterPeakValue;
+                            float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * ctrl.CurrentVolume * visualGain, 1.0f);
+                            ctrl.UpdateAudioMeter(boosted);
+                        }
+                        catch
+                        {
+                            ctrl.UpdateAudioMeter(0);
+                        }
+                    }
+                    else
+                    {
+                        ctrl.UpdateAudioMeter(0);
+                    }
+
+                    continue; // done with input device
+                }
+
                 if (target == "system")
                 {
                     float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
@@ -928,6 +962,7 @@ namespace DeejNG
                     continue;
                 }
 
+                // Output sessions
                 AudioSessionControl? matchingSession = null;
 
                 for (int i = 0; i < sessions.Count; i++)
@@ -952,8 +987,6 @@ namespace DeejNG
                                 _processNameCache[pid] = procName;
                             }
                         }
-
-
 
                         var sidFile = Path.GetFileNameWithoutExtension(sid);
                         var iidFile = Path.GetFileNameWithoutExtension(iid);
@@ -983,7 +1016,6 @@ namespace DeejNG
                 }
                 else
                 {
-                   
                     ctrl.UpdateAudioMeter(0);
                 }
             }
