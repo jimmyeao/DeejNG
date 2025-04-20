@@ -48,6 +48,7 @@ namespace DeejNG
         private bool _hasSyncedMuteStates = false;
         private AppSettings _appSettings = new();
         private AudioEndpointVolume _systemVolume;
+        private Dictionary<string, MMDevice> _inputDeviceMap = new();
 
 
 
@@ -69,6 +70,7 @@ namespace DeejNG
             string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Square150x150Logo.scale-200.ico");
 
             _audioService = new AudioService();
+            BuildInputDeviceCache();
             LoadAvailablePorts();
             _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
             _systemVolume = _audioDevice.AudioEndpointVolume;
@@ -116,6 +118,31 @@ namespace DeejNG
             SliderScrollViewer.Visibility = Visibility.Visible;
             StartOnBootCheckBox.IsChecked = _appSettings.StartOnBoot;
         }
+        private void BuildInputDeviceCache()
+        {
+            try
+            {
+                _inputDeviceMap.Clear();
+                var devices = new MMDeviceEnumerator()
+                    .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
+
+                foreach (var d in devices)
+                {
+                    var key = d.FriendlyName.Trim().ToLowerInvariant();
+                    if (!_inputDeviceMap.ContainsKey(key))
+                    {
+                        _inputDeviceMap[key] = d;
+                    }
+                }
+
+                Debug.WriteLine($"[Init] Cached {_inputDeviceMap.Count} input devices.");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Init] Failed to build input device cache: {ex.Message}");
+            }
+        }
+
         private void AudioEndpointVolume_OnVolumeNotification(AudioVolumeNotificationData data)
         {
             Dispatcher.Invoke(() =>
@@ -430,6 +457,9 @@ namespace DeejNG
 
                 string target = (i == 0) ? "system" : (i < savedTargets.Count ? savedTargets[i] : "");
                 control.SetTargetExecutable(target);
+                if (i < savedSettings.InputModes.Count)
+                    control.IsInputMode = savedSettings.InputModes[i];
+
                 control.SetMuted(false);
                 control.SetVolume(0.5f);
 
@@ -550,18 +580,45 @@ namespace DeejNG
                         float currentVolume = _channelControls[i].CurrentVolume;
                         if (Math.Abs(currentVolume - level) >= 0.01f)
                         {
-                            // ✅ Explicitly suppress events here to avoid unmute at startup
                             _channelControls[i].SmoothAndSetVolume(level, suppressEvent: _isInitializing, disableSmoothing: _disableSmoothing);
 
+                            var ctrl = _channelControls[i];
+                            var target = ctrl.TargetExecutable?.Trim();
+                            if (string.IsNullOrWhiteSpace(target) || _isInitializing)
+                                continue;
 
-                            var target = _channelControls[i].TargetExecutable?.Trim();
-                            if (!string.IsNullOrEmpty(target) && !_isInitializing)
+                            if (ctrl.IsInputMode)
                             {
-                                if (!_isInitializing)
+                                // Mic volume - run in background
+                                Task.Run(() =>
                                 {
-                                    _audioService.ApplyVolumeToTarget(target, level, _channelControls[i].IsMuted);
-                                }
+                                    try
+                                    {
+                                        var mic = new MMDeviceEnumerator()
+                                            .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                                            .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
 
+                                        if (mic != null)
+                                        {
+                                            mic.AudioEndpointVolume.Mute = level <= 0.01f;
+                                            mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                                            Debug.WriteLine($"[MicVolume] Set input volume to {level:F2} for {mic.FriendlyName}");
+                                        }
+                                        else
+                                        {
+                                            Debug.WriteLine($"[MicVolume] Mic not found for '{target}'");
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Debug.WriteLine($"[MicVolume] Error: {ex.Message}");
+                                    }
+                                });
+                            }
+                            else
+                            {
+                                // Normal output session volume
+                                _audioService.ApplyVolumeToTarget(target, level, ctrl.IsMuted);
                             }
                         }
                     }
@@ -717,6 +774,8 @@ namespace DeejNG
                     VuMeters = ShowSlidersCheckBox.IsChecked ?? true,
                     StartOnBoot = StartOnBootCheckBox.IsChecked ?? false,
                     StartMinimized = StartMinimizedCheckBox.IsChecked ?? false,
+                    InputModes = _channelControls.Select(c => c.IsInputMode).ToList(),
+
                     DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false
 
                 };
@@ -935,7 +994,8 @@ namespace DeejNG
             public bool StartOnBoot { get; set; }
             public bool StartMinimized { get; set; } = false;
             public bool DisableSmoothing { get; set; }
-
+            // 👇 ADD THIS:
+            public List<bool> InputModes { get; set; } = new();
         }
 
 

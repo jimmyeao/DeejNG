@@ -10,47 +10,9 @@ using NAudio.CoreAudioApi;
 
 namespace DeejNG.Dialogs
 {
-    public partial class SessionPickerDialog : Window
-    {
-        public string SelectedSession { get; private set; }
-
-        public SessionPickerDialog(string current)
-        {
-            InitializeComponent();
-
-            var allTargets = Application.Current.Windows.OfType<MainWindow>().FirstOrDefault()?.GetCurrentTargets() ?? new List<string>();
-            var sessions = AudioSessionManagerHelper.GetSessionNames(allTargets, current);
-
-            SessionComboBox.ItemsSource = sessions;
-            SessionComboBox.DisplayMemberPath = "FriendlyName";
-            SessionComboBox.SelectedValuePath = "Id";
-
-            // Pre-select if it matches
-            SessionComboBox.SelectedValue = current;
-        }
-
-        private void Ok_Click(object sender, RoutedEventArgs e)
-        {
-            if (SessionComboBox.SelectedValue is string selectedId)
-                SelectedSession = selectedId;
-            else
-                SelectedSession = SessionComboBox.Text;
-
-            DialogResult = true;
-            Close();
-        }
-    }
-
-
     public static class AudioSessionManagerHelper
     {
-        public class SessionInfo
-        {
-            public string Id { get; set; }
-            public string FriendlyName { get; set; }
-
-            public override string ToString() => FriendlyName;
-        }
+        #region Public Methods
 
         public static List<SessionInfo> GetSessionNames(List<string> alreadyUsed, string current)
         {
@@ -109,15 +71,127 @@ namespace DeejNG.Dialogs
             return sessionList;
         }
 
-      
+        #endregion Public Methods
+
+        #region Public Classes
+
+        public class SessionInfo
+        {
+            #region Public Properties
+
+            public string FriendlyName { get; set; }
+            public string Id { get; set; }
+
+            #endregion Public Properties
+
+            #region Public Methods
+
+            public override string ToString() => FriendlyName;
+
+            #endregion Public Methods
+        }
+
+        #endregion Public Classes
     }
 
     public class SessionInfo
     {
-        public string Id { get; set; }
+        #region Public Properties
+
         public string FriendlyName { get; set; }
+        public string Id { get; set; }
+
+        #endregion Public Properties
+
+        #region Public Methods
 
         public override string ToString() => FriendlyName;
+
+        #endregion Public Methods
     }
 
+    public partial class SessionPickerDialog : Window
+    {
+        #region Public Constructors
+        public string? SelectedTarget { get; private set; }
+
+        public SessionPickerDialog(bool isInputMode)
+        {
+            InitializeComponent();
+            LoadSessions(isInputMode);
+        }
+        public SessionPickerDialog(string current)
+        {
+            InitializeComponent();
+
+            var allTargets = Application.Current.Windows.OfType<MainWindow>().FirstOrDefault()?.GetCurrentTargets() ?? new List<string>();
+            var sessions = AudioSessionManagerHelper.GetSessionNames(allTargets, current);
+
+            SessionComboBox.ItemsSource = sessions;
+            SessionComboBox.DisplayMemberPath = "FriendlyName";
+            SessionComboBox.SelectedValuePath = "Id";
+
+            // Pre-select if it matches
+            SessionComboBox.SelectedValue = current;
+        }
+
+        #endregion Public Constructors
+
+        #region Public Properties
+
+        public string SelectedSession { get; private set; }
+
+        #endregion Public Properties
+
+        #region Private Methods
+
+        private void Ok_Click(object sender, RoutedEventArgs e)
+        {
+            if (SessionComboBox.SelectedValue is string selectedId)
+                SelectedSession = selectedId;
+            else
+                SelectedSession = SessionComboBox.Text;
+
+            DialogResult = true;
+            Close();
+        }
+        private void LoadSessions(bool isInputMode)
+        {
+            SessionComboBox.Items.Clear();
+
+            if (isInputMode)
+            {
+                var devices = new MMDeviceEnumerator()
+                    .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
+
+                foreach (var device in devices)
+                {
+                    SessionComboBox.Items.Add(device.FriendlyName);
+                }
+            }
+            else
+            {
+                var sessions = new MMDeviceEnumerator()
+                    .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
+                    .AudioSessionManager.Sessions;
+
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    var session = sessions[i];
+                    try
+                    {
+                        string label = session.GetSessionIdentifier ?? $"PID {session.GetProcessID}";
+                        SessionComboBox.Items.Add(label);
+                    }
+                    catch { }
+                }
+            }
+
+            if (SessionComboBox.Items.Count > 0)
+                SessionComboBox.SelectedIndex = 0;
+        }
+
+
+        #endregion Private Methods
+    }
 }
