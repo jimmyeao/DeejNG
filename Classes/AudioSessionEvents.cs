@@ -39,8 +39,29 @@ namespace DeejNG.Classes
 
         public void OnGroupingParamChanged(ref Guid groupingId) { }
 
-        public void OnStateChanged(AudioSessionState state) { }
+        public void OnStateChanged(AudioSessionState state)
+        {
+            // Handle session state changes
+            if (state == AudioSessionState.AudioSessionStateExpired)
+            {
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                {
+                    // Inform the control that the session expired
+                    _control.HandleSessionExpired();
+                });
+            }
+        }
 
-        public void OnSessionDisconnected(AudioSessionDisconnectReason disconnectReason) { }
+        public void OnSessionDisconnected(AudioSessionDisconnectReason disconnectReason)
+        {
+            System.Windows.Application.Current.Dispatcher.Invoke(() =>
+            {
+                // Log the disconnect reason for debugging
+                System.Diagnostics.Debug.WriteLine($"[AudioSession] Session disconnected: {disconnectReason}");
+
+                // Inform the control that the session disconnected
+                _control.HandleSessionDisconnected();
+            });
+        }
     }
 }

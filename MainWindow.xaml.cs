@@ -23,6 +23,7 @@ using NAudio.CoreAudioApi.Interfaces;
 using DeejNG.Classes;
 using DeejNG.Models;
 using static System.Windows.Forms.Design.AxImporter;
+using System.Runtime.InteropServices;
 
 namespace DeejNG
 {
@@ -188,40 +189,93 @@ namespace DeejNG
 
                 try
                 {
-                    var sessions = new MMDeviceEnumerator()
-                        .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
-                        .AudioSessionManager.Sessions;
+                    var defaultDevice = new MMDeviceEnumerator()
+                        .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
 
-                    var targets = GetCurrentTargets();
+                    // Refresh the audio device reference
+                    _audioDevice = defaultDevice;
 
+                    var sessions = defaultDevice.AudioSessionManager.Sessions;
+                    var activeSessions = new Dictionary<string, AudioSessionControl>();
+                    var activeProcesses = new Dictionary<int, string>();
+
+                    // First, get all current sessions and processes
                     for (int i = 0; i < sessions.Count; i++)
                     {
                         var session = sessions[i];
                         try
                         {
-                            string sid = session.GetSessionIdentifier?.ToLowerInvariant() ?? "";
-                            string iid = session.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
+                            int processId = (int)session.GetProcessID;
+                            string processName = "";
 
-                            if (!_sessionIdCache.Any(t => t.sessionId == sid && t.instanceId == iid))
+                            // Try to get process name from cache or lookup
+                            if (!_processNameCache.TryGetValue(processId, out processName))
                             {
-                                foreach (var target in targets)
+                                try
                                 {
-                                    if (sid.Contains(target) || iid.Contains(target))
-                                    {
-                                        _sessionIdCache.Add((session, sid, iid));
-                                        break;
-                                    }
+                                    var process = Process.GetProcessById(processId);
+                                    processName = Path.GetFileNameWithoutExtension(process.MainModule.FileName)
+                                                .ToLowerInvariant();
                                 }
+                                catch
+                                {
+                                    // Process may have exited or be inaccessible
+                                    processName = $"pid_{processId}";
+                                }
+
+                                // Cache the result
+                                _processNameCache[processId] = processName;
+                            }
+
+                            // Add to active processes map
+                            activeProcesses[processId] = processName;
+
+                            // Get the identifiers for the session
+                            string sessionId = session.GetSessionIdentifier?.ToLowerInvariant() ?? "";
+                            string instanceId = session.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
+
+                            // Store in active sessions map
+                            string sessionKey = $"{processName}_{instanceId}";
+                            activeSessions[sessionKey] = session;
+
+                            // Check if this is a new session we haven't seen before
+                            if (!_sessionIdCache.Any(t => t.sessionId == sessionId && t.instanceId == instanceId))
+                            {
+                                _sessionIdCache.Add((session, sessionId, instanceId));
+                                Debug.WriteLine($"[SessionCache] Found new session: {processName} ({processId})");
                             }
                         }
                         catch (Exception ex)
                         {
-                            // Log error but continue with other sessions
+                            Debug.WriteLine($"[ERROR] Processing session in cache updater: {ex.Message}");
                         }
                     }
 
-                    // Run cleanup every minute (12 ticks at 5-second intervals)
-                    if (++tickCount % 12 == 0)
+                    // Clean up stale entries from session and process caches
+                    var pidsToRemove = _processNameCache.Keys
+                        .Where(pid => !activeProcesses.ContainsKey(pid))
+                        .ToList();
+
+                    foreach (var pid in pidsToRemove)
+                    {
+                        _processNameCache.Remove(pid);
+                    }
+
+                    // Check for session reconnections every 15 seconds
+                    if (++tickCount % 3 == 0)
+                    {
+                        foreach (var control in _channelControls)
+                        {
+                            // Reset connection state visuals in case the app has reconnected
+                            control.ResetConnectionState();
+                        }
+
+                        // Resync mute states
+                        SyncMuteStates();
+                    }
+
+                    // Run full cleanup every minute (12 ticks at 5-second intervals)
+                    if (tickCount % 12 == 0)
                     {
                         CleanupDeadSessions();
                     }
@@ -234,7 +288,6 @@ namespace DeejNG
 
             _sessionCacheTimer.Start();
         }
-
 
         private void StartOnBootCheckBox_Unchecked(object sender, RoutedEventArgs e)
         {
@@ -392,6 +445,16 @@ namespace DeejNG
             {
                 MessageBox.Show($"Error while closing serial port: {ex.Message}", "Cleanup Error", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
+            foreach (var sessionTuple in _sessionIdCache)
+            {
+                try
+                {
+                    if (sessionTuple.session != null)
+                        Marshal.ReleaseComObject(sessionTuple.session);
+                }
+                catch { }
+            }
+            _sessionIdCache.Clear();
 
             base.OnClosed(e);
         }
@@ -526,6 +589,23 @@ namespace DeejNG
                     ApplyVolumeToTargets(control, targets, vol);
                 };
 
+                // Add handler for session disconnection
+                control.SessionDisconnected += (sender, target) =>
+                {
+                    Debug.WriteLine($"[MainWindow] Received session disconnected for {target}");
+
+                    // Optional: You could try to reconnect to the session here
+                    // For now, we'll just update visual state and remove from registeredHandlers
+                    if (_registeredHandlers.TryGetValue(target, out var handler))
+                    {
+                        _registeredHandlers.Remove(target);
+                        Debug.WriteLine($"[MainWindow] Removed handler for disconnected session: {target}");
+                    }
+
+                    // Next time the session cache updates, it will try to find this session again
+                    // if the application is still running
+                };
+
                 _channelControls.Add(control);
                 SliderPanel.Children.Add(control);
             }
@@ -541,90 +621,167 @@ namespace DeejNG
         }
         private void SyncMuteStates()
         {
-            var audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-            var sessions = audioDevice.AudioSessionManager.Sessions;
-
-            // First, unregister old handlers that aren't needed anymore
-            var currentTargets = GetCurrentTargets();
-            var targetsToRemove = _registeredHandlers.Keys
-                .Where(t => !currentTargets.Contains(t))
-                .ToList();
-
-            foreach (var target in targetsToRemove)
+            try
             {
-                if (_registeredHandlers.TryGetValue(target, out var handler))
+                var audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                var sessions = audioDevice.AudioSessionManager.Sessions;
+
+                // First, unregister old handlers that aren't needed anymore
+                var currentTargets = GetCurrentTargets();
+                var targetsToRemove = _registeredHandlers.Keys
+                    .Where(t => !currentTargets.Contains(t))
+                    .ToList();
+
+                foreach (var target in targetsToRemove)
                 {
-                    try
-                    {
-                        // The handler knows which session it belongs to
-                        _registeredHandlers.Remove(target);
-                        Debug.WriteLine($"[Cleanup] Unregistered event handler for {target}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[ERROR] Failed to unregister handler for {target}: {ex.Message}");
-                    }
-                }
-            }
-
-            foreach (var ctrl in _channelControls)
-            {
-                string target = ctrl.TargetExecutable?.Trim().ToLower();
-                bool isMuted = false;
-
-                if (string.IsNullOrEmpty(target))
-                {
-                    ctrl.SetMuted(false);
-                    continue;
-                }
-
-                if (target == "system")
-                {
-                    isMuted = audioDevice.AudioEndpointVolume.Mute;
-                    ctrl.SetMuted(isMuted);
-                    _audioService.ApplyMuteStateToTarget(target, isMuted);
-                    continue;
-                }
-
-                var matchedSession = Enumerable.Range(0, sessions.Count)
-                    .Select(i => sessions[i])
-                    .FirstOrDefault(s =>
+                    if (_registeredHandlers.TryGetValue(target, out var handler))
                     {
                         try
                         {
-                            var sessionId = s.GetSessionIdentifier?.ToLower() ?? "";
-                            var instanceId = s.GetSessionInstanceIdentifier?.ToLower() ?? "";
-                            return sessionId.Contains(target) || instanceId.Contains(target);
-                        }
-                        catch { return false; }
-                    });
-
-                if (matchedSession != null)
-                {
-                    isMuted = matchedSession.SimpleAudioVolume.Mute;
-
-                    // Only register if not already registered for this target
-                    if (!_registeredHandlers.ContainsKey(target))
-                    {
-                        try
-                        {
-                            var handler = new AudioSessionEventsHandler(ctrl);
-                            matchedSession.RegisterEventClient(handler);
-                            _registeredHandlers[target] = handler;
-                            Debug.WriteLine($"[Event] Registered handler for {target}");
+                            // The handler knows which session it belongs to
+                            _registeredHandlers.Remove(target);
+                            Debug.WriteLine($"[Cleanup] Unregistered event handler for {target}");
                         }
                         catch (Exception ex)
                         {
-                            Debug.WriteLine($"[ERROR] Failed to register handler for {target}: {ex.Message}");
+                            Debug.WriteLine($"[ERROR] Failed to unregister handler for {target}: {ex.Message}");
                         }
                     }
-
-                    ctrl.SetMuted(isMuted);
-                    _audioService.ApplyVolumeToTarget(target, ctrl.CurrentVolume, isMuted);
                 }
+
+                // Create a dictionary for quick process name lookup
+                var processDict = new Dictionary<int, string>();
+
+                // Build map of sessions by process name for quicker lookup
+                var sessionsByProcess = new Dictionary<string, AudioSessionControl>(StringComparer.OrdinalIgnoreCase);
+
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    var s = sessions[i];
+                    try
+                    {
+                        int pid = (int)s.GetProcessID;
+
+                        // Get the process name
+                        string procName;
+                        if (!processDict.TryGetValue(pid, out procName))
+                        {
+                            try
+                            {
+                                var proc = Process.GetProcessById(pid);
+                                procName = proc.ProcessName.ToLowerInvariant();
+                                processDict[pid] = procName;
+                            }
+                            catch
+                            {
+                                procName = "";
+                            }
+                        }
+
+                        // Only store if we got a valid process name
+                        if (!string.IsNullOrEmpty(procName))
+                        {
+                            sessionsByProcess[procName] = s;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[ERROR] Mapping session in SyncMuteStates: {ex.Message}");
+                    }
+                }
+
+                foreach (var ctrl in _channelControls)
+                {
+                    string target = ctrl.TargetExecutable?.Trim().ToLower();
+                    bool isMuted = false;
+
+                    if (string.IsNullOrEmpty(target))
+                    {
+                        ctrl.SetMuted(false);
+                        continue;
+                    }
+
+                    if (target == "system")
+                    {
+                        isMuted = audioDevice.AudioEndpointVolume.Mute;
+                        ctrl.SetMuted(isMuted);
+                        _audioService.ApplyMuteStateToTarget(target, isMuted);
+                        continue;
+                    }
+
+                    // Check if we have a matching session in our dictionary
+                    if (sessionsByProcess.TryGetValue(target, out var matchedSession))
+                    {
+                        isMuted = matchedSession.SimpleAudioVolume.Mute;
+
+                        // Only register if not already registered for this target
+                        if (!_registeredHandlers.ContainsKey(target))
+                        {
+                            try
+                            {
+                                var handler = new AudioSessionEventsHandler(ctrl);
+                                matchedSession.RegisterEventClient(handler);
+                                _registeredHandlers[target] = handler;
+                                Debug.WriteLine($"[Event] Registered handler for {target}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"[ERROR] Failed to register handler for {target}: {ex.Message}");
+                            }
+                        }
+
+                        ctrl.SetMuted(isMuted);
+                        _audioService.ApplyVolumeToTarget(target, ctrl.CurrentVolume, isMuted);
+                    }
+                    else
+                    {
+                        // If not found in the dictionary, try the old approach
+                        var matchedSessionOld = Enumerable.Range(0, sessions.Count)
+                            .Select(i => sessions[i])
+                            .FirstOrDefault(s =>
+                            {
+                                try
+                                {
+                                    var sessionId = s.GetSessionIdentifier?.ToLower() ?? "";
+                                    var instanceId = s.GetSessionInstanceIdentifier?.ToLower() ?? "";
+                                    return sessionId.Contains(target) || instanceId.Contains(target);
+                                }
+                                catch { return false; }
+                            });
+
+                        if (matchedSessionOld != null)
+                        {
+                            isMuted = matchedSessionOld.SimpleAudioVolume.Mute;
+
+                            // Only register if not already registered for this target
+                            if (!_registeredHandlers.ContainsKey(target))
+                            {
+                                try
+                                {
+                                    var handler = new AudioSessionEventsHandler(ctrl);
+                                    matchedSessionOld.RegisterEventClient(handler);
+                                    _registeredHandlers[target] = handler;
+                                    Debug.WriteLine($"[Event] Registered handler for {target}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.WriteLine($"[ERROR] Failed to register handler for {target}: {ex.Message}");
+                                }
+                            }
+
+                            ctrl.SetMuted(isMuted);
+                            _audioService.ApplyVolumeToTarget(target, ctrl.CurrentVolume, isMuted);
+                        }
+                    }
+                }
+
+                _hasSyncedMuteStates = true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] In SyncMuteStates: {ex.Message}");
             }
         }
-
         private void HandleSliderData(string data)
         {
             if (_isInitializing || string.IsNullOrWhiteSpace(data)) return;
@@ -1025,9 +1182,27 @@ namespace DeejNG
                 _processNameCache.Remove(pid);
             }
 
-            // Trim session cache to reasonable size (keep most recent 100 entries)
+            // Trim session cache and properly release COM objects for removed sessions
             if (_sessionIdCache.Count > 100)
             {
+                var sessionsToRemove = _sessionIdCache.Take(_sessionIdCache.Count - 100).ToList();
+
+                foreach (var sessionTuple in sessionsToRemove)
+                {
+                    try
+                    {
+                        // Try to properly release the COM object
+                        if (sessionTuple.session != null)
+                        {
+                            Marshal.ReleaseComObject(sessionTuple.session);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[Error] Failed to release COM object: {ex.Message}");
+                    }
+                }
+
                 _sessionIdCache = _sessionIdCache.Skip(_sessionIdCache.Count - 100).ToList();
             }
 
