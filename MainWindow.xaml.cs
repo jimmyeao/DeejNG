@@ -24,6 +24,7 @@ using DeejNG.Classes;
 using DeejNG.Models;
 using static System.Windows.Forms.Design.AxImporter;
 using System.Runtime.InteropServices;
+using System.Windows.Media;
 
 namespace DeejNG
 {
@@ -36,7 +37,9 @@ namespace DeejNG
         private Dictionary<string, IAudioSessionEventsHandler> _registeredHandlers = new();
         private AudioService _audioService;
         private bool _metersEnabled = true;
-
+        private DispatcherTimer _serialReconnectTimer;
+        private bool _serialDisconnected = false;
+        private string _lastConnectedPort = string.Empty;
         private bool _isInitializing = true;
         private bool _isConnected = false;
         private DispatcherTimer _meterTimer;
@@ -55,6 +58,10 @@ namespace DeejNG
         private AppSettings _appSettings = new();
         private AudioEndpointVolume _systemVolume;
         private Dictionary<string, MMDevice> _inputDeviceMap = new();
+        private DispatcherTimer _serialWatchdogTimer;
+        private DateTime _lastValidDataTimestamp = DateTime.MinValue;
+        private int _noDataCounter = 0;
+        private bool _expectingData = false;
 
 
 
@@ -82,14 +89,28 @@ namespace DeejNG
             _systemVolume = _audioDevice.AudioEndpointVolume;
             _systemVolume.OnVolumeNotification += AudioEndpointVolume_OnVolumeNotification;
 
-
             _meterTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(10)
             };
             _meterTimer.Tick += UpdateMeters;
             _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-            StartSessionCacheUpdater(); // ← call here
+            StartSessionCacheUpdater();
+
+            // Initialize serial reconnect timer
+            _serialReconnectTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(2)
+            };
+            _serialReconnectTimer.Tick += SerialReconnectTimer_Tick;
+
+            // Initialize the watchdog timer
+            _serialWatchdogTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            _serialWatchdogTimer.Tick += SerialWatchdogTimer_Tick;
+            _serialWatchdogTimer.Start();
 
             MyNotifyIcon.Icon = new System.Drawing.Icon(iconPath);
             CreateNotifyIconContextMenu();
@@ -104,8 +125,139 @@ namespace DeejNG
                 Hide();
                 MyNotifyIcon.Visibility = Visibility.Visible;
             }
+        }
+        private void SerialReconnectTimer_Tick(object sender, EventArgs e)
+        {
+            if (_isClosing || !_serialDisconnected) return;
 
-   
+            Debug.WriteLine("[SerialReconnect] Attempting to reconnect...");
+
+            // Get current available ports
+            var availablePorts = SerialPort.GetPortNames();
+
+            // Check if our last connected port is available
+            if (!string.IsNullOrEmpty(_lastConnectedPort) && availablePorts.Contains(_lastConnectedPort))
+            {
+                Debug.WriteLine($"[SerialReconnect] Found previously connected port {_lastConnectedPort}, attempting reconnection");
+                try
+                {
+                    InitSerial(_lastConnectedPort, 9600);
+                    if (_isConnected)
+                    {
+                        Debug.WriteLine("[SerialReconnect] Successfully reconnected");
+                        _serialDisconnected = false;
+                        // Update UI to show reconnected
+                        Dispatcher.Invoke(() => {
+                            ConnectionStatus.Text = $"Connected to {_lastConnectedPort}";
+                            ConnectionStatus.Foreground = Brushes.Green;
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[SerialReconnect] Failed to reconnect: {ex.Message}");
+                }
+            }
+            else if (availablePorts.Length > 0)
+            {
+                // If the last port isn't available but there are other ports, try the first one
+                Debug.WriteLine($"[SerialReconnect] Last port not available, trying {availablePorts[0]}");
+                try
+                {
+                    InitSerial(availablePorts[0], 9600);
+                    if (_isConnected)
+                    {
+                        Debug.WriteLine("[SerialReconnect] Successfully connected to new port");
+                        _serialDisconnected = false;
+                        // Update UI
+                        Dispatcher.Invoke(() => {
+                            ConnectionStatus.Text = $"Connected to {availablePorts[0]}";
+                            ConnectionStatus.Foreground = Brushes.Green;
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[SerialReconnect] Failed to connect to new port: {ex.Message}");
+                }
+            }
+            else
+            {
+                Debug.WriteLine("[SerialReconnect] No serial ports available");
+                // Update UI to show waiting for device
+                Dispatcher.Invoke(() => {
+                    ConnectionStatus.Text = "Waiting for device...";
+                    ConnectionStatus.Foreground = Brushes.Orange;
+                    // Refresh the port list in the dropdown
+                    LoadAvailablePorts();
+                });
+            }
+        }
+        private void SerialWatchdogTimer_Tick(object sender, EventArgs e)
+        {
+            if (_isClosing || !_isConnected || _serialDisconnected) return;
+
+            try
+            {
+                // First check if the port is actually open
+                if (_serialPort == null || !_serialPort.IsOpen)
+                {
+                    Debug.WriteLine("[SerialWatchdog] Serial port closed unexpectedly");
+                    HandleSerialDisconnection();
+                    return;
+                }
+
+                // Check if we're receiving data
+                if (_expectingData)
+                {
+                    TimeSpan elapsed = DateTime.Now - _lastValidDataTimestamp;
+
+                    // If it's been more than 5 seconds without data, assume disconnected
+                    if (elapsed.TotalSeconds > 5)
+                    {
+                        _noDataCounter++;
+                        Debug.WriteLine($"[SerialWatchdog] No data received for {elapsed.TotalSeconds:F1} seconds (count: {_noDataCounter})");
+
+                        // After 3 consecutive timeouts, consider disconnected
+                        if (_noDataCounter >= 3)
+                        {
+                            Debug.WriteLine("[SerialWatchdog] Too many timeouts, considering disconnected");
+                            HandleSerialDisconnection();
+                            _noDataCounter = 0;
+                            return;
+                        }
+
+                        // Try to write a single byte to test connection
+                        try
+                        {
+                            // A zero-length write doesn't always work, so use a simple linefeed
+                            // Most Arduino-based controllers will ignore this
+                            _serialPort.Write(new byte[] { 10 }, 0, 1);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[SerialWatchdog] Exception when testing connection: {ex.Message}");
+                            HandleSerialDisconnection();
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        // Reset counter if we're getting data
+                        _noDataCounter = 0;
+                    }
+                }
+                else if (_isConnected && (DateTime.Now - _lastValidDataTimestamp).TotalSeconds > 10)
+                {
+                    // If we haven't seen any data for 10 seconds after connecting,
+                    // we may need to set the flag to start expecting data
+                    _expectingData = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[SerialWatchdog] Error: {ex.Message}");
+            }
         }
         private void DisableSmoothingCheckBox_Checked(object sender, RoutedEventArgs e)
         {
@@ -455,7 +607,9 @@ namespace DeejNG
                 catch { }
             }
             _sessionIdCache.Clear();
-
+            _meterTimer?.Stop();
+            _sessionCacheTimer?.Stop();
+            _serialReconnectTimer?.Stop();
             base.OnClosed(e);
         }
 
@@ -935,7 +1089,17 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] Setting mic volume: {ex.Message}");
             }
         }
+        private void SerialPort_ErrorReceived(object sender, SerialErrorReceivedEventArgs e)
+        {
+            Debug.WriteLine($"[Serial] Error received: {e.EventType}");
 
+            // Check for disconnection conditions
+            if (e.EventType == SerialError.Frame || e.EventType == SerialError.RXOver ||
+                e.EventType == SerialError.Overrun || e.EventType == SerialError.RXParity)
+            {
+                HandleSerialDisconnection();
+            }
+        }
         private void InitSerial(string portName, int baudRate)
         {
             try
@@ -947,16 +1111,111 @@ namespace DeejNG
 
                 _serialPort = new SerialPort(portName, baudRate);
                 _serialPort.DataReceived += SerialPort_DataReceived;
+
+                // Add error event handler to detect disconnection
+                _serialPort.ErrorReceived += SerialPort_ErrorReceived;
+
                 _serialPort.Open();
 
                 _isConnected = true;
+                _lastConnectedPort = portName; // Store the last connected port
+                _serialDisconnected = false;
+
+                // Reset the watchdog variables
+                _lastValidDataTimestamp = DateTime.Now;
+                _noDataCounter = 0;
+                _expectingData = false;
+
+                // Make sure the watchdog is running
+                if (!_serialWatchdogTimer.IsEnabled)
+                {
+                    _serialWatchdogTimer.Start();
+                }
+
                 UpdateConnectionStatus();
+
+                // Start the reconnect timer (it will only attempt reconnection if _serialDisconnected is true)
+                if (!_serialReconnectTimer.IsEnabled)
+                {
+                    _serialReconnectTimer.Start();
+                }
+
+                // Save settings since we've changed the connected port
+                SaveSettings();
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Failed to open serial port {portName}: {ex.Message}", "Serial Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 _isConnected = false;
+                _serialDisconnected = true;
                 UpdateConnectionStatus();
+            }
+        }
+        private void RefreshPorts_Click(object sender, RoutedEventArgs e)
+        {
+            // Refresh the list of available ports
+            LoadAvailablePorts();
+
+            // Show a message if no ports are available
+            if (ComPortSelector.Items.Count == 0)
+            {
+                MessageBox.Show("No serial ports detected. Please connect your device and try again.",
+                                "No Ports Available",
+                                MessageBoxButton.OK,
+                                MessageBoxImage.Information);
+            }
+            else
+            {
+                // If we're in disconnected state and there are ports available,
+                // attempt to reconnect to the last known port
+                if (_serialDisconnected && !string.IsNullOrEmpty(_lastConnectedPort) &&
+                    ComPortSelector.Items.Contains(_lastConnectedPort))
+                {
+                    ComPortSelector.SelectedItem = _lastConnectedPort;
+                    InitSerial(_lastConnectedPort, 9600);
+                }
+            }
+        }
+
+        // Method to handle serial disconnection
+        private void HandleSerialDisconnection()
+        {
+            if (_serialDisconnected) return; // Already handling disconnection
+
+            Debug.WriteLine("[Serial] Disconnection detected");
+            _serialDisconnected = true;
+            _isConnected = false;
+
+            // Update UI on the dispatcher thread
+            Dispatcher.BeginInvoke(() =>
+            {
+                ConnectionStatus.Text = "Disconnected - Reconnecting...";
+                ConnectionStatus.Foreground = Brushes.Red;
+                ConnectButton.IsEnabled = true;
+            });
+
+            // Try to clean up the serial port
+            try
+            {
+                if (_serialPort != null)
+                {
+                    if (_serialPort.IsOpen)
+                        _serialPort.Close();
+
+                    // Keep the serial port object but clean up event handlers
+                    _serialPort.DataReceived -= SerialPort_DataReceived;
+                    _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Failed to cleanup serial port: {ex.Message}");
+            }
+
+            // Make sure reconnect timer is running
+            if (!_serialReconnectTimer.IsEnabled)
+            {
+                _serialReconnectTimer.Start();
             }
         }
 
@@ -968,11 +1227,20 @@ namespace DeejNG
             // Populate the ComboBox with the newly enumerated ports
             ComPortSelector.ItemsSource = availablePorts;
 
-            // Ensure we select the first available port or leave it blank if none exist
-            if (availablePorts.Length > 0)
+            // If we have a last connected port and it's in the list, select it
+            if (!string.IsNullOrEmpty(_lastConnectedPort) && availablePorts.Contains(_lastConnectedPort))
+            {
+                ComPortSelector.SelectedItem = _lastConnectedPort;
+            }
+            // Otherwise select the first available port or leave it blank if none exist
+            else if (availablePorts.Length > 0)
+            {
                 ComPortSelector.SelectedIndex = 0;
+            }
             else
+            {
                 ComPortSelector.SelectedIndex = -1;  // No selection if no ports found
+            }
         }
 
         private void LoadSettings()
@@ -1127,11 +1395,21 @@ namespace DeejNG
 
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
-            if (_serialPort == null || !_serialPort.IsOpen) return;
+            if (_serialPort == null || !_serialPort.IsOpen)
+            {
+                // If we're here but the port is not open, we have a disconnection
+                HandleSerialDisconnection();
+                return;
+            }
 
             try
             {
                 string incoming = _serialPort.ReadExisting();
+
+                // Update timestamp when we receive data
+                _lastValidDataTimestamp = DateTime.Now;
+                _expectingData = true; // We're now expecting regular data
+                _noDataCounter = 0;    // Reset the counter since we got data
 
                 // Check buffer size and truncate if it gets too large
                 if (_serialBuffer.Length > 8192) // 8KB limit
@@ -1154,8 +1432,16 @@ namespace DeejNG
                     Dispatcher.BeginInvoke(() => HandleSliderData(line));
                 }
             }
-            catch (IOException) { }
-            catch (InvalidOperationException) { }
+            catch (IOException)
+            {
+                // IO Exception can indicate device disconnection
+                HandleSerialDisconnection();
+            }
+            catch (InvalidOperationException)
+            {
+                // This can happen if the port is closed while we're reading
+                HandleSerialDisconnection();
+            }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[ERROR] Serial read: {ex.Message}");
@@ -1255,12 +1541,31 @@ namespace DeejNG
         private void UpdateConnectionStatus()
         {
             // Update the text block with connection status
-            ConnectionStatus.Text = _isConnected ? $"Connected to {_serialPort.PortName}" : "Disconnected";
+            string statusText;
+            Brush statusColor;
+
+            if (_isConnected)
+            {
+                statusText = $"Connected to {_serialPort.PortName}";
+                statusColor = Brushes.Green;
+            }
+            else if (_serialDisconnected)
+            {
+                statusText = "Disconnected - Reconnecting...";
+                statusColor = Brushes.Red;
+            }
+            else
+            {
+                statusText = "Disconnected";
+                statusColor = Brushes.Red;
+            }
+
+            ConnectionStatus.Text = statusText;
+            ConnectionStatus.Foreground = statusColor;
 
             // Disable the Connect button if connected
             ConnectButton.IsEnabled = !_isConnected;
         }
-
         // Update the UpdateMeters method in MainWindow.xaml.cs
 
         private void UpdateMeters(object? sender, EventArgs e)
