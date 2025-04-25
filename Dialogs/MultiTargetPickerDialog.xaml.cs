@@ -1,9 +1,11 @@
 ﻿using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using DeejNG.Models;
 using NAudio.CoreAudioApi;
 
@@ -11,12 +13,43 @@ namespace DeejNG.Dialogs
 {
     public partial class MultiTargetPickerDialog : Window
     {
-        public class SelectableSession
+        public class SelectableSession : INotifyPropertyChanged
         {
+            private bool _isSelected;
+            private bool _isEnabled = true;
+
             public string Id { get; set; }
             public string FriendlyName { get; set; }
-            public bool IsSelected { get; set; }
+
+            public bool IsSelected
+            {
+                get => _isSelected;
+                set
+                {
+                    if (_isSelected != value)
+                    {
+                        _isSelected = value;
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+                    }
+                }
+            }
+
+            public bool IsEnabled
+            {
+                get => _isEnabled;
+                set
+                {
+                    if (_isEnabled != value)
+                    {
+                        _isEnabled = value;
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEnabled)));
+                    }
+                }
+            }
+
             public bool IsInputDevice { get; set; }
+
+            public event PropertyChangedEventHandler PropertyChanged;
         }
 
         public ObservableCollection<SelectableSession> AvailableSessions { get; } = new();
@@ -38,18 +71,68 @@ namespace DeejNG.Dialogs
 
             AvailableSessionsListBox.ItemsSource = AvailableSessions;
             InputDevicesListBox.ItemsSource = InputDevices;
+
+            // Set up event handlers for checkbox changes
+            foreach (var session in AvailableSessions)
+            {
+                session.PropertyChanged += (s, e) =>
+                {
+                    if (e.PropertyName == nameof(SelectableSession.IsSelected))
+                    {
+                        UpdateSelectionStates();
+                    }
+                };
+            }
+
+            foreach (var device in InputDevices)
+            {
+                device.PropertyChanged += (s, e) =>
+                {
+                    if (e.PropertyName == nameof(SelectableSession.IsSelected))
+                    {
+                        UpdateSelectionStates();
+                    }
+                };
+            }
+
+            // Initial update
+            UpdateSelectionStates();
+        }
+
+        private void UpdateSelectionStates()
+        {
+            // Check if any output apps are selected
+            bool hasOutputSelected = AvailableSessions.Any(s => s.IsSelected);
+
+            // Check if any input devices are selected
+            bool hasInputSelected = InputDevices.Any(d => d.IsSelected);
+
+            // Apply the rules:
+            // 1. If any output is selected, disable all inputs
+            // 2. If any input is selected, disable all outputs
+            foreach (var device in InputDevices)
+            {
+                device.IsEnabled = !hasOutputSelected;
+            }
+
+            foreach (var session in AvailableSessions)
+            {
+                session.IsEnabled = !hasInputSelected;
+            }
         }
 
         private void LoadSessions(HashSet<string> selectedNames)
         {
             // Always add System
-            AvailableSessions.Add(new SelectableSession
+            var systemSession = new SelectableSession
             {
                 Id = "system",
                 FriendlyName = "System",
                 IsSelected = selectedNames.Contains("system"),
                 IsInputDevice = false
-            });
+            };
+
+            AvailableSessions.Add(systemSession);
 
             try
             {
@@ -95,13 +178,15 @@ namespace DeejNG.Dialogs
 
                         if (!string.IsNullOrWhiteSpace(friendlyName) && !seenProcesses.Contains(friendlyName))
                         {
-                            AvailableSessions.Add(new SelectableSession
+                            var newSession = new SelectableSession
                             {
                                 Id = friendlyName.ToLowerInvariant(),
                                 FriendlyName = friendlyName,
                                 IsSelected = selectedNames.Contains(friendlyName.ToLowerInvariant()),
                                 IsInputDevice = false
-                            });
+                            };
+
+                            AvailableSessions.Add(newSession);
                             seenProcesses.Add(friendlyName);
                         }
                     }
@@ -139,13 +224,15 @@ namespace DeejNG.Dialogs
                 foreach (var device in devices)
                 {
                     string name = device.FriendlyName;
-                    InputDevices.Add(new SelectableSession
+                    var newDevice = new SelectableSession
                     {
                         Id = name,
                         FriendlyName = name,
                         IsSelected = selectedNames.Contains(name.ToLowerInvariant()),
                         IsInputDevice = true
-                    });
+                    };
+
+                    InputDevices.Add(newDevice);
                 }
 
                 // Sort input devices alphabetically
