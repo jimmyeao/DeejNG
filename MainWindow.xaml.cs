@@ -28,7 +28,7 @@ namespace DeejNG
     {
         #region Private Fields
         private readonly Dictionary<string, float> _lastInputVolume = new(StringComparer.OrdinalIgnoreCase);
-
+        private Dictionary<string, IAudioSessionEventsHandler> _registeredHandlers = new();
         private AudioService _audioService;
         private bool _metersEnabled = true;
         private List<ChannelControl> _channelControls = new();
@@ -176,6 +176,8 @@ namespace DeejNG
                 Interval = TimeSpan.FromSeconds(5)
             };
 
+            int tickCount = 0;
+
             sessionTimer.Tick += (_, _) =>
             {
                 try
@@ -184,7 +186,7 @@ namespace DeejNG
                         .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
                         .AudioSessionManager.Sessions;
 
-                    var targets = GetCurrentTargets(); // <- your method that gets all active targets
+                    var targets = GetCurrentTargets();
 
                     for (int i = 0; i < sessions.Count; i++)
                     {
@@ -201,9 +203,6 @@ namespace DeejNG
                                     if (sid.Contains(target) || iid.Contains(target))
                                     {
                                         _sessionIdCache.Add((session, sid, iid));
-
-                                       
-
                                         break;
                                     }
                                 }
@@ -211,21 +210,24 @@ namespace DeejNG
                         }
                         catch (Exception ex)
                         {
-                           
-
+                            // Log error but continue with other sessions
                         }
+                    }
+
+                    // Run cleanup every minute (12 ticks at 5-second intervals)
+                    if (++tickCount % 12 == 0)
+                    {
+                        CleanupDeadSessions();
                     }
                 }
                 catch (Exception ex)
                 {
-                   
-
+                    Debug.WriteLine($"[ERROR] Session cache update: {ex.Message}");
                 }
             };
 
             sessionTimer.Start();
         }
-
 
 
         private void StartOnBootCheckBox_Unchecked(object sender, RoutedEventArgs e)
@@ -335,7 +337,20 @@ namespace DeejNG
 
         protected override void OnClosed(EventArgs e)
         {
-            base.OnClosed(e);
+            // Clean up all registered event handlers
+            foreach (var target in _registeredHandlers.Keys.ToList())
+            {
+                try
+                {
+                    _registeredHandlers.Remove(target);
+                    Debug.WriteLine($"[Cleanup] Unregistered event handler for {target} on application close");
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ERROR] Failed to unregister handler for {target} on close: {ex.Message}");
+                }
+            }
+           
             try
             {
                 if (_serialPort != null)
@@ -358,6 +373,7 @@ namespace DeejNG
             {
                 MessageBox.Show($"Error while closing serial port: {ex.Message}", "Cleanup Error", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
+            base.OnClosed(e);
         }
 
 
@@ -524,6 +540,29 @@ namespace DeejNG
             var audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
             var sessions = audioDevice.AudioSessionManager.Sessions;
 
+            // First, unregister old handlers that aren't needed anymore
+            var currentTargets = GetCurrentTargets();
+            var targetsToRemove = _registeredHandlers.Keys
+                .Where(t => !currentTargets.Contains(t))
+                .ToList();
+
+            foreach (var target in targetsToRemove)
+            {
+                if (_registeredHandlers.TryGetValue(target, out var handler))
+                {
+                    try
+                    {
+                        // The handler knows which session it belongs to
+                        _registeredHandlers.Remove(target);
+                        Debug.WriteLine($"[Cleanup] Unregistered event handler for {target}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[ERROR] Failed to unregister handler for {target}: {ex.Message}");
+                    }
+                }
+            }
+
             foreach (var ctrl in _channelControls)
             {
                 string target = ctrl.TargetExecutable?.Trim().ToLower();
@@ -540,17 +579,6 @@ namespace DeejNG
                     isMuted = audioDevice.AudioEndpointVolume.Mute;
                     ctrl.SetMuted(isMuted);
                     _audioService.ApplyMuteStateToTarget(target, isMuted);
-
-
-                    // 🔔 Subscribe to system volume notifications
-                    //audioDevice.AudioEndpointVolume.OnVolumeNotification += (data) =>
-                    //{
-                    //    Dispatcher.Invoke(() =>
-                    //    {
-                    //        ctrl.SetMuted(data.Muted);
-                    //    });
-                    //};
-
                     continue;
                 }
 
@@ -571,17 +599,20 @@ namespace DeejNG
                 {
                     isMuted = matchedSession.SimpleAudioVolume.Mute;
 
-                    // ✅ Register proper IAudioSessionEvents handler
-                    try
+                    // Only register if not already registered for this target
+                    if (!_registeredHandlers.ContainsKey(target))
                     {
-                        matchedSession.RegisterEventClient(new AudioSessionEventsHandler(ctrl));
-
-
-                    }
-                    catch (Exception ex)
-                    {
-                       
-
+                        try
+                        {
+                            var handler = new AudioSessionEventsHandler(ctrl);
+                            matchedSession.RegisterEventClient(handler);
+                            _registeredHandlers[target] = handler;
+                            Debug.WriteLine($"[Event] Registered handler for {target}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[ERROR] Failed to register handler for {target}: {ex.Message}");
+                        }
                     }
 
                     ctrl.SetMuted(isMuted);
@@ -589,7 +620,6 @@ namespace DeejNG
                 }
             }
         }
-
 
         private void HandleSliderData(string data)
         {
@@ -840,6 +870,8 @@ namespace DeejNG
         }
 
 
+        // In MainWindow.xaml.cs, modify SerialPort_DataReceived method:
+
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
             if (_serialPort == null || !_serialPort.IsOpen) return;
@@ -847,6 +879,14 @@ namespace DeejNG
             try
             {
                 string incoming = _serialPort.ReadExisting();
+
+                // Check buffer size and truncate if it gets too large
+                if (_serialBuffer.Length > 8192) // 8KB limit
+                {
+                    _serialBuffer.Clear();
+                    Debug.WriteLine("[WARNING] Serial buffer exceeded limit and was cleared");
+                }
+
                 _serialBuffer.Append(incoming);
 
                 while (true)
@@ -863,8 +903,62 @@ namespace DeejNG
             }
             catch (IOException) { }
             catch (InvalidOperationException) { }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Serial read: {ex.Message}");
+                _serialBuffer.Clear(); // Clear the buffer on unexpected errors
+            }
         }
+        private void CleanupDeadSessions()
+        {
+            var processIds = new HashSet<int>();
 
+            // Get current processes
+            try
+            {
+                foreach (var proc in Process.GetProcesses())
+                {
+                    try
+                    {
+                        processIds.Add(proc.Id);
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Error] Failed to enumerate processes: {ex.Message}");
+                return;
+            }
+
+            // Clean process name cache
+            var deadPids = _processNameCache.Keys.Where(pid => !processIds.Contains(pid)).ToList();
+            foreach (var pid in deadPids)
+            {
+                _processNameCache.Remove(pid);
+            }
+
+            // Trim session cache to reasonable size (keep most recent 100 entries)
+            if (_sessionIdCache.Count > 100)
+            {
+                _sessionIdCache = _sessionIdCache.Skip(_sessionIdCache.Count - 100).ToList();
+            }
+
+            // Limit size of input device map 
+            if (_inputDeviceMap.Count > 20)
+            {
+                var keysToRemove = _inputDeviceMap.Keys.Take(_inputDeviceMap.Count - 10).ToList();
+                foreach (var key in keysToRemove)
+                {
+                    _inputDeviceMap.Remove(key);
+                }
+            }
+
+            Debug.WriteLine($"[Cleanup] Removed {deadPids.Count} dead processes from cache. " +
+                           $"Process cache: {_processNameCache.Count}, " +
+                           $"Session cache: {_sessionIdCache.Count}, " +
+                           $"Input device cache: {_inputDeviceMap.Count}");
+        }
         private void ShowHideMenuItem_Click(object sender, RoutedEventArgs e)
         {
             if (this.IsVisible)
