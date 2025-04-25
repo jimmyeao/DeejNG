@@ -35,7 +35,7 @@ namespace DeejNG
         private Dictionary<string, IAudioSessionEventsHandler> _registeredHandlers = new();
         private AudioService _audioService;
         private bool _metersEnabled = true;
-        private List<ChannelControl> _channelControls = new();
+
         private bool _isInitializing = true;
         private bool _isConnected = false;
         private DispatcherTimer _meterTimer;
@@ -1077,6 +1077,8 @@ namespace DeejNG
             ConnectButton.IsEnabled = !_isConnected;
         }
 
+        // Update the UpdateMeters method in MainWindow.xaml.cs
+
         private void UpdateMeters(object? sender, EventArgs e)
         {
             if (!_metersEnabled || _isClosing) return;
@@ -1107,119 +1109,150 @@ namespace DeejNG
                 {
                     try
                     {
-                        var target = ctrl.TargetExecutable?.Trim().ToLower();
-                        if (string.IsNullOrWhiteSpace(target))
+                        var targets = ctrl.AudioTargets;
+                        if (targets.Count == 0)
                         {
                             ctrl.UpdateAudioMeter(0);
                             continue;
                         }
 
-                        if (ctrl.IsInputMode)
+                        // Track the highest peak level across all targets
+                        float highestPeak = 0;
+                        bool allMuted = true;
+
+                        // Process input device targets
+                        var inputTargets = targets.Where(t => t.IsInputDevice).ToList();
+                        if (inputTargets.Any())
                         {
-                            // Mic input mode
-                            if (!_inputDeviceMap.TryGetValue(target, out var mic))
+                            foreach (var target in inputTargets)
                             {
-                                mic = new MMDeviceEnumerator()
-                                    .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-                                    .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
+                                if (!_inputDeviceMap.TryGetValue(target.Name.ToLowerInvariant(), out var mic))
+                                {
+                                    mic = new MMDeviceEnumerator()
+                                        .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                                        .FirstOrDefault(d => d.FriendlyName.Equals(target.Name, StringComparison.OrdinalIgnoreCase));
+
+                                    if (mic != null)
+                                        _inputDeviceMap[target.Name.ToLowerInvariant()] = mic;
+                                }
 
                                 if (mic != null)
-                                    _inputDeviceMap[target] = mic;
-                            }
-
-                            if (mic != null)
-                            {
-                                try
-                                {
-                                    float peak = mic.AudioMeterInformation.MasterPeakValue;
-                                    float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * ctrl.CurrentVolume * visualGain, 1.0f);
-                                    ctrl.UpdateAudioMeter(boosted);
-                                }
-                                catch
-                                {
-                                    ctrl.UpdateAudioMeter(0);
-                                }
-                            }
-                            else
-                            {
-                                ctrl.UpdateAudioMeter(0);
-                            }
-
-                            continue; // done with input device
-                        }
-
-                        if (target == "system")
-                        {
-                            float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
-                            float systemVol = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
-                            float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * systemVol * systemCalibrationFactor * visualGain, 1.0f);
-                            ctrl.UpdateAudioMeter(boosted);
-                            continue;
-                        }
-
-                        // Output sessions - use cached processes where possible
-                        AudioSessionControl? matchingSession = null;
-
-                        for (int i = 0; i < sessions.Count; i++)
-                        {
-                            var s = sessions[i];
-                            try
-                            {
-                                string sid = s.GetSessionIdentifier?.ToLowerInvariant() ?? "";
-                                string iid = s.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
-                                int pid = (int)s.GetProcessID;
-
-                                if (!_processNameCache.TryGetValue(pid, out string procName))
                                 {
                                     try
                                     {
-                                        procName = Process.GetProcessById(pid).ProcessName.ToLowerInvariant();
-                                        _processNameCache[pid] = procName;
+                                        float peak = mic.AudioMeterInformation.MasterPeakValue;
+                                        // No mute factor here - we'll apply it once at the end
+                                        if (peak > highestPeak)
+                                            highestPeak = peak;
+
+                                        // Check if any device is not muted
+                                        if (!mic.AudioEndpointVolume.Mute)
+                                            allMuted = false;
                                     }
                                     catch
                                     {
-                                        procName = "";
-                                        _processNameCache[pid] = procName;
+                                        // Continue if we can't get peak for this device
                                     }
                                 }
+                            }
+                        }
 
-                                var sidFile = Path.GetFileNameWithoutExtension(sid);
-                                var iidFile = Path.GetFileNameWithoutExtension(iid);
+                        // Process output app targets
+                        var outputTargets = targets.Where(t => !t.IsInputDevice).ToList();
+                        if (outputTargets.Any())
+                        {
+                            // Special handling for system
+                            var systemTarget = outputTargets.FirstOrDefault(t =>
+                                string.Equals(t.Name, "system", StringComparison.OrdinalIgnoreCase));
 
-                                if (sidFile == target || iidFile == target || procName == target ||
-                                     sid.Contains(target, StringComparison.OrdinalIgnoreCase) ||
-                                     iid.Contains(target, StringComparison.OrdinalIgnoreCase) ||
-                                     target != null && target.Length > 2 && sid.Contains(target, StringComparison.OrdinalIgnoreCase))
+                            if (systemTarget != null)
+                            {
+                                float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
+                                float systemVol = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
+                                peak *= systemVol * systemCalibrationFactor;
+
+                                if (peak > highestPeak)
+                                    highestPeak = peak;
+
+                                if (!_audioDevice.AudioEndpointVolume.Mute)
+                                    allMuted = false;
+                            }
+
+                            // Handle other output applications
+                            foreach (var target in outputTargets.Where(t =>
+                                !string.Equals(t.Name, "system", StringComparison.OrdinalIgnoreCase)))
+                            {
+                                // Find matching session for this target
+                                AudioSessionControl? matchingSession = null;
+                                string targetName = target.Name.ToLowerInvariant();
+
+                                for (int i = 0; i < sessions.Count; i++)
                                 {
-                                    matchingSession = s;
-                                    break;
+                                    var s = sessions[i];
+                                    try
+                                    {
+                                        string sid = s.GetSessionIdentifier?.ToLowerInvariant() ?? "";
+                                        string iid = s.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
+                                        int pid = (int)s.GetProcessID;
+
+                                        if (!_processNameCache.TryGetValue(pid, out string procName))
+                                        {
+                                            try
+                                            {
+                                                procName = Process.GetProcessById(pid).ProcessName.ToLowerInvariant();
+                                                _processNameCache[pid] = procName;
+                                            }
+                                            catch
+                                            {
+                                                procName = "";
+                                                _processNameCache[pid] = procName;
+                                            }
+                                        }
+
+                                        var sidFile = Path.GetFileNameWithoutExtension(sid);
+                                        var iidFile = Path.GetFileNameWithoutExtension(iid);
+
+                                        if (sidFile == targetName || iidFile == targetName || procName == targetName ||
+                                             sid.Contains(targetName, StringComparison.OrdinalIgnoreCase) ||
+                                             iid.Contains(targetName, StringComparison.OrdinalIgnoreCase) ||
+                                             targetName != null && targetName.Length > 2 &&
+                                             sid.Contains(targetName, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            matchingSession = s;
+                                            break;
+                                        }
+                                    }
+                                    catch { }
+                                }
+
+                                if (matchingSession != null)
+                                {
+                                    try
+                                    {
+                                        float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
+                                        if (peak > highestPeak)
+                                            highestPeak = peak;
+
+                                        if (!matchingSession.SimpleAudioVolume.Mute)
+                                            allMuted = false;
+                                    }
+                                    catch
+                                    {
+                                        // Continue if we can't get peak for this session
+                                    }
                                 }
                             }
-                            catch { }
                         }
 
-                        if (matchingSession != null)
-                        {
-                            try
-                            {
-                                float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
-                                float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * ctrl.CurrentVolume * visualGain, 1.0f);
-                                ctrl.UpdateAudioMeter(boosted);
-                            }
-                            catch
-                            {
-                                ctrl.UpdateAudioMeter(0);
-                            }
-                        }
-                        else
-                        {
-                            ctrl.UpdateAudioMeter(0);
-                        }
+                        // Apply the highest peak with gain factor to the meter
+                        float finalLevel = ctrl.IsMuted || allMuted ? 0 : Math.Min(highestPeak * visualGain, 1.0f);
+                        ctrl.UpdateAudioMeter(finalLevel);
                     }
                     catch (Exception ex)
                     {
                         // Log the error but continue with other controls
                         Debug.WriteLine($"[ERROR] Updating meter: {ex.Message}");
+                        ctrl.UpdateAudioMeter(0); // Reset meter on error
                     }
                 }
 
@@ -1231,8 +1264,21 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] Meter update: {ex.Message}");
             }
         }
+        public Dictionary<int, List<AudioTarget>> GetAllAssignedTargets()
+        {
+            var result = new Dictionary<int, List<AudioTarget>>();
 
+            for (int i = 0; i < _channelControls.Count; i++)
+            {
+                result[i] = new List<AudioTarget>(_channelControls[i].AudioTargets);
+            }
 
+            return result;
+        }
+
+        // You'll also need to make _channelControls accessible to allow the ChannelControl to get its index
+        // In MainWindow.xaml.cs, change the private field to:
+        public List<ChannelControl> _channelControls = new();
 
         private void StartMinimizedCheckBox_Checked(object sender, RoutedEventArgs e)
         {

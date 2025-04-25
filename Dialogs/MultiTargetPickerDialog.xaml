@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Select Applications" Height="450" Width="400"
+        Title="Select Applications" Height="500" Width="500"
         TextElement.Foreground="{DynamicResource MaterialDesign.Brush.Foreground}"
         Background="{DynamicResource MaterialDesign.Brush.Background}"
         TextElement.FontWeight="Regular"
@@ -12,57 +12,114 @@
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- Header -->
-        <TextBlock Text="Select applications for this slider" 
+        <TextBlock Grid.Row="0" Text="Select targets for this slider" 
                    Style="{StaticResource MaterialDesignHeadline6TextBlock}" 
                    Margin="0,0,0,10"/>
 
+        <!-- Instruction -->
+        <TextBlock Grid.Row="1" 
+                   Text="Note: You can select either output applications OR input devices, but not both. Applications already assigned to other sliders are marked and cannot be selected."
+                   Style="{StaticResource MaterialDesignBody2TextBlock}"
+                   Foreground="{DynamicResource MaterialDesignBodyTextBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,10"/>
+
         <!-- Session List with Checkboxes -->
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <!-- Available sessions -->
-            <GroupBox Header="Available Applications" Grid.Column="0" Margin="0,0,5,0">
-                <ListBox x:Name="AvailableSessionsListBox" 
-                       SelectionMode="Extended" 
-                       Height="300"
-                       Margin="0,5">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <CheckBox Content="{Binding FriendlyName}" 
-                                    IsChecked="{Binding IsSelected}" 
-                                    Margin="0,2"/>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+            <GroupBox Header="Output Applications" Grid.Column="0" Margin="0,0,5,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <ListBox x:Name="AvailableSessionsListBox" 
+                           Grid.Row="0"
+                           SelectionMode="Multiple" 
+                           Height="300"
+                           Margin="0,5">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <CheckBox Content="{Binding FriendlyName}" 
+                                              IsChecked="{Binding IsSelected}" 
+                                              IsEnabled="{Binding IsEnabled}"
+                                              Margin="0,2"/>
+                                    <TextBlock Text="{Binding AssignmentInfo, StringFormat='Already assigned to slider {0}'}" 
+                                               Margin="25,0,0,0"
+                                               Foreground="#F44336"
+                                               FontStyle="Italic"
+                                               FontSize="10"
+                                               Visibility="{Binding AssignmentInfoVisibility}"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock Grid.Row="1" 
+                               Text="When disabled: Input device(s) are selected"
+                               FontStyle="Italic"
+                               FontSize="10"
+                               Margin="0,5,0,0"
+                               HorizontalAlignment="Center"/>
+                </Grid>
             </GroupBox>
 
             <!-- Input device selection -->
-            <GroupBox Header="Input Devices" Grid.Column="1" Width="180">
-                <ListBox x:Name="InputDevicesListBox" 
-                       SelectionMode="Extended"
-                       Height="300"
-                       Margin="0,5">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <CheckBox Content="{Binding FriendlyName}" 
-                                    IsChecked="{Binding IsSelected}" 
-                                    Margin="0,2"/>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+            <GroupBox Header="Input Devices" Grid.Column="1" Width="200">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <ListBox x:Name="InputDevicesListBox" 
+                           Grid.Row="0"
+                           SelectionMode="Multiple"
+                           Height="300"
+                           Margin="0,5">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <!-- Use plain bindings without converters -->
+                                    <CheckBox Content="{Binding FriendlyName}" 
+                      IsChecked="{Binding IsSelected}" 
+                      Margin="0,2"/>
+                                    <!-- Only show assignment info text when needed -->
+                                    <TextBlock Text="{Binding AssignmentInfo, StringFormat='Already assigned to slider {0}'}" 
+                       Margin="25,0,0,0"
+                       Foreground="#F44336"
+                       FontStyle="Italic"
+                       FontSize="10"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock Grid.Row="1" 
+                               Text="When disabled: Output app(s) are selected"
+                               FontStyle="Italic"
+                               FontSize="10"
+                               Margin="0,5,0,0"
+                               HorizontalAlignment="Center"/>
+                </Grid>
             </GroupBox>
         </Grid>
 
         <!-- Action Buttons -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
             <Button Content="Cancel" 
                   Width="80" 
                   Margin="0,0,10,0" 

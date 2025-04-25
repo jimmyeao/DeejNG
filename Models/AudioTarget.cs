@@ -11,10 +11,8 @@ namespace DeejNG.Models
         public string Name { get; set; } = "";
         public bool IsInputDevice { get; set; } = false;
 
-        // For display in UI
         public override string ToString() => Name;
 
-        // For comparison
         public override bool Equals(object obj)
         {
             if (obj is AudioTarget other)

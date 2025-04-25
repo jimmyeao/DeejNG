@@ -201,7 +201,7 @@ namespace DeejNG.Dialogs
 
         private void ChannelControl_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            // Open the multi-target picker instead of the single target picker
+            // Open the multi-target picker
             var picker = new MultiTargetPickerDialog(_audioTargets)
             {
                 Owner = Application.Current.MainWindow,
@@ -210,9 +210,9 @@ namespace DeejNG.Dialogs
 
             if (picker.Owner != null)
             {
-                var mainWindow = picker.Owner;
-                picker.Left = mainWindow.Left + (mainWindow.Width - picker.Width) / 2;
-                picker.Top = mainWindow.Top + (mainWindow.Height - picker.Height) / 2;
+                var window = picker.Owner;
+                picker.Left = window.Left + (window.Width - picker.Width) / 2;
+                picker.Top = window.Top + (window.Height - picker.Height) / 2;
             }
 
             if (picker.ShowDialog() == true)
@@ -222,7 +222,6 @@ namespace DeejNG.Dialogs
                 TargetChanged?.Invoke(this, EventArgs.Empty);
             }
         }
-
         private void InputModeCheckBox_Checked(object sender, RoutedEventArgs e)
         {
             RaiseTargetChanged(); // You already track state via IsInputMode
