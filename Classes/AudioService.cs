@@ -46,7 +46,15 @@ namespace DeejNG.Services
                 }
             }
         }
+        public void ApplyMuteStateToMultipleTargets(List<string> targets, bool isMuted)
+        {
+            if (targets == null || !targets.Any()) return;
 
+            foreach (var target in targets)
+            {
+                ApplyMuteStateToTarget(target, isMuted);
+            }
+        }
         public void ApplyVolumeToTarget(string executable, float level, bool isMuted = false)
         {
             level = Math.Clamp(level, 0.0f, 1.0f);

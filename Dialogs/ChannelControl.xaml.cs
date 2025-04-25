@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using DeejNG.Models;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -18,6 +19,7 @@ namespace DeejNG.Dialogs
         private readonly Brush _muteOnBrush = new SolidColorBrush(Color.FromRgb(255, 64, 64));
         private readonly TimeSpan PeakHoldDuration = TimeSpan.FromSeconds(1);
         private bool _isMuted = false;
+        private List<AudioTarget> _audioTargets = new();
         private bool _layoutReady = false;
         private float _meterLevel;
         private float _peakLevel;
@@ -42,8 +44,8 @@ namespace DeejNG.Dialogs
         #region Public Events
 
         public event EventHandler TargetChanged;
-
-        public event Action<string, float, bool> VolumeOrMuteChanged;
+        public event Action<List<AudioTarget>, float, bool> VolumeOrMuteChanged;
+   
 
         #endregion Public Events
 
@@ -52,12 +54,26 @@ namespace DeejNG.Dialogs
         public float CurrentVolume => (float)VolumeSlider.Value;
         public bool IsInputMode
         {
-            get => InputModeCheckBox.IsChecked == true;
-            set => InputModeCheckBox.IsChecked = value;
+            get => _audioTargets.Any(t => t.IsInputDevice);
+            set
+            {
+                InputModeCheckBox.IsChecked = value;
+                // If checked and we don't have any input devices,
+                // we should present the picker dialog
+            }
         }
         public bool IsMuted => _isMuted;
-        public string TargetExecutable => TargetTextBox.Text;
-
+        public string TargetExecutable =>
+             _audioTargets.FirstOrDefault()?.Name ?? "";
+        public List<AudioTarget> AudioTargets
+        {
+            get => _audioTargets;
+            set
+            {
+                _audioTargets = value ?? new List<AudioTarget>();
+                UpdateTargetsDisplay();
+            }
+        }
         #endregion Public Properties
 
         #region Public Methods
@@ -78,10 +94,27 @@ namespace DeejNG.Dialogs
 
         public void SetTargetExecutable(string target)
         {
-            TargetTextBox.Text = target;
-            UpdateMuteButtonEnabled(); // 👈 now it disables the mute button if empty
-        }
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                _audioTargets.Clear();
+            }
+            else
+            {
+                _audioTargets = new List<AudioTarget>
+                {
+                    new AudioTarget { Name = target, IsInputDevice = IsInputMode }
+                };
+            }
 
+            UpdateTargetsDisplay();
+            UpdateMuteButtonEnabled();
+        }
+        public void SetTargets(List<AudioTarget> targets)
+        {
+            _audioTargets = targets ?? new List<AudioTarget>();
+            UpdateTargetsDisplay();
+            UpdateMuteButtonEnabled();
+        }
 
         public void SetVolume(float level)
         {
@@ -135,7 +168,31 @@ namespace DeejNG.Dialogs
         #endregion Public Methods
 
         #region Private Methods
+        private void UpdateTargetsDisplay()
+        {
+            if (_audioTargets.Count == 0)
+            {
+                TargetTextBox.Text = "";
+                TargetTextBox.ToolTip = "";
+            }
+            else if (_audioTargets.Count == 1)
+            {
+                TargetTextBox.Text = _audioTargets[0].Name;
+                TargetTextBox.ToolTip = _audioTargets[0].Name;
+            }
+            else
+            {
+                // Show count and first app
+                var firstTarget = _audioTargets[0].Name;
+                TargetTextBox.Text = $"{firstTarget} +{_audioTargets.Count - 1}";
 
+                // Set tooltip to show all targets
+                TargetTextBox.ToolTip = string.Join("\n", _audioTargets.Select(t =>
+                    $"{t.Name} {(t.IsInputDevice ? "(Input)" : "")}"));
+            }
+
+            UpdateMuteButtonEnabled();
+        }
         private void ChannelControl_Loaded(object sender, RoutedEventArgs e)
         {
             _layoutReady = true;
@@ -144,7 +201,8 @@ namespace DeejNG.Dialogs
 
         private void ChannelControl_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            var picker = new SessionPickerDialog(IsInputMode) // 👈 THIS IS THE CHANGE
+            // Open the multi-target picker instead of the single target picker
+            var picker = new MultiTargetPickerDialog(_audioTargets)
             {
                 Owner = Application.Current.MainWindow,
                 WindowStartupLocation = WindowStartupLocation.Manual
@@ -159,7 +217,8 @@ namespace DeejNG.Dialogs
 
             if (picker.ShowDialog() == true)
             {
-                SetTargetExecutable(picker.SessionComboBox.Text);
+                _audioTargets = picker.SelectedTargets;
+                UpdateTargetsDisplay();
                 TargetChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -181,14 +240,14 @@ namespace DeejNG.Dialogs
         {
             TargetChanged?.Invoke(this, EventArgs.Empty);
         }
-        
+
         private void MuteButton_Checked(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
 
             _isMuted = true;
             UpdateMuteButtonVisual();
-            VolumeOrMuteChanged?.Invoke(TargetExecutable, CurrentVolume, _isMuted);
+            VolumeOrMuteChanged?.Invoke(_audioTargets, CurrentVolume, _isMuted);
         }
 
         private void MuteButton_Unchecked(object sender, RoutedEventArgs e)
@@ -197,7 +256,7 @@ namespace DeejNG.Dialogs
 
             _isMuted = false;
             UpdateMuteButtonVisual();
-            VolumeOrMuteChanged?.Invoke(TargetExecutable, CurrentVolume, _isMuted);
+            VolumeOrMuteChanged?.Invoke(_audioTargets, CurrentVolume, _isMuted);
         }
 
         private void TargetTextBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -208,8 +267,7 @@ namespace DeejNG.Dialogs
 
         private void UpdateMuteButtonEnabled()
         {
-            var target = TargetExecutable?.Trim();
-            MuteButton.IsEnabled = !string.IsNullOrWhiteSpace(target) && !string.Equals(target, "(empty)", StringComparison.OrdinalIgnoreCase);
+            MuteButton.IsEnabled = _audioTargets.Count > 0;
         }
         private void UpdateMuteButtonVisual()
         {

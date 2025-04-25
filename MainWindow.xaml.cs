@@ -21,6 +21,8 @@ using Microsoft.Win32;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 using DeejNG.Classes;
+using DeejNG.Models;
+using static System.Windows.Forms.Design.AxImporter;
 
 namespace DeejNG
 {
@@ -481,7 +483,7 @@ namespace DeejNG
             _channelControls.Clear();
 
             var savedSettings = LoadSettingsFromDisk();
-            var savedTargets = savedSettings?.Targets ?? new List<string>();
+            var savedTargetGroups = savedSettings?.SliderTargets ?? new List<List<AudioTarget>>();
 
             _isInitializing = true; // ensure this is explicitly set at start
 
@@ -489,54 +491,40 @@ namespace DeejNG
             {
                 var control = new ChannelControl();
 
-                string target = (i < savedTargets.Count)
-                    ? savedTargets[i]
-                    : (i == 0 ? "system" : "");
-                control.SetTargetExecutable(target);
-                if (i < savedSettings.InputModes.Count)
-                    control.IsInputMode = savedSettings.InputModes[i];
+                // Set targets for this control (either from saved settings or defaults)
+                List<AudioTarget> targetsForThisControl;
 
+                if (i < savedTargetGroups.Count && savedTargetGroups[i].Count > 0)
+                {
+                    // Use saved targets
+                    targetsForThisControl = savedTargetGroups[i];
+                }
+                else
+                {
+                    // Create default targets
+                    targetsForThisControl = new List<AudioTarget>();
+
+                    // Add system target for first slider by default
+                    if (i == 0)
+                    {
+                        targetsForThisControl.Add(new AudioTarget
+                        {
+                            Name = "system",
+                            IsInputDevice = false
+                        });
+                    }
+                }
+
+                control.AudioTargets = targetsForThisControl;
                 control.SetMuted(false);
                 control.SetVolume(0.5f);
 
                 control.TargetChanged += (_, _) => SaveSettings();
-                control.VolumeOrMuteChanged += (t, vol, mute) =>
+                control.VolumeOrMuteChanged += (targets, vol, mute) =>
                 {
                     if (_isInitializing) return;
-
-                    if (control.IsInputMode)
-                    {
-                        if (!_inputDeviceMap.TryGetValue(t.ToLowerInvariant(), out var mic))
-                        {
-                            mic = new MMDeviceEnumerator()
-                                .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-                                .FirstOrDefault(d => d.FriendlyName.Equals(t, StringComparison.OrdinalIgnoreCase));
-
-                            if (mic != null)
-                                _inputDeviceMap[t.ToLowerInvariant()] = mic;
-                        }
-
-                        if (mic != null)
-                        {
-                            try
-                            {
-                                mic.AudioEndpointVolume.Mute = mute || vol <= 0.01f;
-                                mic.AudioEndpointVolume.MasterVolumeLevelScalar = vol;
-                                Debug.WriteLine($"[MicVolume] Applied mute={mute} + vol={vol:F2} to {mic.FriendlyName}");
-                            }
-                            catch (Exception ex)
-                            {
-                                Debug.WriteLine($"[MicVolume] Error applying mute: {ex.Message}");
-                            }
-                        }
-                    }
-                    else
-                    {
-                        _audioService.ApplyVolumeToTarget(t, vol, mute);
-                    }
+                    ApplyVolumeToTargets(control, targets, vol);
                 };
-
-
 
                 _channelControls.Add(control);
                 SliderPanel.Children.Add(control);
@@ -550,7 +538,6 @@ namespace DeejNG
                 _meterTimer.Start();
                 _isInitializing = false; // ✅ Set this **last**, after the UI has settled
             });
-
         }
         private void SyncMuteStates()
         {
@@ -671,9 +658,9 @@ namespace DeejNG
                                 level = 1f - level;
 
                             var ctrl = _channelControls[i];
-                            var target = ctrl.TargetExecutable?.Trim();
+                            var targets = ctrl.AudioTargets;
 
-                            if (string.IsNullOrWhiteSpace(target)) continue;
+                            if (targets.Count == 0) continue;
 
                             float currentVolume = ctrl.CurrentVolume;
                             if (Math.Abs(currentVolume - level) < 0.01f) continue;
@@ -683,15 +670,8 @@ namespace DeejNG
                             // Don't apply audio if we're still initializing
                             if (_isInitializing) continue;
 
-                            if (ctrl.IsInputMode)
-                            {
-                                ApplyInputVolume(ctrl, target, level);
-                            }
-                            else
-                            {
-                                // Output mode — apply session volume
-                                _audioService.ApplyVolumeToTarget(target, level, ctrl.IsMuted);
-                            }
+                            // Apply volume to all targets for this control
+                            ApplyVolumeToTargets(ctrl, targets, level);
                         }
                     }
                     catch (Exception ex)
@@ -705,7 +685,55 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] Parsing slider data: {ex.Message}");
             }
         }
+        private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level)
+        {
+            foreach (var target in targets)
+            {
+                try
+                {
+                    if (target.IsInputDevice)
+                    {
+                        // Apply to input device
+                        ApplyInputDeviceVolume(target.Name, level, ctrl.IsMuted);
+                    }
+                    else
+                    {
+                        // Apply to output app
+                        _audioService.ApplyVolumeToTarget(target.Name, level, ctrl.IsMuted);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ERROR] Applying volume to {target.Name}: {ex.Message}");
+                }
+            }
+        }
+        private void ApplyInputDeviceVolume(string deviceName, float level, bool isMuted)
+        {
+            if (!_inputDeviceMap.TryGetValue(deviceName.ToLowerInvariant(), out var mic))
+            {
+                mic = new MMDeviceEnumerator()
+                    .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                    .FirstOrDefault(d => d.FriendlyName.Equals(deviceName, StringComparison.OrdinalIgnoreCase));
 
+                if (mic != null)
+                {
+                    _inputDeviceMap[deviceName.ToLowerInvariant()] = mic;
+                }
+            }
+
+            if (mic != null)
+            {
+                float previous = _lastInputVolume.TryGetValue(deviceName, out var lastVol) ? lastVol : -1f;
+
+                if (Math.Abs(previous - level) > 0.01f)
+                {
+                    mic.AudioEndpointVolume.Mute = isMuted || level <= 0.01f;
+                    mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                    _lastInputVolume[deviceName] = level;
+                }
+            }
+        }
         // Break out the input volume handling logic to a separate method to simplify the main method
         private void ApplyInputVolume(ChannelControl ctrl, string target, float level)
         {
@@ -872,7 +900,22 @@ namespace DeejNG
                 this.Hide();
             }
         }
-
+        private void ApplyVolumeToAllTargets(ChannelControl control, float level)
+        {
+            foreach (var target in control.AudioTargets)
+            {
+                if (target.IsInputDevice)
+                {
+                    // Apply to input device
+                    ApplyInputVolume(control, target.Name, level);
+                }
+                else
+                {
+                    // Apply to output app
+                    _audioService.ApplyVolumeToTarget(target.Name, level, control.IsMuted);
+                }
+            }
+        }
         private void SaveSettings()
         {
             if (_isInitializing) return;
@@ -881,7 +924,7 @@ namespace DeejNG
                 var settings = new AppSettings
                 {
                     PortName = _serialPort?.PortName ?? string.Empty,
-                    Targets = _channelControls.Select(c => c.TargetExecutable?.Trim() ?? string.Empty).ToList(),
+                    SliderTargets = _channelControls.Select(c => c.AudioTargets).ToList(),
                     IsDarkTheme = isDarkTheme,
                     IsSliderInverted = InvertSliderCheckBox.IsChecked ?? false,
                     VuMeters = ShowSlidersCheckBox.IsChecked ?? true,
@@ -890,16 +933,26 @@ namespace DeejNG
                     InputModes = _channelControls.Select(c => c.IsInputMode).ToList(),
 
                     DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false
-
                 };
 
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                };
+                var json = JsonSerializer.Serialize(settings, options);
 
-                var json = JsonSerializer.Serialize(settings);
+                // Ensure directory exists
+                var dir = Path.GetDirectoryName(SettingsPath);
+                if (!Directory.Exists(dir) && dir != null)
+                {
+                    Directory.CreateDirectory(dir);
+                }
+
                 File.WriteAllText(SettingsPath, json);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error saving settings: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                Debug.WriteLine($"[ERROR] Failed to save settings: {ex.Message}");
             }
         }
 
@@ -1220,7 +1273,7 @@ namespace DeejNG
         private class AppSettings
         {
             public string? PortName { get; set; }
-            public List<string> Targets { get; set; } = new();
+            public List<List<AudioTarget>> SliderTargets { get; set; } = new();
             public List<bool> MuteStates { get; set; } = new();
             public bool IsDarkTheme { get; set; }
             public bool IsSliderInverted { get; set; }
