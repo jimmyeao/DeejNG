@@ -27,6 +27,8 @@ namespace DeejNG
     public partial class MainWindow : Window
     {
         #region Private Fields
+        private DispatcherTimer _sessionCacheTimer;
+        private bool _isClosing = false;
         private readonly Dictionary<string, float> _lastInputVolume = new(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, IAudioSessionEventsHandler> _registeredHandlers = new();
         private AudioService _audioService;
@@ -171,15 +173,17 @@ namespace DeejNG
         }
         private void StartSessionCacheUpdater()
         {
-            var sessionTimer = new DispatcherTimer
+            _sessionCacheTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromSeconds(5)
             };
 
             int tickCount = 0;
 
-            sessionTimer.Tick += (_, _) =>
+            _sessionCacheTimer.Tick += (_, _) =>
             {
+                if (_isClosing) return;
+
                 try
                 {
                     var sessions = new MMDeviceEnumerator()
@@ -226,7 +230,7 @@ namespace DeejNG
                 }
             };
 
-            sessionTimer.Start();
+            _sessionCacheTimer.Start();
         }
 
 
@@ -337,6 +341,12 @@ namespace DeejNG
 
         protected override void OnClosed(EventArgs e)
         {
+            _isClosing = true;
+
+            // Stop all timers
+            _meterTimer?.Stop();
+            _sessionCacheTimer?.Stop();
+
             // Clean up all registered event handlers
             foreach (var target in _registeredHandlers.Keys.ToList())
             {
@@ -350,7 +360,8 @@ namespace DeejNG
                     Debug.WriteLine($"[ERROR] Failed to unregister handler for {target} on close: {ex.Message}");
                 }
             }
-           
+
+            // Existing cleanup code
             try
             {
                 if (_serialPort != null)
@@ -366,6 +377,12 @@ namespace DeejNG
                     _serialPort = null;
                 }
 
+                // Unsubscribe from all events
+                if (_systemVolume != null)
+                {
+                    _systemVolume.OnVolumeNotification -= AudioEndpointVolume_OnVolumeNotification;
+                }
+
                 _isConnected = false;
                 UpdateConnectionStatus();
             }
@@ -373,9 +390,9 @@ namespace DeejNG
             {
                 MessageBox.Show($"Error while closing serial port: {ex.Message}", "Cleanup Error", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
+
             base.OnClosed(e);
         }
-
 
         #endregion Protected Methods
 
@@ -623,89 +640,106 @@ namespace DeejNG
 
         private void HandleSliderData(string data)
         {
-            if (_isInitializing) return;
+            if (_isInitializing || string.IsNullOrWhiteSpace(data)) return;
 
-            string[] parts = data.Split('|');
-
-            Dispatcher.Invoke(() =>
+            try
             {
-                if (_channelControls.Count != parts.Length)
+                // Parse the data outside of the Dispatcher call to avoid potential issues
+                string[] parts = data.Split('|');
+
+                if (parts.Length == 0)
                 {
-                    GenerateSliders(parts.Length);
+                    return; // Skip empty data
                 }
 
-                for (int i = 0; i < parts.Length; i++)
-                {
-                    if (!float.TryParse(parts[i].Trim(), out float level)) continue;
-
-                    level = Math.Clamp(level / 1023f, 0f, 1f);
-                    if (InvertSliderCheckBox.IsChecked ?? false)
-                        level = 1f - level;
-
-                    var ctrl = _channelControls[i];
-                    var target = ctrl.TargetExecutable?.Trim();
-
-                    if (string.IsNullOrWhiteSpace(target)) continue;
-
-                    float currentVolume = ctrl.CurrentVolume;
-                    if (Math.Abs(currentVolume - level) < 0.01f) continue;
-
-                    ctrl.SmoothAndSetVolume(level, suppressEvent: _isInitializing, disableSmoothing: _disableSmoothing);
-
-                    // Don't apply audio if we're still initializing
-                    if (_isInitializing) continue;
-
-                    if (ctrl.IsInputMode)
+                // Use BeginInvoke instead of Invoke to avoid blocking the calling thread
+                Dispatcher.BeginInvoke(new Action(() => {
+                    try
                     {
-                        if (!_inputDeviceMap.TryGetValue(target, out var mic))
+                        if (_channelControls.Count != parts.Length)
                         {
-                            mic = new MMDeviceEnumerator()
-                                .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-                                .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
+                            GenerateSliders(parts.Length);
+                            return; // Skip processing in this case - we just regenerated the sliders
+                        }
 
-                            if (mic != null)
+                        for (int i = 0; i < parts.Length && i < _channelControls.Count; i++)
+                        {
+                            if (!float.TryParse(parts[i].Trim(), out float level)) continue;
+
+                            level = Math.Clamp(level / 1023f, 0f, 1f);
+                            if (InvertSliderCheckBox.IsChecked ?? false)
+                                level = 1f - level;
+
+                            var ctrl = _channelControls[i];
+                            var target = ctrl.TargetExecutable?.Trim();
+
+                            if (string.IsNullOrWhiteSpace(target)) continue;
+
+                            float currentVolume = ctrl.CurrentVolume;
+                            if (Math.Abs(currentVolume - level) < 0.01f) continue;
+
+                            ctrl.SmoothAndSetVolume(level, suppressEvent: _isInitializing, disableSmoothing: _disableSmoothing);
+
+                            // Don't apply audio if we're still initializing
+                            if (_isInitializing) continue;
+
+                            if (ctrl.IsInputMode)
                             {
-                                _inputDeviceMap[target] = mic;
-                                Debug.WriteLine($"[MicVolume] Cached mic: {mic.FriendlyName}");
+                                ApplyInputVolume(ctrl, target, level);
                             }
                             else
                             {
-                                Debug.WriteLine($"[MicVolume] Mic not found for '{target}'");
-                            }
-                        }
-
-                        if (mic != null)
-                        {
-                            try
-                            {
-                                float previous = _lastInputVolume.TryGetValue(target, out var lastVol) ? lastVol : -1f;
-
-                                if (Math.Abs(previous - level) > 0.01f)
-                                {
-                                    mic.AudioEndpointVolume.Mute = ctrl.IsMuted || level <= 0.01f;
-
-                                    mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
-                                    _lastInputVolume[target] = level;
-
-                                  //  Debug.WriteLine($"[MicVolume] Set input volume to {level:F2} for {mic.FriendlyName}");
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                              //  Debug.WriteLine($"[MicVolume] Error: {ex.Message}");
+                                // Output mode — apply session volume
+                                _audioService.ApplyVolumeToTarget(target, level, ctrl.IsMuted);
                             }
                         }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        // ✅ Output mode — apply session volume
-                        _audioService.ApplyVolumeToTarget(target, level, ctrl.IsMuted);
+                        Debug.WriteLine($"[ERROR] Processing slider data in UI thread: {ex.Message}");
                     }
-                }
-            });
+                }));
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Parsing slider data: {ex.Message}");
+            }
         }
 
+        // Break out the input volume handling logic to a separate method to simplify the main method
+        private void ApplyInputVolume(ChannelControl ctrl, string target, float level)
+        {
+            try
+            {
+                if (!_inputDeviceMap.TryGetValue(target, out var mic))
+                {
+                    mic = new MMDeviceEnumerator()
+                        .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                        .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
 
+                    if (mic != null)
+                    {
+                        _inputDeviceMap[target] = mic;
+                    }
+                }
+
+                if (mic != null)
+                {
+                    float previous = _lastInputVolume.TryGetValue(target, out var lastVol) ? lastVol : -1f;
+
+                    if (Math.Abs(previous - level) > 0.01f)
+                    {
+                        mic.AudioEndpointVolume.Mute = ctrl.IsMuted || level <= 0.01f;
+                        mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                        _lastInputVolume[target] = level;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Setting mic volume: {ex.Message}");
+            }
+        }
 
         private void InitSerial(string portName, int baudRate)
         {
@@ -992,7 +1026,7 @@ namespace DeejNG
 
         private void UpdateMeters(object? sender, EventArgs e)
         {
-            if (!_metersEnabled) return;
+            if (!_metersEnabled || _isClosing) return;
 
             const float visualGain = 1.5f;
             const float systemCalibrationFactor = 2.0f;
@@ -1000,128 +1034,150 @@ namespace DeejNG
             // Refresh output device reference every 5 seconds
             if ((DateTime.Now - _lastDeviceRefresh).TotalSeconds > 5)
             {
-                _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                _lastDeviceRefresh = DateTime.Now;
+                try
+                {
+                    _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                    _lastDeviceRefresh = DateTime.Now;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ERROR] Failed to refresh audio device: {ex.Message}");
+                    return; // Skip this update if we can't get the device
+                }
             }
 
-            var sessions = _audioDevice.AudioSessionManager.Sessions;
-
-            foreach (var ctrl in _channelControls)
+            try
             {
-                var target = ctrl.TargetExecutable?.Trim().ToLower();
-                if (string.IsNullOrWhiteSpace(target))
+                var sessions = _audioDevice.AudioSessionManager.Sessions;
+
+                foreach (var ctrl in _channelControls)
                 {
-                    ctrl.UpdateAudioMeter(0);
-                    continue;
-                }
-
-                if (ctrl.IsInputMode)
-                {
-                    // Mic input mode
-                    if (!_inputDeviceMap.TryGetValue(target, out var mic))
+                    try
                     {
-                        mic = new MMDeviceEnumerator()
-                            .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-                            .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
-
-                        if (mic != null)
-                            _inputDeviceMap[target] = mic;
-                    }
-
-                    if (mic != null)
-                    {
-                        try
+                        var target = ctrl.TargetExecutable?.Trim().ToLower();
+                        if (string.IsNullOrWhiteSpace(target))
                         {
-                            float peak = mic.AudioMeterInformation.MasterPeakValue;
-                            float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * ctrl.CurrentVolume * visualGain, 1.0f);
-                            ctrl.UpdateAudioMeter(boosted);
+                            ctrl.UpdateAudioMeter(0);
+                            continue;
                         }
-                        catch
+
+                        if (ctrl.IsInputMode)
+                        {
+                            // Mic input mode
+                            if (!_inputDeviceMap.TryGetValue(target, out var mic))
+                            {
+                                mic = new MMDeviceEnumerator()
+                                    .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                                    .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
+
+                                if (mic != null)
+                                    _inputDeviceMap[target] = mic;
+                            }
+
+                            if (mic != null)
+                            {
+                                try
+                                {
+                                    float peak = mic.AudioMeterInformation.MasterPeakValue;
+                                    float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * ctrl.CurrentVolume * visualGain, 1.0f);
+                                    ctrl.UpdateAudioMeter(boosted);
+                                }
+                                catch
+                                {
+                                    ctrl.UpdateAudioMeter(0);
+                                }
+                            }
+                            else
+                            {
+                                ctrl.UpdateAudioMeter(0);
+                            }
+
+                            continue; // done with input device
+                        }
+
+                        if (target == "system")
+                        {
+                            float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
+                            float systemVol = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
+                            float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * systemVol * systemCalibrationFactor * visualGain, 1.0f);
+                            ctrl.UpdateAudioMeter(boosted);
+                            continue;
+                        }
+
+                        // Output sessions - use cached processes where possible
+                        AudioSessionControl? matchingSession = null;
+
+                        for (int i = 0; i < sessions.Count; i++)
+                        {
+                            var s = sessions[i];
+                            try
+                            {
+                                string sid = s.GetSessionIdentifier?.ToLowerInvariant() ?? "";
+                                string iid = s.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
+                                int pid = (int)s.GetProcessID;
+
+                                if (!_processNameCache.TryGetValue(pid, out string procName))
+                                {
+                                    try
+                                    {
+                                        procName = Process.GetProcessById(pid).ProcessName.ToLowerInvariant();
+                                        _processNameCache[pid] = procName;
+                                    }
+                                    catch
+                                    {
+                                        procName = "";
+                                        _processNameCache[pid] = procName;
+                                    }
+                                }
+
+                                var sidFile = Path.GetFileNameWithoutExtension(sid);
+                                var iidFile = Path.GetFileNameWithoutExtension(iid);
+
+                                if (sidFile == target || iidFile == target || procName == target ||
+                                     sid.Contains(target, StringComparison.OrdinalIgnoreCase) ||
+                                     iid.Contains(target, StringComparison.OrdinalIgnoreCase) ||
+                                     target != null && target.Length > 2 && sid.Contains(target, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    matchingSession = s;
+                                    break;
+                                }
+                            }
+                            catch { }
+                        }
+
+                        if (matchingSession != null)
+                        {
+                            try
+                            {
+                                float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
+                                float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * ctrl.CurrentVolume * visualGain, 1.0f);
+                                ctrl.UpdateAudioMeter(boosted);
+                            }
+                            catch
+                            {
+                                ctrl.UpdateAudioMeter(0);
+                            }
+                        }
+                        else
                         {
                             ctrl.UpdateAudioMeter(0);
                         }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        ctrl.UpdateAudioMeter(0);
-                    }
-
-                    continue; // done with input device
-                }
-
-                if (target == "system")
-                {
-                    float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
-                    float systemVol = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
-                    float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * systemVol * systemCalibrationFactor * visualGain, 1.0f);
-                    ctrl.UpdateAudioMeter(boosted);
-                    continue;
-                }
-
-                // Output sessions
-                AudioSessionControl? matchingSession = null;
-
-                for (int i = 0; i < sessions.Count; i++)
-                {
-                    var s = sessions[i];
-                    try
-                    {
-                        string sid = s.GetSessionIdentifier?.ToLowerInvariant() ?? "";
-                        string iid = s.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
-                        int pid = (int)s.GetProcessID;
-
-                        if (!_processNameCache.TryGetValue(pid, out string procName))
-                        {
-                            try
-                            {
-                                procName = Process.GetProcessById(pid).ProcessName.ToLowerInvariant();
-                                _processNameCache[pid] = procName;
-                            }
-                            catch
-                            {
-                                procName = "";
-                                _processNameCache[pid] = procName;
-                            }
-                        }
-
-                        var sidFile = Path.GetFileNameWithoutExtension(sid);
-                        var iidFile = Path.GetFileNameWithoutExtension(iid);
-
-                        if (sidFile == target || iidFile == target || procName == target ||
-     sid.Contains(target, StringComparison.OrdinalIgnoreCase) ||
-     iid.Contains(target, StringComparison.OrdinalIgnoreCase) ||
-     target != null && target.Length > 2 && sid.Contains(target, StringComparison.OrdinalIgnoreCase))
-                        {
-                            matchingSession = s;
-                            break;
-                        }
-
-                    }
-                    catch { }
-                }
-
-                if (matchingSession != null)
-                {
-                    try
-                    {
-                        float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
-                        float boosted = ctrl.IsMuted ? 0 : Math.Min(peak * ctrl.CurrentVolume * visualGain, 1.0f);
-                        ctrl.UpdateAudioMeter(boosted);
-                    }
-                    catch
-                    {
-                        ctrl.UpdateAudioMeter(0);
+                        // Log the error but continue with other controls
+                        Debug.WriteLine($"[ERROR] Updating meter: {ex.Message}");
                     }
                 }
-                else
-                {
-                    ctrl.UpdateAudioMeter(0);
-                }
+
+                // Use lower priority to avoid UI lag
+                Dispatcher.InvokeAsync(() => SliderPanel.InvalidateVisual(), DispatcherPriority.Render);
             }
-
-            Dispatcher.InvokeAsync(() => SliderPanel.InvalidateVisual(), DispatcherPriority.Render);
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Meter update: {ex.Message}");
+            }
         }
-
 
 
 
