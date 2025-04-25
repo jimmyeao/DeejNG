@@ -10,6 +10,8 @@ namespace DeejNG.Dialogs
 {
     public partial class ChannelControl : UserControl
     {
+        // Add this public property to expose the InputModeCheckBox
+        public CheckBox InputModeCheckBoxControl => InputModeCheckBox;
 
         #region Private Fields
 
@@ -47,7 +49,6 @@ namespace DeejNG.Dialogs
         public event Action<List<AudioTarget>, float, bool> VolumeOrMuteChanged;
         // New event for notifying the parent window when a session is disconnected
         public event EventHandler<string> SessionDisconnected;
-
 
         #endregion Public Events
 

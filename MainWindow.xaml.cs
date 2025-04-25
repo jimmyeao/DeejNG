@@ -547,6 +547,7 @@ namespace DeejNG
 
             var savedSettings = LoadSettingsFromDisk();
             var savedTargetGroups = savedSettings?.SliderTargets ?? new List<List<AudioTarget>>();
+            var savedInputModes = savedSettings?.InputModes ?? new List<bool>();
 
             _isInitializing = true; // ensure this is explicitly set at start
 
@@ -579,6 +580,15 @@ namespace DeejNG
                 }
 
                 control.AudioTargets = targetsForThisControl;
+
+                // Set input mode from saved settings if available
+                // This needs to happen after setting AudioTargets, as that can override IsInputMode
+                if (i < savedInputModes.Count)
+                {
+                    // If we have a saved input mode, set it directly to the checkbox
+                    control.InputModeCheckBox.IsChecked = savedInputModes[i];
+                }
+
                 control.SetMuted(false);
                 control.SetVolume(0.5f);
 
@@ -1087,8 +1097,8 @@ namespace DeejNG
                     VuMeters = ShowSlidersCheckBox.IsChecked ?? true,
                     StartOnBoot = StartOnBootCheckBox.IsChecked ?? false,
                     StartMinimized = StartMinimizedCheckBox.IsChecked ?? false,
-                    InputModes = _channelControls.Select(c => c.IsInputMode).ToList(),
-
+                    // Important: Save the input mode status for each control
+                    InputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList(),
                     DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false
                 };
 
@@ -1112,7 +1122,6 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] Failed to save settings: {ex.Message}");
             }
         }
-
 
         // In MainWindow.xaml.cs, modify SerialPort_DataReceived method:
 
