@@ -13,49 +13,7 @@ namespace DeejNG.Dialogs
 {
     public partial class MultiTargetPickerDialog : Window
     {
-        public class SelectableSession : INotifyPropertyChanged
-        {
-            private bool _isSelected;
-            private bool _isEnabled = true;
-
-            public string Id { get; set; }
-            public string FriendlyName { get; set; }
-
-            public bool IsSelected
-            {
-                get => _isSelected;
-                set
-                {
-                    if (_isSelected != value)
-                    {
-                        _isSelected = value;
-                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
-                    }
-                }
-            }
-
-            public bool IsEnabled
-            {
-                get => _isEnabled;
-                set
-                {
-                    if (_isEnabled != value)
-                    {
-                        _isEnabled = value;
-                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEnabled)));
-                    }
-                }
-            }
-
-            public bool IsInputDevice { get; set; }
-
-            public event PropertyChangedEventHandler PropertyChanged;
-        }
-
-        public ObservableCollection<SelectableSession> AvailableSessions { get; } = new();
-        public ObservableCollection<SelectableSession> InputDevices { get; } = new();
-
-        public List<AudioTarget> SelectedTargets { get; private set; } = new();
+        #region Public Constructors
 
         public MultiTargetPickerDialog(List<AudioTarget> currentTargets)
         {
@@ -99,25 +57,59 @@ namespace DeejNG.Dialogs
             UpdateSelectionStates();
         }
 
-        private void UpdateSelectionStates()
+        #endregion Public Constructors
+
+        #region Public Properties
+
+        public ObservableCollection<SelectableSession> AvailableSessions { get; } = new();
+
+        public ObservableCollection<SelectableSession> InputDevices { get; } = new();
+
+        public List<AudioTarget> SelectedTargets { get; private set; } = new();
+
+        #endregion Public Properties
+
+        #region Private Methods
+
+        private void Cancel_Click(object sender, RoutedEventArgs e)
         {
-            // Check if any output apps are selected
-            bool hasOutputSelected = AvailableSessions.Any(s => s.IsSelected);
+            DialogResult = false;
+            Close();
+        }
 
-            // Check if any input devices are selected
-            bool hasInputSelected = InputDevices.Any(d => d.IsSelected);
-
-            // Apply the rules:
-            // 1. If any output is selected, disable all inputs
-            // 2. If any input is selected, disable all outputs
-            foreach (var device in InputDevices)
+        private void LoadInputDevices(HashSet<string> selectedNames)
+        {
+            try
             {
-                device.IsEnabled = !hasOutputSelected;
+                var devices = new MMDeviceEnumerator()
+                    .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
+
+                foreach (var device in devices)
+                {
+                    string name = device.FriendlyName;
+                    var newDevice = new SelectableSession
+                    {
+                        Id = name,
+                        FriendlyName = name,
+                        IsSelected = selectedNames.Contains(name.ToLowerInvariant()),
+                        IsInputDevice = true
+                    };
+
+                    InputDevices.Add(newDevice);
+                }
+
+                // Sort input devices alphabetically
+                var sortedDevices = InputDevices.OrderBy(d => d.FriendlyName).ToList();
+                InputDevices.Clear();
+                foreach (var device in sortedDevices)
+                {
+                    InputDevices.Add(device);
+                }
             }
-
-            foreach (var session in AvailableSessions)
+            catch (System.Exception ex)
             {
-                session.IsEnabled = !hasInputSelected;
+                MessageBox.Show($"Error loading input devices: {ex.Message}", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -214,42 +206,6 @@ namespace DeejNG.Dialogs
             }
         }
 
-        private void LoadInputDevices(HashSet<string> selectedNames)
-        {
-            try
-            {
-                var devices = new MMDeviceEnumerator()
-                    .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
-
-                foreach (var device in devices)
-                {
-                    string name = device.FriendlyName;
-                    var newDevice = new SelectableSession
-                    {
-                        Id = name,
-                        FriendlyName = name,
-                        IsSelected = selectedNames.Contains(name.ToLowerInvariant()),
-                        IsInputDevice = true
-                    };
-
-                    InputDevices.Add(newDevice);
-                }
-
-                // Sort input devices alphabetically
-                var sortedDevices = InputDevices.OrderBy(d => d.FriendlyName).ToList();
-                InputDevices.Clear();
-                foreach (var device in sortedDevices)
-                {
-                    InputDevices.Add(device);
-                }
-            }
-            catch (System.Exception ex)
-            {
-                MessageBox.Show($"Error loading input devices: {ex.Message}", "Error",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
         private void Ok_Click(object sender, RoutedEventArgs e)
         {
             // Combine selected output and input targets
@@ -277,10 +233,82 @@ namespace DeejNG.Dialogs
             Close();
         }
 
-        private void Cancel_Click(object sender, RoutedEventArgs e)
+        private void UpdateSelectionStates()
         {
-            DialogResult = false;
-            Close();
+            // Check if any output apps are selected
+            bool hasOutputSelected = AvailableSessions.Any(s => s.IsSelected);
+
+            // Check if any input devices are selected
+            bool hasInputSelected = InputDevices.Any(d => d.IsSelected);
+
+            // Apply the rules:
+            // 1. If any output is selected, disable all inputs
+            // 2. If any input is selected, disable all outputs
+            foreach (var device in InputDevices)
+            {
+                device.IsEnabled = !hasOutputSelected;
+            }
+
+            foreach (var session in AvailableSessions)
+            {
+                session.IsEnabled = !hasInputSelected;
+            }
         }
+
+        #endregion Private Methods
+
+        #region Public Classes
+
+        public class SelectableSession : INotifyPropertyChanged
+        {
+            #region Private Fields
+
+            private bool _isEnabled = true;
+            private bool _isSelected;
+
+            #endregion Private Fields
+
+            #region Public Events
+
+            public event PropertyChangedEventHandler PropertyChanged;
+
+            #endregion Public Events
+
+            #region Public Properties
+
+            public string FriendlyName { get; set; }
+            public string Id { get; set; }
+            public bool IsEnabled
+            {
+                get => _isEnabled;
+                set
+                {
+                    if (_isEnabled != value)
+                    {
+                        _isEnabled = value;
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEnabled)));
+                    }
+                }
+            }
+
+            public bool IsInputDevice { get; set; }
+
+            public bool IsSelected
+            {
+                get => _isSelected;
+                set
+                {
+                    if (_isSelected != value)
+                    {
+                        _isSelected = value;
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+                    }
+                }
+            }
+
+            #endregion Public Properties
+        }
+
+        #endregion Public Classes
     }
 }
