@@ -16,8 +16,9 @@
 
             <!-- Other dictionaries -->
         </ResourceDictionary.MergedDictionaries>
+           
 
-        <Style BasedOn="{StaticResource MaterialDesignRaisedButton}" TargetType="{x:Type Button}">
+            <Style BasedOn="{StaticResource MaterialDesignRaisedButton}" TargetType="{x:Type Button}">
             <Setter Property="materialDesign:ButtonAssist.CornerRadius" Value="20" />
         </Style>
 

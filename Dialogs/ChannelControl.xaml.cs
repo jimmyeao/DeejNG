@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using DeejNG.Models;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -9,6 +10,8 @@ namespace DeejNG.Dialogs
 {
     public partial class ChannelControl : UserControl
     {
+        // Add this public property to expose the InputModeCheckBox
+        public CheckBox InputModeCheckBoxControl => InputModeCheckBox;
 
         #region Private Fields
 
@@ -18,6 +21,7 @@ namespace DeejNG.Dialogs
         private readonly Brush _muteOnBrush = new SolidColorBrush(Color.FromRgb(255, 64, 64));
         private readonly TimeSpan PeakHoldDuration = TimeSpan.FromSeconds(1);
         private bool _isMuted = false;
+        private List<AudioTarget> _audioTargets = new();
         private bool _layoutReady = false;
         private float _meterLevel;
         private float _peakLevel;
@@ -42,8 +46,9 @@ namespace DeejNG.Dialogs
         #region Public Events
 
         public event EventHandler TargetChanged;
-
-        public event Action<string, float, bool> VolumeOrMuteChanged;
+        public event Action<List<AudioTarget>, float, bool> VolumeOrMuteChanged;
+        // New event for notifying the parent window when a session is disconnected
+        public event EventHandler<string> SessionDisconnected;
 
         #endregion Public Events
 
@@ -52,15 +57,89 @@ namespace DeejNG.Dialogs
         public float CurrentVolume => (float)VolumeSlider.Value;
         public bool IsInputMode
         {
-            get => InputModeCheckBox.IsChecked == true;
-            set => InputModeCheckBox.IsChecked = value;
+            get => _audioTargets.Any(t => t.IsInputDevice);
+            set
+            {
+                InputModeCheckBox.IsChecked = value;
+                // If checked and we don't have any input devices,
+                // we should present the picker dialog
+            }
         }
         public bool IsMuted => _isMuted;
-        public string TargetExecutable => TargetTextBox.Text;
-
+        public string TargetExecutable =>
+             _audioTargets.FirstOrDefault()?.Name ?? "";
+        public List<AudioTarget> AudioTargets
+        {
+            get => _audioTargets;
+            set
+            {
+                _audioTargets = value ?? new List<AudioTarget>();
+                UpdateTargetsDisplay();
+            }
+        }
         #endregion Public Properties
 
         #region Public Methods
+
+        /// <summary>
+        /// Handles when an audio session is disconnected
+        /// </summary>
+        public void HandleSessionDisconnected()
+        {
+            // If we were controlling this session exclusively
+            if (_audioTargets.Count == 1 && !_audioTargets[0].IsInputDevice)
+            {
+                string target = _audioTargets[0].Name;
+                Debug.WriteLine($"[Session] Session disconnected for {target}");
+
+                // Notify the parent window
+                SessionDisconnected?.Invoke(this, target);
+
+                // Reset the meter level
+                _meterLevel = 0;
+                UpdateAudioMeter(0);
+
+                // Visual indicator that the session is no longer active
+                TargetTextBox.Foreground = Brushes.Gray;
+                TargetTextBox.ToolTip = $"{TargetTextBox.Text} (Disconnected)";
+            }
+        }
+
+        /// <summary>
+        /// Handles when an audio session has expired
+        /// </summary>
+        public void HandleSessionExpired()
+        {
+            // Similar to disconnected, but may want different visual treatment
+            if (_audioTargets.Count == 1 && !_audioTargets[0].IsInputDevice)
+            {
+                string target = _audioTargets[0].Name;
+                Debug.WriteLine($"[Session] Session expired for {target}");
+
+                // Reset the meter
+                _meterLevel = 0;
+                UpdateAudioMeter(0);
+
+                // Visual indicator
+                TargetTextBox.Foreground = Brushes.Gray;
+                TargetTextBox.ToolTip = $"{TargetTextBox.Text} (Expired)";
+            }
+        }
+
+        /// <summary>
+        /// Resets the connection state for the control's audio targets
+        /// </summary>
+        public void ResetConnectionState()
+        {
+            // Reset any disconnected/expired visual indicators
+            TargetTextBox.Foreground = TryFindResource("MaterialDesign.Brush.Foreground") as Brush ?? Brushes.Black;
+            if (TargetTextBox.ToolTip is string tooltip &&
+                (tooltip.EndsWith("(Disconnected)") || tooltip.EndsWith("(Expired)")))
+            {
+                // Reset the tooltip to just show the targets
+                UpdateTargetsDisplay();
+            }
+        }
 
         public void SetMeterVisibility(bool visible)
         {
@@ -78,10 +157,27 @@ namespace DeejNG.Dialogs
 
         public void SetTargetExecutable(string target)
         {
-            TargetTextBox.Text = target;
-            UpdateMuteButtonEnabled(); // 👈 now it disables the mute button if empty
-        }
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                _audioTargets.Clear();
+            }
+            else
+            {
+                _audioTargets = new List<AudioTarget>
+                {
+                    new AudioTarget { Name = target, IsInputDevice = IsInputMode }
+                };
+            }
 
+            UpdateTargetsDisplay();
+            UpdateMuteButtonEnabled();
+        }
+        public void SetTargets(List<AudioTarget> targets)
+        {
+            _audioTargets = targets ?? new List<AudioTarget>();
+            UpdateTargetsDisplay();
+            UpdateMuteButtonEnabled();
+        }
 
         public void SetVolume(float level)
         {
@@ -135,7 +231,34 @@ namespace DeejNG.Dialogs
         #endregion Public Methods
 
         #region Private Methods
+        private void UpdateTargetsDisplay()
+        {
+            if (_audioTargets.Count == 0)
+            {
+                TargetTextBox.Text = "";
+                TargetTextBox.ToolTip = "";
+            }
+            else if (_audioTargets.Count == 1)
+            {
+                TargetTextBox.Text = _audioTargets[0].Name;
+                TargetTextBox.ToolTip = _audioTargets[0].Name;
+            }
+            else
+            {
+                // Show count and first app
+                var firstTarget = _audioTargets[0].Name;
+                TargetTextBox.Text = $"{firstTarget} +{_audioTargets.Count - 1}";
 
+                // Set tooltip to show all targets
+                TargetTextBox.ToolTip = string.Join("\n", _audioTargets.Select(t =>
+                    $"{t.Name} {(t.IsInputDevice ? "(Input)" : "")}"));
+            }
+
+            // Reset foreground color (in case it was previously set to indicate disconnection)
+            TargetTextBox.Foreground = TryFindResource("MaterialDesign.Brush.Foreground") as Brush ?? Brushes.Black;
+
+            UpdateMuteButtonEnabled();
+        }
         private void ChannelControl_Loaded(object sender, RoutedEventArgs e)
         {
             _layoutReady = true;
@@ -144,7 +267,8 @@ namespace DeejNG.Dialogs
 
         private void ChannelControl_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            var picker = new SessionPickerDialog(IsInputMode) // 👈 THIS IS THE CHANGE
+            // Open the multi-target picker instead of the single target picker
+            var picker = new MultiTargetPickerDialog(_audioTargets)
             {
                 Owner = Application.Current.MainWindow,
                 WindowStartupLocation = WindowStartupLocation.Manual
@@ -159,7 +283,8 @@ namespace DeejNG.Dialogs
 
             if (picker.ShowDialog() == true)
             {
-                SetTargetExecutable(picker.SessionComboBox.Text);
+                _audioTargets = picker.SelectedTargets;
+                UpdateTargetsDisplay();
                 TargetChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -176,19 +301,19 @@ namespace DeejNG.Dialogs
 
 
 
-    
+
         private void RaiseTargetChanged()
         {
             TargetChanged?.Invoke(this, EventArgs.Empty);
         }
-        
+
         private void MuteButton_Checked(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
 
             _isMuted = true;
             UpdateMuteButtonVisual();
-            VolumeOrMuteChanged?.Invoke(TargetExecutable, CurrentVolume, _isMuted);
+            VolumeOrMuteChanged?.Invoke(_audioTargets, CurrentVolume, _isMuted);
         }
 
         private void MuteButton_Unchecked(object sender, RoutedEventArgs e)
@@ -197,7 +322,7 @@ namespace DeejNG.Dialogs
 
             _isMuted = false;
             UpdateMuteButtonVisual();
-            VolumeOrMuteChanged?.Invoke(TargetExecutable, CurrentVolume, _isMuted);
+            VolumeOrMuteChanged?.Invoke(_audioTargets, CurrentVolume, _isMuted);
         }
 
         private void TargetTextBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -208,8 +333,7 @@ namespace DeejNG.Dialogs
 
         private void UpdateMuteButtonEnabled()
         {
-            var target = TargetExecutable?.Trim();
-            MuteButton.IsEnabled = !string.IsNullOrWhiteSpace(target) && !string.Equals(target, "(empty)", StringComparison.OrdinalIgnoreCase);
+            MuteButton.IsEnabled = _audioTargets.Count > 0;
         }
         private void UpdateMuteButtonVisual()
         {
