@@ -10,23 +10,32 @@ namespace DeejNG.Dialogs
 {
     public partial class ChannelControl : UserControl
     {
-        // Add this public property to expose the InputModeCheckBox
-        public CheckBox InputModeCheckBoxControl => InputModeCheckBox;
-
         #region Private Fields
 
         private const float ClipThreshold = 0.98f;
+
         private const float SmoothingFactor = 0.1f;
+
         private readonly Brush _muteOffBrush = Brushes.Gray;
+
         private readonly Brush _muteOnBrush = new SolidColorBrush(Color.FromRgb(255, 64, 64));
+
         private readonly TimeSpan PeakHoldDuration = TimeSpan.FromSeconds(1);
-        private bool _isMuted = false;
+
         private List<AudioTarget> _audioTargets = new();
+
+        private bool _isMuted = false;
+
         private bool _layoutReady = false;
+
         private float _meterLevel;
+
         private float _peakLevel;
+
         private DateTime _peakTimestamp;
+
         private float _smoothedVolume;
+
         private bool _suppressEvents = false;
 
         #endregion Private Fields
@@ -45,16 +54,31 @@ namespace DeejNG.Dialogs
 
         #region Public Events
 
-        public event EventHandler TargetChanged;
-        public event Action<List<AudioTarget>, float, bool> VolumeOrMuteChanged;
         // New event for notifying the parent window when a session is disconnected
         public event EventHandler<string> SessionDisconnected;
+
+        public event EventHandler TargetChanged;
+
+        public event Action<List<AudioTarget>, float, bool> VolumeOrMuteChanged;
 
         #endregion Public Events
 
         #region Public Properties
 
+        public List<AudioTarget> AudioTargets
+        {
+            get => _audioTargets;
+            set
+            {
+                _audioTargets = value ?? new List<AudioTarget>();
+                UpdateTargetsDisplay();
+            }
+        }
+
         public float CurrentVolume => (float)VolumeSlider.Value;
+
+        // Add this public property to expose the InputModeCheckBox
+        public CheckBox InputModeCheckBoxControl => InputModeCheckBox;
         public bool IsInputMode
         {
             get => _audioTargets.Any(t => t.IsInputDevice);
@@ -68,15 +92,7 @@ namespace DeejNG.Dialogs
         public bool IsMuted => _isMuted;
         public string TargetExecutable =>
              _audioTargets.FirstOrDefault()?.Name ?? "";
-        public List<AudioTarget> AudioTargets
-        {
-            get => _audioTargets;
-            set
-            {
-                _audioTargets = value ?? new List<AudioTarget>();
-                UpdateTargetsDisplay();
-            }
-        }
+
         #endregion Public Properties
 
         #region Public Methods
@@ -231,34 +247,7 @@ namespace DeejNG.Dialogs
         #endregion Public Methods
 
         #region Private Methods
-        private void UpdateTargetsDisplay()
-        {
-            if (_audioTargets.Count == 0)
-            {
-                TargetTextBox.Text = "";
-                TargetTextBox.ToolTip = "";
-            }
-            else if (_audioTargets.Count == 1)
-            {
-                TargetTextBox.Text = _audioTargets[0].Name;
-                TargetTextBox.ToolTip = _audioTargets[0].Name;
-            }
-            else
-            {
-                // Show count and first app
-                var firstTarget = _audioTargets[0].Name;
-                TargetTextBox.Text = $"{firstTarget} +{_audioTargets.Count - 1}";
 
-                // Set tooltip to show all targets
-                TargetTextBox.ToolTip = string.Join("\n", _audioTargets.Select(t =>
-                    $"{t.Name} {(t.IsInputDevice ? "(Input)" : "")}"));
-            }
-
-            // Reset foreground color (in case it was previously set to indicate disconnection)
-            TargetTextBox.Foreground = TryFindResource("MaterialDesign.Brush.Foreground") as Brush ?? Brushes.Black;
-
-            UpdateMuteButtonEnabled();
-        }
         private void ChannelControl_Loaded(object sender, RoutedEventArgs e)
         {
             _layoutReady = true;
@@ -299,14 +288,6 @@ namespace DeejNG.Dialogs
             RaiseTargetChanged();
         }
 
-
-
-
-        private void RaiseTargetChanged()
-        {
-            TargetChanged?.Invoke(this, EventArgs.Empty);
-        }
-
         private void MuteButton_Checked(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
@@ -325,6 +306,11 @@ namespace DeejNG.Dialogs
             VolumeOrMuteChanged?.Invoke(_audioTargets, CurrentVolume, _isMuted);
         }
 
+        private void RaiseTargetChanged()
+        {
+            TargetChanged?.Invoke(this, EventArgs.Empty);
+        }
+
         private void TargetTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             UpdateMuteButtonEnabled(); // 👈 keep in sync
@@ -335,6 +321,7 @@ namespace DeejNG.Dialogs
         {
             MuteButton.IsEnabled = _audioTargets.Count > 0;
         }
+
         private void UpdateMuteButtonVisual()
         {
             if (MuteButton != null)
@@ -345,7 +332,35 @@ namespace DeejNG.Dialogs
             }
         }
 
-        #endregion Private Methods
+        private void UpdateTargetsDisplay()
+        {
+            if (_audioTargets.Count == 0)
+            {
+                TargetTextBox.Text = "";
+                TargetTextBox.ToolTip = "";
+            }
+            else if (_audioTargets.Count == 1)
+            {
+                TargetTextBox.Text = _audioTargets[0].Name;
+                TargetTextBox.ToolTip = _audioTargets[0].Name;
+            }
+            else
+            {
+                // Show count and first app
+                var firstTarget = _audioTargets[0].Name;
+                TargetTextBox.Text = $"{firstTarget} +{_audioTargets.Count - 1}";
 
+                // Set tooltip to show all targets
+                TargetTextBox.ToolTip = string.Join("\n", _audioTargets.Select(t =>
+                    $"{t.Name} {(t.IsInputDevice ? "(Input)" : "")}"));
+            }
+
+            // Reset foreground color (in case it was previously set to indicate disconnection)
+            TargetTextBox.Foreground = TryFindResource("MaterialDesign.Brush.Foreground") as Brush ?? Brushes.Black;
+
+            UpdateMuteButtonEnabled();
+        }
+
+        #endregion Private Methods
     }
 }

@@ -1,9 +1,11 @@
 ﻿using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using DeejNG.Models;
 using NAudio.CoreAudioApi;
 
@@ -11,18 +13,7 @@ namespace DeejNG.Dialogs
 {
     public partial class MultiTargetPickerDialog : Window
     {
-        public class SelectableSession
-        {
-            public string Id { get; set; }
-            public string FriendlyName { get; set; }
-            public bool IsSelected { get; set; }
-            public bool IsInputDevice { get; set; }
-        }
-
-        public ObservableCollection<SelectableSession> AvailableSessions { get; } = new();
-        public ObservableCollection<SelectableSession> InputDevices { get; } = new();
-
-        public List<AudioTarget> SelectedTargets { get; private set; } = new();
+        #region Public Constructors
 
         public MultiTargetPickerDialog(List<AudioTarget> currentTargets)
         {
@@ -38,18 +29,102 @@ namespace DeejNG.Dialogs
 
             AvailableSessionsListBox.ItemsSource = AvailableSessions;
             InputDevicesListBox.ItemsSource = InputDevices;
+
+            // Set up event handlers for checkbox changes
+            foreach (var session in AvailableSessions)
+            {
+                session.PropertyChanged += (s, e) =>
+                {
+                    if (e.PropertyName == nameof(SelectableSession.IsSelected))
+                    {
+                        UpdateSelectionStates();
+                    }
+                };
+            }
+
+            foreach (var device in InputDevices)
+            {
+                device.PropertyChanged += (s, e) =>
+                {
+                    if (e.PropertyName == nameof(SelectableSession.IsSelected))
+                    {
+                        UpdateSelectionStates();
+                    }
+                };
+            }
+
+            // Initial update
+            UpdateSelectionStates();
+        }
+
+        #endregion Public Constructors
+
+        #region Public Properties
+
+        public ObservableCollection<SelectableSession> AvailableSessions { get; } = new();
+
+        public ObservableCollection<SelectableSession> InputDevices { get; } = new();
+
+        public List<AudioTarget> SelectedTargets { get; private set; } = new();
+
+        #endregion Public Properties
+
+        #region Private Methods
+
+        private void Cancel_Click(object sender, RoutedEventArgs e)
+        {
+            DialogResult = false;
+            Close();
+        }
+
+        private void LoadInputDevices(HashSet<string> selectedNames)
+        {
+            try
+            {
+                var devices = new MMDeviceEnumerator()
+                    .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
+
+                foreach (var device in devices)
+                {
+                    string name = device.FriendlyName;
+                    var newDevice = new SelectableSession
+                    {
+                        Id = name,
+                        FriendlyName = name,
+                        IsSelected = selectedNames.Contains(name.ToLowerInvariant()),
+                        IsInputDevice = true
+                    };
+
+                    InputDevices.Add(newDevice);
+                }
+
+                // Sort input devices alphabetically
+                var sortedDevices = InputDevices.OrderBy(d => d.FriendlyName).ToList();
+                InputDevices.Clear();
+                foreach (var device in sortedDevices)
+                {
+                    InputDevices.Add(device);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show($"Error loading input devices: {ex.Message}", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void LoadSessions(HashSet<string> selectedNames)
         {
             // Always add System
-            AvailableSessions.Add(new SelectableSession
+            var systemSession = new SelectableSession
             {
                 Id = "system",
                 FriendlyName = "System",
                 IsSelected = selectedNames.Contains("system"),
                 IsInputDevice = false
-            });
+            };
+
+            AvailableSessions.Add(systemSession);
 
             try
             {
@@ -95,13 +170,15 @@ namespace DeejNG.Dialogs
 
                         if (!string.IsNullOrWhiteSpace(friendlyName) && !seenProcesses.Contains(friendlyName))
                         {
-                            AvailableSessions.Add(new SelectableSession
+                            var newSession = new SelectableSession
                             {
                                 Id = friendlyName.ToLowerInvariant(),
                                 FriendlyName = friendlyName,
                                 IsSelected = selectedNames.Contains(friendlyName.ToLowerInvariant()),
                                 IsInputDevice = false
-                            });
+                            };
+
+                            AvailableSessions.Add(newSession);
                             seenProcesses.Add(friendlyName);
                         }
                     }
@@ -125,40 +202,6 @@ namespace DeejNG.Dialogs
             catch (System.Exception ex)
             {
                 MessageBox.Show($"Error loading audio sessions: {ex.Message}", "Error",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
-        private void LoadInputDevices(HashSet<string> selectedNames)
-        {
-            try
-            {
-                var devices = new MMDeviceEnumerator()
-                    .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
-
-                foreach (var device in devices)
-                {
-                    string name = device.FriendlyName;
-                    InputDevices.Add(new SelectableSession
-                    {
-                        Id = name,
-                        FriendlyName = name,
-                        IsSelected = selectedNames.Contains(name.ToLowerInvariant()),
-                        IsInputDevice = true
-                    });
-                }
-
-                // Sort input devices alphabetically
-                var sortedDevices = InputDevices.OrderBy(d => d.FriendlyName).ToList();
-                InputDevices.Clear();
-                foreach (var device in sortedDevices)
-                {
-                    InputDevices.Add(device);
-                }
-            }
-            catch (System.Exception ex)
-            {
-                MessageBox.Show($"Error loading input devices: {ex.Message}", "Error",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -190,10 +233,82 @@ namespace DeejNG.Dialogs
             Close();
         }
 
-        private void Cancel_Click(object sender, RoutedEventArgs e)
+        private void UpdateSelectionStates()
         {
-            DialogResult = false;
-            Close();
+            // Check if any output apps are selected
+            bool hasOutputSelected = AvailableSessions.Any(s => s.IsSelected);
+
+            // Check if any input devices are selected
+            bool hasInputSelected = InputDevices.Any(d => d.IsSelected);
+
+            // Apply the rules:
+            // 1. If any output is selected, disable all inputs
+            // 2. If any input is selected, disable all outputs
+            foreach (var device in InputDevices)
+            {
+                device.IsEnabled = !hasOutputSelected;
+            }
+
+            foreach (var session in AvailableSessions)
+            {
+                session.IsEnabled = !hasInputSelected;
+            }
         }
+
+        #endregion Private Methods
+
+        #region Public Classes
+
+        public class SelectableSession : INotifyPropertyChanged
+        {
+            #region Private Fields
+
+            private bool _isEnabled = true;
+            private bool _isSelected;
+
+            #endregion Private Fields
+
+            #region Public Events
+
+            public event PropertyChangedEventHandler PropertyChanged;
+
+            #endregion Public Events
+
+            #region Public Properties
+
+            public string FriendlyName { get; set; }
+            public string Id { get; set; }
+            public bool IsEnabled
+            {
+                get => _isEnabled;
+                set
+                {
+                    if (_isEnabled != value)
+                    {
+                        _isEnabled = value;
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEnabled)));
+                    }
+                }
+            }
+
+            public bool IsInputDevice { get; set; }
+
+            public bool IsSelected
+            {
+                get => _isSelected;
+                set
+                {
+                    if (_isSelected != value)
+                    {
+                        _isSelected = value;
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+                    }
+                }
+            }
+
+            #endregion Public Properties
+        }
+
+        #endregion Public Classes
     }
 }

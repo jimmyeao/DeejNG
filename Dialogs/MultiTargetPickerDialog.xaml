@@ -26,95 +26,46 @@
         <TextBlock Grid.Row="1" 
                    Text="Note: You can select either output applications OR input devices, but not both. Applications already assigned to other sliders are marked and cannot be selected."
                    Style="{StaticResource MaterialDesignBody2TextBlock}"
-                   Foreground="{DynamicResource MaterialDesignBodyTextBrush}"
                    TextWrapping="Wrap"
                    Margin="0,0,0,10"/>
 
         <!-- Session List with Checkboxes -->
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <!-- Available sessions -->
-            <GroupBox Header="Output Applications" Grid.Column="0" Margin="0,0,5,0">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-
-                    <ListBox x:Name="AvailableSessionsListBox" 
-                           Grid.Row="0"
-                           SelectionMode="Multiple" 
-                           Height="300"
-                           Margin="0,5">
+            <GroupBox Header="Output Applications" Grid.Column="0" Margin="0,0,5,0" MinHeight="300">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ListBox x:Name="AvailableSessionsListBox" Margin="0,5">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel>
-                                    <CheckBox Content="{Binding FriendlyName}" 
-                                              IsChecked="{Binding IsSelected}" 
-                                              IsEnabled="{Binding IsEnabled}"
-                                              Margin="0,2"/>
-                                    <TextBlock Text="{Binding AssignmentInfo, StringFormat='Already assigned to slider {0}'}" 
-                                               Margin="25,0,0,0"
-                                               Foreground="#F44336"
-                                               FontStyle="Italic"
-                                               FontSize="10"
-                                               Visibility="{Binding AssignmentInfoVisibility}"/>
-                                </StackPanel>
+                                <CheckBox Content="{Binding FriendlyName}" 
+                                          IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                          IsEnabled="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                          Margin="0,2"/>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-
-                    <TextBlock Grid.Row="1" 
-                               Text="When disabled: Input device(s) are selected"
-                               FontStyle="Italic"
-                               FontSize="10"
-                               Margin="0,5,0,0"
-                               HorizontalAlignment="Center"/>
-                </Grid>
+                </ScrollViewer>
             </GroupBox>
 
             <!-- Input device selection -->
-            <GroupBox Header="Input Devices" Grid.Column="1" Width="200">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-
-                    <ListBox x:Name="InputDevicesListBox" 
-                           Grid.Row="0"
-                           SelectionMode="Multiple"
-                           Height="300"
-                           Margin="0,5">
+            <GroupBox Header="Input Devices" Grid.Column="1" Width="200" MinHeight="300">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ListBox x:Name="InputDevicesListBox" Margin="0,5">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel>
-                                    <!-- Use plain bindings without converters -->
-                                    <CheckBox Content="{Binding FriendlyName}" 
-                      IsChecked="{Binding IsSelected}" 
-                      Margin="0,2"/>
-                                    <!-- Only show assignment info text when needed -->
-                                    <TextBlock Text="{Binding AssignmentInfo, StringFormat='Already assigned to slider {0}'}" 
-                       Margin="25,0,0,0"
-                       Foreground="#F44336"
-                       FontStyle="Italic"
-                       FontSize="10"/>
-                                </StackPanel>
+                                <CheckBox Content="{Binding FriendlyName}" 
+                                          IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                          IsEnabled="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                          Margin="0,2"/>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-
-                    <TextBlock Grid.Row="1" 
-                               Text="When disabled: Output app(s) are selected"
-                               FontStyle="Italic"
-                               FontSize="10"
-                               Margin="0,5,0,0"
-                               HorizontalAlignment="Center"/>
-                </Grid>
+                </ScrollViewer>
             </GroupBox>
         </Grid>
 
