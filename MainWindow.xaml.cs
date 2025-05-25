@@ -46,6 +46,7 @@ namespace DeejNG
         private bool _hasLoadedInitialSettings = false;
         private bool _serialPortFullyInitialized = false;
         private int _expectedSliderCount = -1; // Track expected number of sliders
+        private bool _hasReceivedInitialSerialData = false;
         private DateTime _lastSettingsSave = DateTime.MinValue;
         private readonly object _settingsLock = new object();
         private readonly MMDeviceEnumerator _deviceEnumerator = new();
@@ -746,14 +747,11 @@ namespace DeejNG
                 if (ComPortSelector.SelectedItem is string selectedPort)
                 {
                     Debug.WriteLine($"[Manual] User clicked connect for port: {selectedPort}");
-
                     // Update button state immediately
                     ConnectButton.IsEnabled = false;
                     ConnectButton.Content = "Connecting...";
-
                     // Try connection
                     InitSerial(selectedPort, 9600);
-
                     // UpdateConnectionStatus() called within InitSerial will typically handle
                     // the button state correctly after connection attempt. 
                     // This timer can ensure the button is re-evaluated if InitSerial doesn't update UI
@@ -966,6 +964,7 @@ namespace DeejNG
             Debug.WriteLine("[Serial] Disconnection detected");
             _serialDisconnected = true;
             _isConnected = false;
+            _hasReceivedInitialSerialData = false;
 
             // Update UI on the dispatcher thread
             Dispatcher.BeginInvoke(() =>
@@ -1007,7 +1006,6 @@ namespace DeejNG
             try
             {
                 string[] parts = data.Split('|');
-
                 if (parts.Length == 0)
                 {
                     return; // Skip empty data
@@ -1021,18 +1019,13 @@ namespace DeejNG
                         // Only regenerate if user explicitly requests it or if we have no sliders at all
                         if (_channelControls.Count == 0)
                         {
-                            Debug.WriteLine("[WARNING] No sliders exist, generating default set");
                             _expectedSliderCount = Math.Max(parts.Length, 4);
                             GenerateSliders(_expectedSliderCount);
                             return;
                         }
 
-                        // If incoming data has different number of parts than we expect,
-                        // log it but don't regenerate sliders
-                        if (_channelControls.Count != parts.Length)
-                        {
-                            Debug.WriteLine($"[INFO] Incoming data has {parts.Length} parts but we have {_channelControls.Count} sliders. Processing available data only.");
-                        }
+                        // Check if this is the first data packet
+                        bool isFirstData = !_hasReceivedInitialSerialData;
 
                         // Process the data for existing sliders only
                         int maxIndex = Math.Min(parts.Length, _channelControls.Count);
@@ -1053,20 +1046,27 @@ namespace DeejNG
                             float currentVolume = ctrl.CurrentVolume;
                             if (Math.Abs(currentVolume - level) < 0.01f) continue;
 
-                            ctrl.SmoothAndSetVolume(level, suppressEvent: _isInitializing, disableSmoothing: _disableSmoothing);
+                            // For first data, suppress events; for subsequent data, allow them
+                            ctrl.SmoothAndSetVolume(level, suppressEvent: isFirstData, disableSmoothing: _disableSmoothing);
 
-                            // Don't apply audio if we're still initializing
-                            if (_isInitializing) continue;
+                            // Don't apply audio until we've received the first data packet
+                            if (!_hasReceivedInitialSerialData) continue;
 
                             // Apply volume to all targets for this control
                             ApplyVolumeToTargets(ctrl, targets, level);
+                        }
+
+                        // Mark that we've received initial data
+                        if (isFirstData)
+                        {
+                            _hasReceivedInitialSerialData = true;
+                            Debug.WriteLine("[Serial] First data received - audio control now enabled");
                         }
 
                         // Mark serial port as fully initialized after receiving valid data
                         if (!_serialPortFullyInitialized)
                         {
                             _serialPortFullyInitialized = true;
-                            Debug.WriteLine("[Serial] Port fully initialized and receiving data");
                         }
                     }
                     catch (Exception ex)
@@ -1137,6 +1137,7 @@ namespace DeejNG
                 _lastConnectedPort = portName;
                 _serialDisconnected = false;
                 _serialPortFullyInitialized = false;
+                _hasReceivedInitialSerialData = false;
 
                 // Reset the watchdog variables
                 _lastValidDataTimestamp = DateTime.Now;
@@ -2034,8 +2035,10 @@ namespace DeejNG
             // Update UI elements
             ConnectionStatus.Text = statusText;
             ConnectionStatus.Foreground = statusColor;
-            ConnectButton.IsEnabled = !_isConnected || _serialDisconnected;
-            ConnectButton.Content = _isConnected && !_serialDisconnected ? "Disconnect" : "Connect";
+
+            // Always enable the button, just change the text
+            ConnectButton.IsEnabled = true;
+            ConnectButton.Content = (_isConnected && !_serialDisconnected) ? "Disconnect" : "Connect";
 
             Debug.WriteLine($"[Status] {statusText}");
         }
