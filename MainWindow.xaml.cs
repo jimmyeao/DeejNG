@@ -42,6 +42,11 @@ namespace DeejNG
         #region Private Fields
         private SessionCollection _cachedSessionsForMeters;
         private DateTime _lastMeterSessionRefresh = DateTime.MinValue;
+        private bool _isCalibrating = false;
+        private DateTime _calibrationStartTime = DateTime.MinValue;
+        private const int CALIBRATION_DELAY_MS = 500; // 500ms calibration period
+        private Dictionary<int, float> _initialSliderValues = new();
+        private bool _hasReceivedInitialData = false;
         private const int METER_SESSION_CACHE_MS = 1000;
         private bool _hasLoadedInitialSettings = false;
         private bool _serialPortFullyInitialized = false;
@@ -876,6 +881,8 @@ namespace DeejNG
             var savedInputModes = savedSettings?.InputModes ?? new List<bool>();
 
             _isInitializing = true; // ensure this is explicitly set at start
+            _isCalibrating = false; // Reset calibration state
+            _hasReceivedInitialData = false; // Reset data received flag
 
             for (int i = 0; i < count; i++)
             {
@@ -908,20 +915,20 @@ namespace DeejNG
                 control.AudioTargets = targetsForThisControl;
 
                 // Set input mode from saved settings if available
-                // This needs to happen after setting AudioTargets, as that can override IsInputMode
                 if (i < savedInputModes.Count)
                 {
-                    // If we have a saved input mode, set it directly to the checkbox
                     control.InputModeCheckBox.IsChecked = savedInputModes[i];
                 }
 
                 control.SetMuted(false);
-                control.SetVolume(0.5f);
+                // DON'T set initial volume - let hardware provide it
+                // control.SetVolume(0.5f); // REMOVED - this was causing the issue
 
                 control.TargetChanged += (_, _) => SaveSettings();
                 control.VolumeOrMuteChanged += (targets, vol, mute) =>
                 {
-                    if (_isInitializing) return;
+                    // Don't apply volume changes during initialization or calibration
+                    if (_isInitializing || _isCalibrating) return;
                     ApplyVolumeToTargets(control, targets, vol);
                 };
 
@@ -930,16 +937,11 @@ namespace DeejNG
                 {
                     Debug.WriteLine($"[MainWindow] Received session disconnected for {target}");
 
-                    // Optional: You could try to reconnect to the session here
-                    // For now, we'll just update visual state and remove from registeredHandlers
                     if (_registeredHandlers.TryGetValue(target, out var handler))
                     {
                         _registeredHandlers.Remove(target);
                         Debug.WriteLine($"[MainWindow] Removed handler for disconnected session: {target}");
                     }
-
-                    // Next time the session cache updates, it will try to find this session again
-                    // if the application is still running
                 };
 
                 _channelControls.Add(control);
@@ -952,10 +954,20 @@ namespace DeejNG
             {
                 SyncMuteStates();
                 _meterTimer.Start();
-                _isInitializing = false; // ✅ Set this **last**, after the UI has settled
+                // Note: _isInitializing will be set to false after calibration is complete
+                Debug.WriteLine("[Init] Sliders generated, waiting for hardware data to calibrate");
             });
         }
 
+        // Add a method to reset calibration state (call this when serial disconnects)
+        private void ResetCalibrationState()
+        {
+            _isCalibrating = false;
+            _hasReceivedInitialData = false;
+            _initialSliderValues.Clear();
+            _calibrationStartTime = DateTime.MinValue;
+            Debug.WriteLine("[Calibration] Reset calibration state");
+        }
         // Method to handle serial disconnection
         private void HandleSerialDisconnection()
         {
@@ -965,7 +977,7 @@ namespace DeejNG
             _serialDisconnected = true;
             _isConnected = false;
             _hasReceivedInitialSerialData = false;
-
+            ResetCalibrationState();
             // Update UI on the dispatcher thread
             Dispatcher.BeginInvoke(() =>
             {
@@ -1001,11 +1013,12 @@ namespace DeejNG
 
         private void HandleSliderData(string data)
         {
-            if (_isInitializing || string.IsNullOrWhiteSpace(data)) return;
+            if (string.IsNullOrWhiteSpace(data)) return;
 
             try
             {
                 string[] parts = data.Split('|');
+
                 if (parts.Length == 0)
                 {
                     return; // Skip empty data
@@ -1019,13 +1032,28 @@ namespace DeejNG
                         // Only regenerate if user explicitly requests it or if we have no sliders at all
                         if (_channelControls.Count == 0)
                         {
+                            Debug.WriteLine("[WARNING] No sliders exist, generating default set");
                             _expectedSliderCount = Math.Max(parts.Length, 4);
                             GenerateSliders(_expectedSliderCount);
                             return;
                         }
 
-                        // Check if this is the first data packet
-                        bool isFirstData = !_hasReceivedInitialSerialData;
+                        // If incoming data has different number of parts than we expect,
+                        // log it but don't regenerate sliders
+                        if (_channelControls.Count != parts.Length)
+                        {
+                            Debug.WriteLine($"[INFO] Incoming data has {parts.Length} parts but we have {_channelControls.Count} sliders. Processing available data only.");
+                        }
+
+                        // Start calibration phase when we first receive data
+                        if (!_hasReceivedInitialData)
+                        {
+                            _hasReceivedInitialData = true;
+                            _isCalibrating = true;
+                            _calibrationStartTime = DateTime.Now;
+                            _initialSliderValues.Clear();
+                            Debug.WriteLine("[Calibration] Starting calibration phase - will not apply volumes for 500ms");
+                        }
 
                         // Process the data for existing sliders only
                         int maxIndex = Math.Min(parts.Length, _channelControls.Count);
@@ -1043,30 +1071,51 @@ namespace DeejNG
 
                             if (targets.Count == 0) continue;
 
+                            // During calibration, just collect initial values and update sliders
+                            if (_isCalibrating)
+                            {
+                                // Store the initial value for this slider
+                                _initialSliderValues[i] = level;
+
+                                // Update slider position without triggering volume application
+                                ctrl.SmoothAndSetVolume(level, suppressEvent: true, disableSmoothing: true);
+
+                                // Check if calibration period is over
+                                if ((DateTime.Now - _calibrationStartTime).TotalMilliseconds >= CALIBRATION_DELAY_MS)
+                                {
+                                    _isCalibrating = false;
+                                    _isInitializing = false; // Also ensure we're not in initializing state
+                                    Debug.WriteLine("[Calibration] Calibration complete - now applying volumes normally");
+
+                                    // Apply the initial volumes now that calibration is complete
+                                    for (int j = 0; j < _channelControls.Count; j++)
+                                    {
+                                        if (_initialSliderValues.TryGetValue(j, out float initialLevel))
+                                        {
+                                            var calibCtrl = _channelControls[j];
+                                            ApplyVolumeToTargets(calibCtrl, calibCtrl.AudioTargets, initialLevel);
+                                            Debug.WriteLine($"[Calibration] Applied initial volume {initialLevel:F2} to slider {j}");
+                                        }
+                                    }
+                                }
+                                continue; // Skip normal processing during calibration
+                            }
+
+                            // Normal processing after calibration
                             float currentVolume = ctrl.CurrentVolume;
                             if (Math.Abs(currentVolume - level) < 0.01f) continue;
 
-                            // For first data, suppress events; for subsequent data, allow them
-                            ctrl.SmoothAndSetVolume(level, suppressEvent: isFirstData, disableSmoothing: _disableSmoothing);
-
-                            // Don't apply audio until we've received the first data packet
-                            if (!_hasReceivedInitialSerialData) continue;
+                            ctrl.SmoothAndSetVolume(level, suppressEvent: false, disableSmoothing: _disableSmoothing);
 
                             // Apply volume to all targets for this control
                             ApplyVolumeToTargets(ctrl, targets, level);
                         }
 
-                        // Mark that we've received initial data
-                        if (isFirstData)
-                        {
-                            _hasReceivedInitialSerialData = true;
-                            Debug.WriteLine("[Serial] First data received - audio control now enabled");
-                        }
-
                         // Mark serial port as fully initialized after receiving valid data
-                        if (!_serialPortFullyInitialized)
+                        if (!_serialPortFullyInitialized && !_isCalibrating)
                         {
                             _serialPortFullyInitialized = true;
+                            Debug.WriteLine("[Serial] Port fully initialized and receiving data");
                         }
                     }
                     catch (Exception ex)
@@ -1137,12 +1186,15 @@ namespace DeejNG
                 _lastConnectedPort = portName;
                 _serialDisconnected = false;
                 _serialPortFullyInitialized = false;
-                _hasReceivedInitialSerialData = false;
+
+                // Reset calibration state when establishing new connection
+                ResetCalibrationState();
 
                 // Reset the watchdog variables
                 _lastValidDataTimestamp = DateTime.Now;
                 _noDataCounter = 0;
                 _expectingData = false;
+
 
                 // Make sure the watchdog is running
                 if (!_serialWatchdogTimer.IsEnabled)
