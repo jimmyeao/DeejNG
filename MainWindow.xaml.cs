@@ -410,33 +410,33 @@ namespace DeejNG
                 _hasLoadedInitialSettings = true;
             }
         }
-        private void AttemptSerialConnectionAtStartup()
-        {
-            try
-            {
-                var settings = LoadSettingsFromDisk();
-                if (!string.IsNullOrWhiteSpace(settings?.PortName))
-                {
-                    // Check if the port is actually available before trying to connect
-                    var availablePorts = SerialPort.GetPortNames();
-                    if (availablePorts.Contains(settings.PortName))
-                    {
-                        Debug.WriteLine($"[Startup] Attempting to connect to saved port: {settings.PortName}");
-                        InitSerial(settings.PortName, 9600);
-                    }
-                    else
-                    {
-                        Debug.WriteLine($"[Startup] Saved port {settings.PortName} not available. Available ports: {string.Join(", ", availablePorts)}");
-                        // Update the dropdown but don't try to connect
-                        LoadAvailablePorts();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Startup] Failed to connect to serial port: {ex.Message}");
-            }
-        }
+        //private void AttemptSerialConnectionAtStartup()
+        //{
+        //    try
+        //    {
+        //        var settings = LoadSettingsFromDisk();
+        //        if (!string.IsNullOrWhiteSpace(settings?.PortName))
+        //        {
+        //            // Check if the port is actually available before trying to connect
+        //            var availablePorts = SerialPort.GetPortNames();
+        //            if (availablePorts.Contains(settings.PortName))
+        //            {
+        //                Debug.WriteLine($"[Startup] Attempting to connect to saved port: {settings.PortName}");
+        //                InitSerial(settings.PortName, 9600);
+        //            }
+        //            else
+        //            {
+        //                Debug.WriteLine($"[Startup] Saved port {settings.PortName} not available. Available ports: {string.Join(", ", availablePorts)}");
+        //                // Update the dropdown but don't try to connect
+        //                LoadAvailablePorts();
+        //            }
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        Debug.WriteLine($"[Startup] Failed to connect to serial port: {ex.Message}");
+        //    }
+        //}
         private static void SetDisplayIcon()
         {
             //only run in Release
@@ -732,34 +732,45 @@ namespace DeejNG
 
         private void Connect_Click(object sender, RoutedEventArgs e)
         {
-            if (ComPortSelector.SelectedItem is string selectedPort)
+            if (_isConnected && !_serialDisconnected)
             {
-                Debug.WriteLine($"[Manual] User clicked connect for port: {selectedPort}");
-
-                // Update button state immediately
-                ConnectButton.IsEnabled = false;
-                ConnectButton.Content = "Connecting...";
-
-                // Try connection
-                InitSerial(selectedPort, 9600);
-
-                // Reset button after a short delay
-                var resetTimer = new DispatcherTimer
-                {
-                    Interval = TimeSpan.FromSeconds(2)
-                };
-                resetTimer.Tick += (s, args) =>
-                {
-                    resetTimer.Stop();
-                    ConnectButton.Content = "Connect";
-                    ConnectButton.IsEnabled = !_isConnected;
-                };
-                resetTimer.Start();
+                // Already connected, so user wants to disconnect
+                Disconnect_Click(sender, e);
             }
             else
             {
-                MessageBox.Show("Please select a COM port first.", "No Port Selected",
-                              MessageBoxButton.OK, MessageBoxImage.Information);
+                // Not connected, so user wants to connect
+                if (ComPortSelector.SelectedItem is string selectedPort)
+                {
+                    Debug.WriteLine($"[Manual] User clicked connect for port: {selectedPort}");
+
+                    // Update button state immediately
+                    ConnectButton.IsEnabled = false;
+                    ConnectButton.Content = "Connecting...";
+
+                    // Try connection
+                    InitSerial(selectedPort, 9600);
+
+                    // UpdateConnectionStatus() called within InitSerial will typically handle
+                    // the button state correctly after connection attempt. 
+                    // This timer can ensure the button is re-evaluated if InitSerial doesn't update UI
+                    // or for a minimum 'Connecting...' display time.
+                    var resetTimer = new DispatcherTimer
+                    {
+                        Interval = TimeSpan.FromSeconds(2)
+                    };
+                    resetTimer.Tick += (s, args) =>
+                    {
+                        resetTimer.Stop();
+                        UpdateConnectionStatus(); // Ensure button state is accurate after attempt
+                    };
+                    resetTimer.Start();
+                }
+                else
+                {
+                    MessageBox.Show("Please select a COM port first.", "No Port Selected",
+                                  MessageBoxButton.OK, MessageBoxImage.Information);
+                }
             }
         }
 
