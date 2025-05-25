@@ -40,7 +40,11 @@ namespace DeejNG
         #endregion Public Fields
 
         #region Private Fields
-
+        private bool _hasLoadedInitialSettings = false;
+        private bool _serialPortFullyInitialized = false;
+        private int _expectedSliderCount = -1; // Track expected number of sliders
+        private DateTime _lastSettingsSave = DateTime.MinValue;
+        private readonly object _settingsLock = new object();
         private readonly MMDeviceEnumerator _deviceEnumerator = new();
         private readonly Dictionary<string, float> _lastInputVolume = new(StringComparer.OrdinalIgnoreCase);
         private AppSettings _appSettings = new();
@@ -91,7 +95,10 @@ namespace DeejNG
 
             _audioService = new AudioService();
             BuildInputDeviceCache();
+
+            // Load ports BEFORE loading settings so ComboBox is populated
             LoadAvailablePorts();
+
             _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
             _systemVolume = _audioDevice.AudioEndpointVolume;
             _systemVolume.OnVolumeNotification += AudioEndpointVolume_OnVolumeNotification;
@@ -123,7 +130,9 @@ namespace DeejNG
             CreateNotifyIconContextMenu();
             IconHandler.AddIconToRemovePrograms("DeejNG");
             SetDisplayIcon();
-            LoadSettings();
+
+            // Load settings but don't auto-connect to serial port yet
+            LoadSettingsWithoutSerialConnection();
 
             _isInitializing = false;
             if (_appSettings.StartMinimized)
@@ -132,8 +141,10 @@ namespace DeejNG
                 Hide();
                 MyNotifyIcon.Visibility = Visibility.Visible;
             }
-        }
 
+            // IMPROVED: Multiple attempts to connect with better timing
+            SetupAutomaticSerialConnection();
+        }
         #endregion Public Constructors
 
         #region Private Properties
@@ -256,7 +267,176 @@ namespace DeejNG
         #endregion Protected Methods
 
         #region Private Methods
+        // Improved automatic serial connection logic
+        // Replace these methods in your MainWindow.xaml.cs
 
+      
+
+        // NEW: Setup automatic serial connection with retry logic
+        private void SetupAutomaticSerialConnection()
+        {
+            var connectionAttempts = 0;
+            const int maxAttempts = 5;
+            var attemptTimer = new DispatcherTimer();
+
+            attemptTimer.Tick += (s, e) =>
+            {
+                connectionAttempts++;
+                Debug.WriteLine($"[AutoConnect] Attempt #{connectionAttempts}");
+
+                if (TryConnectToSavedPort())
+                {
+                    Debug.WriteLine("[AutoConnect] Successfully connected!");
+                    attemptTimer.Stop();
+                    return;
+                }
+
+                if (connectionAttempts >= maxAttempts)
+                {
+                    Debug.WriteLine($"[AutoConnect] Failed after {maxAttempts} attempts");
+                    attemptTimer.Stop();
+                    return;
+                }
+
+                // Increase interval for subsequent attempts
+                attemptTimer.Interval = TimeSpan.FromSeconds(Math.Min(2 * connectionAttempts, 10));
+            };
+
+            // Start first attempt after 2 seconds
+            attemptTimer.Interval = TimeSpan.FromSeconds(2);
+            attemptTimer.Start();
+        }
+        private bool TryConnectToSavedPort()
+        {
+            try
+            {
+                // Skip if already connected
+                if (_isConnected && !_serialDisconnected)
+                {
+                    return true;
+                }
+
+                var settings = LoadSettingsFromDisk();
+                if (string.IsNullOrWhiteSpace(settings?.PortName))
+                {
+                    Debug.WriteLine("[AutoConnect] No saved port name");
+                    return false;
+                }
+
+                // Refresh available ports first
+                LoadAvailablePorts();
+
+                var availablePorts = SerialPort.GetPortNames();
+                if (!availablePorts.Contains(settings.PortName))
+                {
+                    Debug.WriteLine($"[AutoConnect] Saved port '{settings.PortName}' not in available ports: [{string.Join(", ", availablePorts)}]");
+                    return false;
+                }
+
+                // Update ComboBox selection to match the saved port
+                Dispatcher.Invoke(() =>
+                {
+                    ComPortSelector.SelectedItem = settings.PortName;
+                });
+
+                Debug.WriteLine($"[AutoConnect] Attempting to connect to saved port: {settings.PortName}");
+
+                // Attempt connection
+                InitSerial(settings.PortName, 9600);
+
+                // Return true if connection succeeded
+                return _isConnected && !_serialDisconnected;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AutoConnect] Exception during connection attempt: {ex.Message}");
+                return false;
+            }
+        }
+        private void LoadSettingsWithoutSerialConnection()
+        {
+            try
+            {
+                var settings = LoadSettingsFromDisk();
+
+                // Apply UI settings
+                ApplyTheme(settings?.IsDarkTheme == true ? "Dark" : "Light");
+                InvertSliderCheckBox.IsChecked = settings?.IsSliderInverted ?? false;
+                ShowSlidersCheckBox.IsChecked = settings?.VuMeters ?? true;
+
+                bool showMeters = settings?.VuMeters ?? true;
+                ShowSlidersCheckBox.IsChecked = showMeters;
+                SetMeterVisibilityForAll(showMeters);
+                DisableSmoothingCheckBox.IsChecked = settings?.DisableSmoothing ?? false;
+
+                // Handle startup settings
+                StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
+                StartOnBootCheckBox.Unchecked -= StartOnBootCheckBox_Unchecked;
+
+                bool isInStartup = IsStartupEnabled();
+                _appSettings.StartOnBoot = isInStartup;
+                StartOnBootCheckBox.IsChecked = isInStartup;
+
+                StartOnBootCheckBox.Checked += StartOnBootCheckBox_Checked;
+                StartOnBootCheckBox.Unchecked += StartOnBootCheckBox_Unchecked;
+
+                StartMinimizedCheckBox.IsChecked = settings?.StartMinimized ?? false;
+                StartMinimizedCheckBox.Checked += StartMinimizedCheckBox_Checked;
+
+                // CRITICAL: Generate sliders from saved settings
+                if (settings?.SliderTargets != null && settings.SliderTargets.Count > 0)
+                {
+                    _expectedSliderCount = settings.SliderTargets.Count;
+                    GenerateSliders(settings.SliderTargets.Count);
+                }
+                else
+                {
+                    // Default to 4 sliders if no settings exist
+                    _expectedSliderCount = 4;
+                    GenerateSliders(4);
+                }
+
+                _hasLoadedInitialSettings = true;
+
+                foreach (var ctrl in _channelControls)
+                    ctrl.SetMeterVisibility(showMeters);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Failed to load settings without serial: {ex.Message}");
+                // Fallback: generate default sliders
+                _expectedSliderCount = 4;
+                GenerateSliders(4);
+                _hasLoadedInitialSettings = true;
+            }
+        }
+        private void AttemptSerialConnectionAtStartup()
+        {
+            try
+            {
+                var settings = LoadSettingsFromDisk();
+                if (!string.IsNullOrWhiteSpace(settings?.PortName))
+                {
+                    // Check if the port is actually available before trying to connect
+                    var availablePorts = SerialPort.GetPortNames();
+                    if (availablePorts.Contains(settings.PortName))
+                    {
+                        Debug.WriteLine($"[Startup] Attempting to connect to saved port: {settings.PortName}");
+                        InitSerial(settings.PortName, 9600);
+                    }
+                    else
+                    {
+                        Debug.WriteLine($"[Startup] Saved port {settings.PortName} not available. Available ports: {string.Join(", ", availablePorts)}");
+                        // Update the dropdown but don't try to connect
+                        LoadAvailablePorts();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Startup] Failed to connect to serial port: {ex.Message}");
+            }
+        }
         private static void SetDisplayIcon()
         {
             //only run in Release
@@ -546,14 +726,40 @@ namespace DeejNG
 
         private void ComPortSelector_DropDownOpened(object sender, EventArgs e)
         {
-            LoadAvailablePorts();  // Re-enumerate COM ports when dropdown is opened
+            Debug.WriteLine("[UI] COM port dropdown opened, refreshing ports...");
+            LoadAvailablePorts();
         }
 
         private void Connect_Click(object sender, RoutedEventArgs e)
         {
             if (ComPortSelector.SelectedItem is string selectedPort)
             {
+                Debug.WriteLine($"[Manual] User clicked connect for port: {selectedPort}");
+
+                // Update button state immediately
+                ConnectButton.IsEnabled = false;
+                ConnectButton.Content = "Connecting...";
+
+                // Try connection
                 InitSerial(selectedPort, 9600);
+
+                // Reset button after a short delay
+                var resetTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(2)
+                };
+                resetTimer.Tick += (s, args) =>
+                {
+                    resetTimer.Stop();
+                    ConnectButton.Content = "Connect";
+                    ConnectButton.IsEnabled = !_isConnected;
+                };
+                resetTimer.Start();
+            }
+            else
+            {
+                MessageBox.Show("Please select a COM port first.", "No Port Selected",
+                              MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
 
@@ -786,7 +992,6 @@ namespace DeejNG
 
             try
             {
-                // Parse the data outside of the Dispatcher call to avoid potential issues
                 string[] parts = data.Split('|');
 
                 if (parts.Length == 0)
@@ -794,18 +999,31 @@ namespace DeejNG
                     return; // Skip empty data
                 }
 
-                // Use BeginInvoke instead of Invoke to avoid blocking the calling thread
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     try
                     {
-                        if (_channelControls.Count != parts.Length)
+                        // CRITICAL FIX: Never regenerate sliders based on incoming data
+                        // Only regenerate if user explicitly requests it or if we have no sliders at all
+                        if (_channelControls.Count == 0)
                         {
-                            GenerateSliders(parts.Length);
-                            return; // Skip processing in this case - we just regenerated the sliders
+                            Debug.WriteLine("[WARNING] No sliders exist, generating default set");
+                            _expectedSliderCount = Math.Max(parts.Length, 4);
+                            GenerateSliders(_expectedSliderCount);
+                            return;
                         }
 
-                        for (int i = 0; i < parts.Length && i < _channelControls.Count; i++)
+                        // If incoming data has different number of parts than we expect,
+                        // log it but don't regenerate sliders
+                        if (_channelControls.Count != parts.Length)
+                        {
+                            Debug.WriteLine($"[INFO] Incoming data has {parts.Length} parts but we have {_channelControls.Count} sliders. Processing available data only.");
+                        }
+
+                        // Process the data for existing sliders only
+                        int maxIndex = Math.Min(parts.Length, _channelControls.Count);
+
+                        for (int i = 0; i < maxIndex; i++)
                         {
                             if (!float.TryParse(parts[i].Trim(), out float level)) continue;
 
@@ -829,6 +1047,13 @@ namespace DeejNG
                             // Apply volume to all targets for this control
                             ApplyVolumeToTargets(ctrl, targets, level);
                         }
+
+                        // Mark serial port as fully initialized after receiving valid data
+                        if (!_serialPortFullyInitialized)
+                        {
+                            _serialPortFullyInitialized = true;
+                            Debug.WriteLine("[Serial] Port fully initialized and receiving data");
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -841,27 +1066,63 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] Parsing slider data: {ex.Message}");
             }
         }
-
         private void InitSerial(string portName, int baudRate)
         {
             try
             {
-                if (_serialPort != null && _serialPort.IsOpen)
+                // Validate port name
+                if (string.IsNullOrWhiteSpace(portName))
                 {
-                    _serialPort.Close();
+                    Debug.WriteLine("[Serial] Invalid port name provided");
+                    return;
                 }
 
-                _serialPort = new SerialPort(portName, baudRate);
-                _serialPort.DataReceived += SerialPort_DataReceived;
+                var availablePorts = SerialPort.GetPortNames();
+                if (!availablePorts.Contains(portName))
+                {
+                    Debug.WriteLine($"[Serial] Port {portName} not in available ports: [{string.Join(", ", availablePorts)}]");
 
-                // Add error event handler to detect disconnection
+                    // Update UI to show disconnected state
+                    Dispatcher.Invoke(() =>
+                    {
+                        _isConnected = false;
+                        _serialDisconnected = true;
+                        UpdateConnectionStatus();
+                    });
+                    return;
+                }
+
+                // Close existing connection if any
+                if (_serialPort != null && _serialPort.IsOpen)
+                {
+                    try
+                    {
+                        _serialPort.Close();
+                        _serialPort.DataReceived -= SerialPort_DataReceived;
+                        _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[Serial] Error closing existing port: {ex.Message}");
+                    }
+                }
+
+                _serialPort = new SerialPort(portName, baudRate)
+                {
+                    ReadTimeout = 1000,
+                    WriteTimeout = 1000
+                };
+
+                _serialPort.DataReceived += SerialPort_DataReceived;
                 _serialPort.ErrorReceived += SerialPort_ErrorReceived;
 
                 _serialPort.Open();
 
+                // Update connection state
                 _isConnected = true;
-                _lastConnectedPort = portName; // Store the last connected port
+                _lastConnectedPort = portName;
                 _serialDisconnected = false;
+                _serialPortFullyInitialized = false;
 
                 // Reset the watchdog variables
                 _lastValidDataTimestamp = DateTime.Now;
@@ -874,7 +1135,13 @@ namespace DeejNG
                     _serialWatchdogTimer.Start();
                 }
 
-                UpdateConnectionStatus();
+                // Update UI
+                Dispatcher.Invoke(() =>
+                {
+                    UpdateConnectionStatus();
+                    // Ensure ComboBox shows the connected port
+                    ComPortSelector.SelectedItem = portName;
+                });
 
                 // Start the reconnect timer (it will only attempt reconnection if _serialDisconnected is true)
                 if (!_serialReconnectTimer.IsEnabled)
@@ -882,18 +1149,44 @@ namespace DeejNG
                     _serialReconnectTimer.Start();
                 }
 
-                // Save settings since we've changed the connected port
-                SaveSettings();
+                Debug.WriteLine($"[Serial] Successfully connected to {portName}");
+
+                // Save settings only if we've loaded initial settings
+                if (_hasLoadedInitialSettings)
+                {
+                    SaveSettings();
+                }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to open serial port {portName}: {ex.Message}", "Serial Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                Debug.WriteLine($"[Serial] Failed to open port {portName}: {ex.Message}");
+
+                // Update connection state
                 _isConnected = false;
                 _serialDisconnected = true;
-                UpdateConnectionStatus();
+                _serialPortFullyInitialized = false;
+
+                Dispatcher.Invoke(() =>
+                {
+                    UpdateConnectionStatus();
+                });
+
+                // Don't show error dialog during automatic connection attempts
+                if (_hasLoadedInitialSettings)
+                {
+                    // Only show error if this was a manual connection attempt
+                    var isManualAttempt = ComPortSelector.SelectedItem?.ToString() == portName;
+                    if (isManualAttempt)
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            MessageBox.Show($"Failed to open serial port {portName}: {ex.Message}",
+                                          "Serial Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        });
+                    }
+                }
             }
         }
-
         private void InvertSlider_Checked(object sender, RoutedEventArgs e)
         {
             SaveInvertState();
@@ -915,28 +1208,49 @@ namespace DeejNG
 
         private void LoadAvailablePorts()
         {
-            // Re-enumerate the available COM ports
-            var availablePorts = SerialPort.GetPortNames();
+            try
+            {
+                var availablePorts = SerialPort.GetPortNames();
 
-            // Populate the ComboBox with the newly enumerated ports
-            ComPortSelector.ItemsSource = availablePorts;
+                // Store current selection if any
+                string currentSelection = ComPortSelector.SelectedItem as string;
 
-            // If we have a last connected port and it's in the list, select it
-            if (!string.IsNullOrEmpty(_lastConnectedPort) && availablePorts.Contains(_lastConnectedPort))
-            {
-                ComPortSelector.SelectedItem = _lastConnectedPort;
+                // Update the ComboBox
+                ComPortSelector.ItemsSource = availablePorts;
+
+                Debug.WriteLine($"[Ports] Found {availablePorts.Length} ports: [{string.Join(", ", availablePorts)}]");
+
+                // Try to restore previous selection first
+                if (!string.IsNullOrEmpty(currentSelection) && availablePorts.Contains(currentSelection))
+                {
+                    ComPortSelector.SelectedItem = currentSelection;
+                    Debug.WriteLine($"[Ports] Restored previous selection: {currentSelection}");
+                }
+                // Then try saved port from settings
+                else if (!string.IsNullOrEmpty(_lastConnectedPort) && availablePorts.Contains(_lastConnectedPort))
+                {
+                    ComPortSelector.SelectedItem = _lastConnectedPort;
+                    Debug.WriteLine($"[Ports] Selected saved port: {_lastConnectedPort}");
+                }
+                // Finally, select first available port
+                else if (availablePorts.Length > 0)
+                {
+                    ComPortSelector.SelectedIndex = 0;
+                    Debug.WriteLine($"[Ports] Selected first available port: {availablePorts[0]}");
+                }
+                else
+                {
+                    ComPortSelector.SelectedIndex = -1;
+                    Debug.WriteLine("[Ports] No ports available");
+                }
             }
-            // Otherwise select the first available port or leave it blank if none exist
-            else if (availablePorts.Length > 0)
+            catch (Exception ex)
             {
-                ComPortSelector.SelectedIndex = 0;
-            }
-            else
-            {
-                ComPortSelector.SelectedIndex = -1;  // No selection if no ports found
+                Debug.WriteLine($"[ERROR] Failed to load available ports: {ex.Message}");
+                ComPortSelector.ItemsSource = new string[0];
+                ComPortSelector.SelectedIndex = -1;
             }
         }
-
         private void LoadSettings()
         {
             var settings = LoadSettingsFromDisk();
@@ -1071,44 +1385,79 @@ namespace DeejNG
 
         private void SaveSettings()
         {
-            if (_isInitializing) return;
-            try
+            if (_isInitializing)
             {
-                var settings = new AppSettings
-                {
-                    PortName = _serialPort?.PortName ?? string.Empty,
-                    SliderTargets = _channelControls.Select(c => c.AudioTargets).ToList(),
-                    IsDarkTheme = isDarkTheme,
-                    IsSliderInverted = InvertSliderCheckBox.IsChecked ?? false,
-                    VuMeters = ShowSlidersCheckBox.IsChecked ?? true,
-                    StartOnBoot = StartOnBootCheckBox.IsChecked ?? false,
-                    StartMinimized = StartMinimizedCheckBox.IsChecked ?? false,
-                    // Important: Save the input mode status for each control
-                    InputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList(),
-                    DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false
-                };
-
-                var options = new JsonSerializerOptions
-                {
-                    WriteIndented = true
-                };
-                var json = JsonSerializer.Serialize(settings, options);
-
-                // Ensure directory exists
-                var dir = Path.GetDirectoryName(SettingsPath);
-                if (!Directory.Exists(dir) && dir != null)
-                {
-                    Directory.CreateDirectory(dir);
-                }
-
-                File.WriteAllText(SettingsPath, json);
+                Debug.WriteLine("[Settings] Skipping save during initialization");
+                return;
             }
-            catch (Exception ex)
+
+            if (!_hasLoadedInitialSettings)
             {
-                Debug.WriteLine($"[ERROR] Failed to save settings: {ex.Message}");
+                Debug.WriteLine("[Settings] Skipping save - initial settings not loaded yet");
+                return;
+            }
+
+            // Prevent too frequent saves
+            if ((DateTime.Now - _lastSettingsSave).TotalMilliseconds < 500)
+            {
+                Debug.WriteLine("[Settings] Skipping save - too frequent");
+                return;
+            }
+
+            lock (_settingsLock)
+            {
+                try
+                {
+                    // Validate that we have meaningful data to save
+                    if (_channelControls.Count == 0)
+                    {
+                        Debug.WriteLine("[Settings] Skipping save - no channel controls");
+                        return;
+                    }
+
+                    var settings = new AppSettings
+                    {
+                        PortName = _serialPort?.PortName ?? string.Empty,
+                        SliderTargets = _channelControls.Select(c => c.AudioTargets ?? new List<AudioTarget>()).ToList(),
+                        IsDarkTheme = isDarkTheme,
+                        IsSliderInverted = InvertSliderCheckBox.IsChecked ?? false,
+                        VuMeters = ShowSlidersCheckBox.IsChecked ?? true,
+                        StartOnBoot = StartOnBootCheckBox.IsChecked ?? false,
+                        StartMinimized = StartMinimizedCheckBox.IsChecked ?? false,
+                        InputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList(),
+                        DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false
+                    };
+
+                    // Additional validation
+                    if (settings.SliderTargets.Count != _channelControls.Count)
+                    {
+                        Debug.WriteLine("[Settings] Warning: Slider targets count mismatch");
+                    }
+
+                    var options = new JsonSerializerOptions
+                    {
+                        WriteIndented = true
+                    };
+                    var json = JsonSerializer.Serialize(settings, options);
+
+                    // Ensure directory exists
+                    var dir = Path.GetDirectoryName(SettingsPath);
+                    if (!Directory.Exists(dir) && dir != null)
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+
+                    File.WriteAllText(SettingsPath, json);
+                    _lastSettingsSave = DateTime.Now;
+
+                    Debug.WriteLine($"[Settings] Saved successfully with {settings.SliderTargets.Count} slider configurations");
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ERROR] Failed to save settings: {ex.Message}");
+                }
             }
         }
-
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
             if (_serialPort == null || !_serialPort.IsOpen)
@@ -1183,65 +1532,45 @@ namespace DeejNG
 
             Debug.WriteLine("[SerialReconnect] Attempting to reconnect...");
 
-            // Get current available ports
-            var availablePorts = SerialPort.GetPortNames();
+            // Try the saved port first
+            if (TryConnectToSavedPort())
+            {
+                Debug.WriteLine("[SerialReconnect] Successfully reconnected to saved port");
+                return;
+            }
 
-            // Check if our last connected port is available
-            if (!string.IsNullOrEmpty(_lastConnectedPort) && availablePorts.Contains(_lastConnectedPort))
+            // If saved port doesn't work, try any available port
+            try
             {
-                Debug.WriteLine($"[SerialReconnect] Found previously connected port {_lastConnectedPort}, attempting reconnection");
-                try
+                var availablePorts = SerialPort.GetPortNames();
+
+                if (availablePorts.Length == 0)
                 {
-                    InitSerial(_lastConnectedPort, 9600);
-                    if (_isConnected)
+                    Debug.WriteLine("[SerialReconnect] No serial ports available");
+                    Dispatcher.Invoke(() =>
                     {
-                        Debug.WriteLine("[SerialReconnect] Successfully reconnected");
-                        _serialDisconnected = false;
-                        // Update UI to show reconnected
-                        Dispatcher.Invoke(() => {
-                            ConnectionStatus.Text = $"Connected to {_lastConnectedPort}";
-                            ConnectionStatus.Foreground = Brushes.Green;
-                        });
-                    }
+                        ConnectionStatus.Text = "Waiting for device...";
+                        ConnectionStatus.Foreground = Brushes.Orange;
+                        LoadAvailablePorts(); // Refresh the dropdown
+                    });
+                    return;
                 }
-                catch (Exception ex)
+
+                // Try the first available port if our saved port isn't available
+                string portToTry = availablePorts[0];
+                Debug.WriteLine($"[SerialReconnect] Trying first available port: {portToTry}");
+
+                InitSerial(portToTry, 9600);
+
+                if (_isConnected)
                 {
-                    Debug.WriteLine($"[SerialReconnect] Failed to reconnect: {ex.Message}");
+                    Debug.WriteLine($"[SerialReconnect] Successfully connected to {portToTry}");
+                    _serialDisconnected = false;
                 }
             }
-            else if (availablePorts.Length > 0)
+            catch (Exception ex)
             {
-                // If the last port isn't available but there are other ports, try the first one
-                Debug.WriteLine($"[SerialReconnect] Last port not available, trying {availablePorts[0]}");
-                try
-                {
-                    InitSerial(availablePorts[0], 9600);
-                    if (_isConnected)
-                    {
-                        Debug.WriteLine("[SerialReconnect] Successfully connected to new port");
-                        _serialDisconnected = false;
-                        // Update UI
-                        Dispatcher.Invoke(() => {
-                            ConnectionStatus.Text = $"Connected to {availablePorts[0]}";
-                            ConnectionStatus.Foreground = Brushes.Green;
-                        });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[SerialReconnect] Failed to connect to new port: {ex.Message}");
-                }
-            }
-            else
-            {
-                Debug.WriteLine("[SerialReconnect] No serial ports available");
-                // Update UI to show waiting for device
-                Dispatcher.Invoke(() => {
-                    ConnectionStatus.Text = "Waiting for device...";
-                    ConnectionStatus.Foreground = Brushes.Orange;
-                    // Refresh the port list in the dropdown
-                    LoadAvailablePorts();
-                });
+                Debug.WriteLine($"[SerialReconnect] Failed to reconnect: {ex.Message}");
             }
         }
         private void SerialWatchdogTimer_Tick(object sender, EventArgs e)
@@ -1669,19 +1998,18 @@ namespace DeejNG
 
         private void UpdateConnectionStatus()
         {
-            // Update the text block with connection status
             string statusText;
             Brush statusColor;
 
-            if (_isConnected)
+            if (_isConnected && !_serialDisconnected)
             {
-                statusText = $"Connected to {_serialPort.PortName}";
+                statusText = $"Connected to {_serialPort?.PortName ?? _lastConnectedPort}";
                 statusColor = Brushes.Green;
             }
             else if (_serialDisconnected)
             {
                 statusText = "Disconnected - Reconnecting...";
-                statusColor = Brushes.Red;
+                statusColor = Brushes.Orange;
             }
             else
             {
@@ -1689,13 +2017,40 @@ namespace DeejNG
                 statusColor = Brushes.Red;
             }
 
+            // Update UI elements
             ConnectionStatus.Text = statusText;
             ConnectionStatus.Foreground = statusColor;
+            ConnectButton.IsEnabled = !_isConnected || _serialDisconnected;
+            ConnectButton.Content = _isConnected && !_serialDisconnected ? "Disconnect" : "Connect";
 
-            // Disable the Connect button if connected
-            ConnectButton.IsEnabled = !_isConnected;
+            Debug.WriteLine($"[Status] {statusText}");
         }
-        // Update the UpdateMeters method in MainWindow.xaml.cs
+
+        // NEW: Add disconnect functionality
+        private void Disconnect_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_serialPort != null && _serialPort.IsOpen)
+                {
+                    _serialPort.Close();
+                    _serialPort.DataReceived -= SerialPort_DataReceived;
+                    _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
+                }
+
+                _isConnected = false;
+                _serialDisconnected = true;
+                _serialPortFullyInitialized = false;
+
+                UpdateConnectionStatus();
+
+                Debug.WriteLine("[Manual] User disconnected serial port");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Failed to disconnect: {ex.Message}");
+            }
+        }        // Update the UpdateMeters method in MainWindow.xaml.cs
 
         private void UpdateMeters(object? sender, EventArgs e)
         {
