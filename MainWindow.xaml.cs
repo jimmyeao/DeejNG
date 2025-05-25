@@ -40,6 +40,9 @@ namespace DeejNG
         #endregion Public Fields
 
         #region Private Fields
+        private SessionCollection _cachedSessionsForMeters;
+        private DateTime _lastMeterSessionRefresh = DateTime.MinValue;
+        private const int METER_SESSION_CACHE_MS = 1000;
         private bool _hasLoadedInitialSettings = false;
         private bool _serialPortFullyInitialized = false;
         private int _expectedSliderCount = -1; // Track expected number of sliders
@@ -105,7 +108,7 @@ namespace DeejNG
 
             _meterTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(10)
+                Interval = TimeSpan.FromMilliseconds(50)
             };
             _meterTimer.Tick += UpdateMeters;
             _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
@@ -2070,24 +2073,23 @@ namespace DeejNG
             const float visualGain = 1.5f;
             const float systemCalibrationFactor = 2.0f;
 
-            // Refresh output device reference every 5 seconds
-            if ((DateTime.Now - _lastDeviceRefresh).TotalSeconds > 5)
+            if ((DateTime.Now - _lastMeterSessionRefresh).TotalMilliseconds > METER_SESSION_CACHE_MS)
             {
                 try
                 {
-                    _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                    _lastDeviceRefresh = DateTime.Now;
+                    _cachedSessionsForMeters = _audioDevice.AudioSessionManager.Sessions;
+                    _lastMeterSessionRefresh = DateTime.Now;
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[ERROR] Failed to refresh audio device: {ex.Message}");
-                    return; // Skip this update if we can't get the device
+                    Debug.WriteLine($"[ERROR] Failed to cache sessions for meters: {ex.Message}");
+                    return;
                 }
             }
 
             try
             {
-                var sessions = _audioDevice.AudioSessionManager.Sessions;
+                var sessions = _cachedSessionsForMeters;
 
                 foreach (var ctrl in _channelControls)
                 {
