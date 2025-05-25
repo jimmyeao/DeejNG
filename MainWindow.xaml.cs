@@ -45,6 +45,7 @@ namespace DeejNG
         private bool _isCalibrating = false;
         private DateTime _calibrationStartTime = DateTime.MinValue;
         private const int CALIBRATION_DELAY_MS = 500; // 500ms calibration period
+        private bool _allowVolumeApplication = false;
         private Dictionary<int, float> _initialSliderValues = new();
         private bool _hasReceivedInitialData = false;
         private const int METER_SESSION_CACHE_MS = 1000;
@@ -579,37 +580,26 @@ namespace DeejNG
             }
         }
 
-        private void ApplyVolumeToAllTargets(ChannelControl control, float level)
-        {
-            foreach (var target in control.AudioTargets)
-            {
-                if (target.IsInputDevice)
-                {
-                    // Apply to input device
-                    ApplyInputVolume(control, target.Name, level);
-                }
-                else
-                {
-                    // Apply to output app
-                    _audioService.ApplyVolumeToTarget(target.Name, level, control.IsMuted);
-                }
-            }
-        }
+
 
         private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level)
         {
+            // Simple check - don't apply volumes until we're ready
+            if (!_allowVolumeApplication)
+            {
+                return;
+            }
+
             foreach (var target in targets)
             {
                 try
                 {
                     if (target.IsInputDevice)
                     {
-                        // Apply to input device
                         ApplyInputDeviceVolume(target.Name, level, ctrl.IsMuted);
                     }
                     else
                     {
-                        // Apply to output app
                         _audioService.ApplyVolumeToTarget(target.Name, level, ctrl.IsMuted);
                     }
                 }
@@ -880,28 +870,26 @@ namespace DeejNG
             var savedTargetGroups = savedSettings?.SliderTargets ?? new List<List<AudioTarget>>();
             var savedInputModes = savedSettings?.InputModes ?? new List<bool>();
 
-            _isInitializing = true; // ensure this is explicitly set at start
-            _isCalibrating = false; // Reset calibration state
-            _hasReceivedInitialData = false; // Reset data received flag
+            _isInitializing = true;
+            _allowVolumeApplication = false; // Disable ALL volume operations until first data
+
+            Debug.WriteLine("[Init] Generating sliders - ALL volume operations DISABLED until first data");
 
             for (int i = 0; i < count; i++)
             {
                 var control = new ChannelControl();
 
-                // Set targets for this control (either from saved settings or defaults)
+                // Set targets for this control
                 List<AudioTarget> targetsForThisControl;
 
                 if (i < savedTargetGroups.Count && savedTargetGroups[i].Count > 0)
                 {
-                    // Use saved targets
                     targetsForThisControl = savedTargetGroups[i];
                 }
                 else
                 {
-                    // Create default targets
                     targetsForThisControl = new List<AudioTarget>();
 
-                    // Add system target for first slider by default
                     if (i == 0)
                     {
                         targetsForThisControl.Add(new AudioTarget
@@ -914,29 +902,26 @@ namespace DeejNG
 
                 control.AudioTargets = targetsForThisControl;
 
-                // Set input mode from saved settings if available
                 if (i < savedInputModes.Count)
                 {
                     control.InputModeCheckBox.IsChecked = savedInputModes[i];
                 }
 
                 control.SetMuted(false);
-                // DON'T set initial volume - let hardware provide it
-                // control.SetVolume(0.5f); // REMOVED - this was causing the issue
+                // DON'T set initial volume - let hardware data set it
 
                 control.TargetChanged += (_, _) => SaveSettings();
+
+                // VolumeOrMuteChanged will check _allowVolumeApplication flag
                 control.VolumeOrMuteChanged += (targets, vol, mute) =>
                 {
-                    // Don't apply volume changes during initialization or calibration
-                    if (_isInitializing || _isCalibrating) return;
+                    if (!_allowVolumeApplication) return;
                     ApplyVolumeToTargets(control, targets, vol);
                 };
 
-                // Add handler for session disconnection
                 control.SessionDisconnected += (sender, target) =>
                 {
                     Debug.WriteLine($"[MainWindow] Received session disconnected for {target}");
-
                     if (_registeredHandlers.TryGetValue(target, out var handler))
                     {
                         _registeredHandlers.Remove(target);
@@ -950,15 +935,9 @@ namespace DeejNG
 
             SetMeterVisibilityForAll(ShowSlidersCheckBox.IsChecked ?? true);
 
-            Dispatcher.InvokeAsync(async () =>
-            {
-                SyncMuteStates();
-                _meterTimer.Start();
-                // Note: _isInitializing will be set to false after calibration is complete
-                Debug.WriteLine("[Init] Sliders generated, waiting for hardware data to calibrate");
-            });
+            // DON'T start meters or sync mute states until first data received
+            Debug.WriteLine("[Init] Sliders generated, waiting for first hardware data before completing initialization");
         }
-
         // Add a method to reset calibration state (call this when serial disconnects)
         private void ResetCalibrationState()
         {
@@ -971,13 +950,15 @@ namespace DeejNG
         // Method to handle serial disconnection
         private void HandleSerialDisconnection()
         {
-            if (_serialDisconnected) return; // Already handling disconnection
+            if (_serialDisconnected) return;
 
             Debug.WriteLine("[Serial] Disconnection detected");
             _serialDisconnected = true;
             _isConnected = false;
-            _hasReceivedInitialSerialData = false;
-            ResetCalibrationState();
+
+            // Reset volume application flag
+            _allowVolumeApplication = false;
+
             // Update UI on the dispatcher thread
             Dispatcher.BeginInvoke(() =>
             {
@@ -1028,8 +1009,7 @@ namespace DeejNG
                 {
                     try
                     {
-                        // CRITICAL FIX: Never regenerate sliders based on incoming data
-                        // Only regenerate if user explicitly requests it or if we have no sliders at all
+                        // Generate sliders if needed
                         if (_channelControls.Count == 0)
                         {
                             Debug.WriteLine("[WARNING] No sliders exist, generating default set");
@@ -1043,16 +1023,6 @@ namespace DeejNG
                         if (_channelControls.Count != parts.Length)
                         {
                             Debug.WriteLine($"[INFO] Incoming data has {parts.Length} parts but we have {_channelControls.Count} sliders. Processing available data only.");
-                        }
-
-                        // Start calibration phase when we first receive data
-                        if (!_hasReceivedInitialData)
-                        {
-                            _hasReceivedInitialData = true;
-                            _isCalibrating = true;
-                            _calibrationStartTime = DateTime.Now;
-                            _initialSliderValues.Clear();
-                            Debug.WriteLine("[Calibration] Starting calibration phase - will not apply volumes for 500ms");
                         }
 
                         // Process the data for existing sliders only
@@ -1071,48 +1041,38 @@ namespace DeejNG
 
                             if (targets.Count == 0) continue;
 
-                            // During calibration, just collect initial values and update sliders
-                            if (_isCalibrating)
-                            {
-                                // Store the initial value for this slider
-                                _initialSliderValues[i] = level;
-
-                                // Update slider position without triggering volume application
-                                ctrl.SmoothAndSetVolume(level, suppressEvent: true, disableSmoothing: true);
-
-                                // Check if calibration period is over
-                                if ((DateTime.Now - _calibrationStartTime).TotalMilliseconds >= CALIBRATION_DELAY_MS)
-                                {
-                                    _isCalibrating = false;
-                                    _isInitializing = false; // Also ensure we're not in initializing state
-                                    Debug.WriteLine("[Calibration] Calibration complete - now applying volumes normally");
-
-                                    // Apply the initial volumes now that calibration is complete
-                                    for (int j = 0; j < _channelControls.Count; j++)
-                                    {
-                                        if (_initialSliderValues.TryGetValue(j, out float initialLevel))
-                                        {
-                                            var calibCtrl = _channelControls[j];
-                                            ApplyVolumeToTargets(calibCtrl, calibCtrl.AudioTargets, initialLevel);
-                                            Debug.WriteLine($"[Calibration] Applied initial volume {initialLevel:F2} to slider {j}");
-                                        }
-                                    }
-                                }
-                                continue; // Skip normal processing during calibration
-                            }
-
-                            // Normal processing after calibration
                             float currentVolume = ctrl.CurrentVolume;
                             if (Math.Abs(currentVolume - level) < 0.01f) continue;
 
-                            ctrl.SmoothAndSetVolume(level, suppressEvent: false, disableSmoothing: _disableSmoothing);
+                            // Always suppress events until we're ready
+                            ctrl.SmoothAndSetVolume(level, suppressEvent: !_allowVolumeApplication, disableSmoothing: _disableSmoothing);
 
-                            // Apply volume to all targets for this control
-                            ApplyVolumeToTargets(ctrl, targets, level);
+                            // Apply volume to all targets for this control ONLY if allowed
+                            if (_allowVolumeApplication)
+                            {
+                                ApplyVolumeToTargets(ctrl, targets, level);
+                            }
+                        }
+
+                        // Enable volume application and do full setup after first successful data processing
+                        if (!_allowVolumeApplication)
+                        {
+                            _allowVolumeApplication = true;
+                            _isInitializing = false;
+
+                            Debug.WriteLine("[Init] First data received - enabling volume application and completing setup");
+
+                            // NOW it's safe to do the full initialization
+                            SyncMuteStates();
+
+                            if (!_meterTimer.IsEnabled)
+                            {
+                                _meterTimer.Start();
+                            }
                         }
 
                         // Mark serial port as fully initialized after receiving valid data
-                        if (!_serialPortFullyInitialized && !_isCalibrating)
+                        if (!_serialPortFullyInitialized)
                         {
                             _serialPortFullyInitialized = true;
                             Debug.WriteLine("[Serial] Port fully initialized and receiving data");
@@ -1187,14 +1147,13 @@ namespace DeejNG
                 _serialDisconnected = false;
                 _serialPortFullyInitialized = false;
 
-                // Reset calibration state when establishing new connection
-                ResetCalibrationState();
+                // Reset volume application flag on new connection
+                _allowVolumeApplication = false;
 
                 // Reset the watchdog variables
                 _lastValidDataTimestamp = DateTime.Now;
                 _noDataCounter = 0;
                 _expectingData = false;
-
 
                 // Make sure the watchdog is running
                 if (!_serialWatchdogTimer.IsEnabled)
@@ -1210,13 +1169,13 @@ namespace DeejNG
                     ComPortSelector.SelectedItem = portName;
                 });
 
-                // Start the reconnect timer (it will only attempt reconnection if _serialDisconnected is true)
+                // Start the reconnect timer
                 if (!_serialReconnectTimer.IsEnabled)
                 {
                     _serialReconnectTimer.Start();
                 }
 
-                Debug.WriteLine($"[Serial] Successfully connected to {portName}");
+                Debug.WriteLine($"[Serial] Successfully connected to {portName} - waiting for data before applying ANY volumes");
 
                 // Save settings only if we've loaded initial settings
                 if (_hasLoadedInitialSettings)
@@ -1254,6 +1213,7 @@ namespace DeejNG
                 }
             }
         }
+
         private void InvertSlider_Checked(object sender, RoutedEventArgs e)
         {
             SaveInvertState();
@@ -1893,6 +1853,11 @@ namespace DeejNG
         }
         private void SyncMuteStates()
         {
+            if (!_allowVolumeApplication)
+            {
+                Debug.WriteLine("[Sync] Skipping SyncMuteStates - volume application disabled");
+                return;
+            }
             try
             {
                 var audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
