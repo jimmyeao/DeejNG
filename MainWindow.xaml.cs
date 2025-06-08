@@ -1226,6 +1226,10 @@ namespace DeejNG
                         {
                             if (!float.TryParse(parts[i].Trim(), out float level)) continue;
 
+                            // Handle hardware noise - snap small values to exact zero
+                            if (level <= 10) level = 0; // Hardware values 0-10 become exact 0
+                            if (level >= 1013) level = 1023; // Hardware values 1013-1023 become exact max
+
                             level = Math.Clamp(level / 1023f, 0f, 1f);
                             if (InvertSliderCheckBox.IsChecked ?? false)
                                 level = 1f - level;
@@ -2273,6 +2277,8 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] Failed to disconnect: {ex.Message}");
             }
         }
+        // Update your existing GetUnmappedApplicationsPeakLevel method in MainWindow.xaml.cs:
+
         private float GetUnmappedApplicationsPeakLevel(HashSet<string> mappedApplications)
         {
             // Throttle meter updates for unmapped to reduce load
@@ -2301,8 +2307,8 @@ namespace DeejNG
 
                         int pid = (int)session.GetProcessID;
 
-                        // Skip system sessions
-                        if (pid == 0 || pid == 4) continue;
+                        // Skip system sessions and low PIDs
+                        if (pid <= 4) continue;
 
                         string processName = "";
 
@@ -2361,7 +2367,6 @@ namespace DeejNG
 
             return highestPeak;
         }
-
         private void UpdateMeters(object? sender, EventArgs e)
         {
             if (!_metersEnabled || _isClosing) return;

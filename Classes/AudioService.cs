@@ -34,6 +34,8 @@ namespace DeejNG.Services
         {
             RefreshSessionCache();
         }
+        // In your AudioService.cs, update the GetProcessNameSafely method:
+
         private string GetProcessNameSafely(int processId)
         {
             // Clean cache every 60 seconds (less frequent)
@@ -50,7 +52,7 @@ namespace DeejNG.Services
             }
 
             // Skip system processes that we know will fail
-            if (processId == 0 || processId == 4) // System processes
+            if (processId <= 4) // System, idle, and other low-level processes
             {
                 _processNameCache[processId] = "";
                 return "";
@@ -68,28 +70,11 @@ namespace DeejNG.Services
                         {
                             // Try process name first (more reliable than MainModule)
                             processName = process.ProcessName?.ToLowerInvariant() ?? "";
-
-                            // Only try MainModule if ProcessName succeeded and we need the exact filename
-                            if (!string.IsNullOrEmpty(processName) && process.MainModule != null)
-                            {
-                                var fileName = Path.GetFileNameWithoutExtension(process.MainModule.FileName);
-                                if (!string.IsNullOrEmpty(fileName))
-                                {
-                                    processName = fileName.ToLowerInvariant();
-                                }
-                            }
                         }
                         catch (System.ComponentModel.Win32Exception)
                         {
-                            // Access denied - try just the process name
-                            try
-                            {
-                                processName = process.ProcessName?.ToLowerInvariant() ?? "";
-                            }
-                            catch
-                            {
-                                processName = "";
-                            }
+                            // Access denied - just skip this process
+                            processName = "";
                         }
                         catch
                         {
@@ -108,7 +93,6 @@ namespace DeejNG.Services
 
             return processName;
         }
-
         private void CleanProcessCache()
         {
             try
@@ -423,8 +407,8 @@ namespace DeejNG.Services
                             continue;
                         }
 
-                        // Skip system sessions (PID 0) - these can't be controlled
-                        if (processId == 0)
+                        // Skip system sessions immediately - these can't be controlled and cause Win32Exception
+                        if (processId <= 4) // System, idle, and other system processes
                         {
                             skippedCount++;
                             continue;
@@ -479,7 +463,6 @@ namespace DeejNG.Services
                 Debug.WriteLine($"[Unmapped] Failed to apply volume: {ex.GetType().Name}");
             }
         }
-
         public void ApplyMuteStateToUnmappedApplications(bool isMuted, HashSet<string> mappedApplications)
         {
             try
