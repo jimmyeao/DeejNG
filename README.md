@@ -8,4 +8,4 @@ A simple Windows Companion app to Deej
 Allows to assign multiple apps to one slider, and control of audio input sources.
 
 Select the commport, double click a channel to be able to add an app. Will autoconfigure the number of sliders based on the data receieved.
-
+Added support for "Unmapped" audio sessions - this will control the volume of anything not explicityl mapped
