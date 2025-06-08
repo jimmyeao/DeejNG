@@ -36,6 +36,8 @@ namespace DeejNG.Services
         }
         // In your AudioService.cs, update the GetProcessNameSafely method:
 
+        // Replace ONLY your GetProcessNameSafely method in AudioService.cs with this:
+
         private string GetProcessNameSafely(int processId)
         {
             // Clean cache every 60 seconds (less frequent)
@@ -51,8 +53,8 @@ namespace DeejNG.Services
                 return cachedName;
             }
 
-            // Skip system processes that we know will fail
-            if (processId <= 4) // System, idle, and other low-level processes
+            // Skip system processes that cause Win32Exception
+            if (processId <= 4)
             {
                 _processNameCache[processId] = "";
                 return "";
@@ -62,35 +64,23 @@ namespace DeejNG.Services
 
             try
             {
+                // Only use ProcessName property - never access MainModule
                 using (var process = Process.GetProcessById(processId))
                 {
                     if (process != null && !process.HasExited)
                     {
-                        try
-                        {
-                            // Try process name first (more reliable than MainModule)
-                            processName = process.ProcessName?.ToLowerInvariant() ?? "";
-                        }
-                        catch (System.ComponentModel.Win32Exception)
-                        {
-                            // Access denied - just skip this process
-                            processName = "";
-                        }
-                        catch
-                        {
-                            processName = "";
-                        }
+                        processName = process.ProcessName?.ToLowerInvariant() ?? "";
                     }
                 }
             }
             catch
             {
+                // Any exception - just return empty
                 processName = "";
             }
 
             // Cache the result
             _processNameCache[processId] = processName;
-
             return processName;
         }
         private void CleanProcessCache()
@@ -455,7 +445,9 @@ namespace DeejNG.Services
                 // Only log significant changes or errors
                 if (processedCount > 0 || (DateTime.Now - _lastUnmappedVolumeCall).TotalSeconds > 5)
                 {
-                    Debug.WriteLine($"[Unmapped] Volume {level:F2} applied to {processedCount} apps (skipped {skippedCount})");
+                    Debug.WriteLine(
+                        $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [Unmapped] Volume {level:F2} applied to {processedCount} apps (skipped {skippedCount})"
+                    );
                 }
             }
             catch (Exception ex)
@@ -463,6 +455,8 @@ namespace DeejNG.Services
                 Debug.WriteLine($"[Unmapped] Failed to apply volume: {ex.GetType().Name}");
             }
         }
+        // Replace your ApplyMuteStateToUnmappedApplications method in AudioService.cs with this safer version:
+
         public void ApplyMuteStateToUnmappedApplications(bool isMuted, HashSet<string> mappedApplications)
         {
             try
@@ -495,8 +489,8 @@ namespace DeejNG.Services
                             continue;
                         }
 
-                        // Skip system sessions (PID 0)
-                        if (processId == 0)
+                        // Skip system sessions that cause Win32Exception
+                        if (processId <= 4)
                         {
                             skippedCount++;
                             continue;

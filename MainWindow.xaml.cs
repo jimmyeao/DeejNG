@@ -1972,31 +1972,32 @@ namespace DeejNG
 
                             if (!_processNameCache.TryGetValue(processId, out processName))
                             {
-                                try
+                                if (processId <= 4)
                                 {
-                                    // FIXED: Proper exception handling here too
-                                    var process = Process.GetProcessById(processId);
-                                    if (process != null && !process.HasExited)
+                                    processName = "";
+                                }
+                                else
+                                {
+                                    try
                                     {
-                                        processName = Path.GetFileNameWithoutExtension(process.MainModule?.FileName ?? "")
-                                                    ?.ToLowerInvariant() ?? "";
-                                        process.Dispose();
+                                        using (var process = Process.GetProcessById(processId))
+                                        {
+                                            if (process != null && !process.HasExited)
+                                            {
+                                                // Only use ProcessName - avoid MainModule
+                                                processName = process.ProcessName?.ToLowerInvariant() ?? "";
+                                            }
+                                            else
+                                            {
+                                                processName = "";
+                                            }
+                                        }
                                     }
-                                }
-                                catch (ArgumentException)
-                                {
-                                    // Process doesn't exist
-                                    processName = "";
-                                }
-                                catch (InvalidOperationException)
-                                {
-                                    // Process has exited
-                                    processName = "";
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.WriteLine($"[ERROR] Getting process name for PID {processId}: {ex.Message}");
-                                    processName = "";
+                                    catch
+                                    {
+                                        // Any exception - just use empty string
+                                        processName = "";
+                                    }
                                 }
 
                                 _processNameCache[processId] = processName;
@@ -2494,30 +2495,32 @@ namespace DeejNG
 
                                             if (!_processNameCache.TryGetValue(pid, out string procName))
                                             {
-                                                try
+                                                // Skip system processes that cause Win32Exception
+                                                if (pid <= 4)
                                                 {
-                                                    var process = Process.GetProcessById(pid);
-                                                    if (process != null && !process.HasExited)
+                                                    procName = "";
+                                                }
+                                                else
+                                                {
+                                                    try
                                                     {
-                                                        procName = process.ProcessName.ToLowerInvariant();
-                                                        process.Dispose();
+                                                        using (var process = Process.GetProcessById(pid))
+                                                        {
+                                                            if (process != null && !process.HasExited)
+                                                            {
+                                                                procName = process.ProcessName?.ToLowerInvariant() ?? "";
+                                                            }
+                                                            else
+                                                            {
+                                                                procName = "";
+                                                            }
+                                                        }
                                                     }
-                                                    else
+                                                    catch
                                                     {
+                                                        // Any exception - just cache empty and continue
                                                         procName = "";
                                                     }
-                                                }
-                                                catch (ArgumentException)
-                                                {
-                                                    procName = "";
-                                                }
-                                                catch (InvalidOperationException)
-                                                {
-                                                    procName = "";
-                                                }
-                                                catch
-                                                {
-                                                    procName = "";
                                                 }
 
                                                 _processNameCache[pid] = procName;
