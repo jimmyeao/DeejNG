@@ -51,7 +51,8 @@ namespace DeejNG
         private const int METER_SESSION_CACHE_MS = 1000;
         private bool _hasLoadedInitialSettings = false;
         private bool _serialPortFullyInitialized = false;
-
+        private DateTime _lastUnmappedMeterUpdate = DateTime.MinValue;
+        private readonly object _unmappedLock = new object();
         private DispatcherTimer _forceCleanupTimer;
         private int _sessionCacheHitCount = 0;
         private DateTime _lastForcedCleanup = DateTime.MinValue;
@@ -826,6 +827,17 @@ namespace DeejNG
                     {
                         ApplyInputDeviceVolume(target.Name, level, ctrl.IsMuted);
                     }
+                    else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Handle unmapped applications with throttling
+                        lock (_unmappedLock)
+                        {
+                            var mappedApps = GetAllMappedApplications();
+                            mappedApps.Remove("unmapped"); // Don't exclude unmapped from itself
+
+                            _audioService.ApplyVolumeToUnmappedApplications(level, ctrl.IsMuted, mappedApps);
+                        }
+                    }
                     else
                     {
                         _audioService.ApplyVolumeToTarget(target.Name, level, ctrl.IsMuted);
@@ -837,7 +849,6 @@ namespace DeejNG
                 }
             }
         }
-
         private void AudioEndpointVolume_OnVolumeNotification(AudioVolumeNotificationData data)
         {
             Dispatcher.Invoke(() =>
@@ -2057,10 +2068,14 @@ namespace DeejNG
                 Debug.WriteLine("[Sync] Skipping SyncMuteStates - volume application disabled");
                 return;
             }
+
             try
             {
                 var audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var sessions = audioDevice.AudioSessionManager.Sessions;
+
+                // Get all mapped applications for unmapped functionality
+                var allMappedApps = GetAllMappedApplications();
 
                 // First, unregister old handlers that aren't needed anymore
                 var currentTargets = GetCurrentTargets();
@@ -2074,7 +2089,6 @@ namespace DeejNG
                     {
                         try
                         {
-                            // The handler knows which session it belongs to
                             _registeredHandlers.Remove(target);
                             Debug.WriteLine($"[Cleanup] Unregistered event handler for {target}");
                         }
@@ -2128,85 +2142,60 @@ namespace DeejNG
 
                 foreach (var ctrl in _channelControls)
                 {
-                    string target = ctrl.TargetExecutable?.Trim().ToLower();
-                    bool isMuted = false;
-
-                    if (string.IsNullOrEmpty(target))
+                    var targets = ctrl.AudioTargets;
+                    foreach (var target in targets)
                     {
-                        ctrl.SetMuted(false);
-                        continue;
-                    }
+                        if (target.IsInputDevice) continue; // Skip input devices for mute sync
 
-                    if (target == "system")
-                    {
-                        isMuted = audioDevice.AudioEndpointVolume.Mute;
-                        ctrl.SetMuted(isMuted);
-                        _audioService.ApplyMuteStateToTarget(target, isMuted);
-                        continue;
-                    }
+                        string targetName = target.Name?.Trim().ToLower();
+                        bool isMuted = false;
 
-                    // Check if we have a matching session in our dictionary
-                    if (sessionsByProcess.TryGetValue(target, out var matchedSession))
-                    {
-                        isMuted = matchedSession.SimpleAudioVolume.Mute;
-
-                        // Only register if not already registered for this target
-                        if (!_registeredHandlers.ContainsKey(target))
+                        if (string.IsNullOrEmpty(targetName))
                         {
-                            try
-                            {
-                                var handler = new AudioSessionEventsHandler(ctrl);
-                                matchedSession.RegisterEventClient(handler);
-                                _registeredHandlers[target] = handler;
-                                Debug.WriteLine($"[Event] Registered handler for {target}");
-                            }
-                            catch (Exception ex)
-                            {
-                                Debug.WriteLine($"[ERROR] Failed to register handler for {target}: {ex.Message}");
-                            }
+                            continue;
                         }
 
-                        ctrl.SetMuted(isMuted);
-                        _audioService.ApplyVolumeToTarget(target, ctrl.CurrentVolume, isMuted);
-                    }
-                    else
-                    {
-                        // If not found in the dictionary, try the old approach
-                        var matchedSessionOld = Enumerable.Range(0, sessions.Count)
-                            .Select(i => sessions[i])
-                            .FirstOrDefault(s =>
-                            {
-                                try
-                                {
-                                    var sessionId = s.GetSessionIdentifier?.ToLower() ?? "";
-                                    var instanceId = s.GetSessionInstanceIdentifier?.ToLower() ?? "";
-                                    return sessionId.Contains(target) || instanceId.Contains(target);
-                                }
-                                catch { return false; }
-                            });
-
-                        if (matchedSessionOld != null)
+                        if (targetName == "system")
                         {
-                            isMuted = matchedSessionOld.SimpleAudioVolume.Mute;
-
-                            // Only register if not already registered for this target
-                            if (!_registeredHandlers.ContainsKey(target))
-                            {
-                                try
-                                {
-                                    var handler = new AudioSessionEventsHandler(ctrl);
-                                    matchedSessionOld.RegisterEventClient(handler);
-                                    _registeredHandlers[target] = handler;
-                                    Debug.WriteLine($"[Event] Registered handler for {target}");
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.WriteLine($"[ERROR] Failed to register handler for {target}: {ex.Message}");
-                                }
-                            }
-
+                            isMuted = audioDevice.AudioEndpointVolume.Mute;
                             ctrl.SetMuted(isMuted);
-                            _audioService.ApplyVolumeToTarget(target, ctrl.CurrentVolume, isMuted);
+                            _audioService.ApplyMuteStateToTarget(targetName, isMuted);
+                        }
+                        else if (targetName == "unmapped")
+                        {
+                            // For unmapped, we can't really get a single mute state since it controls multiple apps
+                            // Just ensure the unmapped applications follow this control's mute state
+                            var mappedAppsForUnmapped = new HashSet<string>(allMappedApps);
+                            mappedAppsForUnmapped.Remove("unmapped"); // Don't exclude unmapped from itself
+
+                            _audioService.ApplyMuteStateToUnmappedApplications(ctrl.IsMuted, mappedAppsForUnmapped);
+                        }
+                        else
+                        {
+                            // Check if we have a matching session in our dictionary
+                            if (sessionsByProcess.TryGetValue(targetName, out var matchedSession))
+                            {
+                                isMuted = matchedSession.SimpleAudioVolume.Mute;
+
+                                // Only register if not already registered for this target
+                                if (!_registeredHandlers.ContainsKey(targetName))
+                                {
+                                    try
+                                    {
+                                        var handler = new AudioSessionEventsHandler(ctrl);
+                                        matchedSession.RegisterEventClient(handler);
+                                        _registeredHandlers[targetName] = handler;
+                                        Debug.WriteLine($"[Event] Registered handler for {targetName}");
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Debug.WriteLine($"[ERROR] Failed to register handler for {targetName}: {ex.Message}");
+                                    }
+                                }
+
+                                ctrl.SetMuted(isMuted);
+                                _audioService.ApplyVolumeToTarget(targetName, ctrl.CurrentVolume, isMuted);
+                            }
                         }
                     }
                 }
@@ -2283,11 +2272,96 @@ namespace DeejNG
             {
                 Debug.WriteLine($"[ERROR] Failed to disconnect: {ex.Message}");
             }
-        }        // Update the UpdateMeters method in MainWindow.xaml.cs
+        }
+        private float GetUnmappedApplicationsPeakLevel(HashSet<string> mappedApplications)
+        {
+            // Throttle meter updates for unmapped to reduce load
+            var now = DateTime.Now;
+            if ((now - _lastUnmappedMeterUpdate).TotalMilliseconds < 200) // 200ms throttle for meters
+            {
+                return 0; // Return 0 to reduce processing load
+            }
+            _lastUnmappedMeterUpdate = now;
 
-        // Replace these methods in your MainWindow.xaml.cs to fix the ArgumentExceptions
+            float highestPeak = 0;
 
-        // 1. Fix the UpdateMeters method - main source of exceptions
+            try
+            {
+                var sessions = _cachedSessionsForMeters;
+                if (sessions == null) return 0;
+
+                int processedSessions = 0;
+
+                for (int i = 0; i < sessions.Count && processedSessions < 10; i++) // Limit processing to 10 sessions max
+                {
+                    var session = sessions[i];
+                    try
+                    {
+                        if (session == null) continue;
+
+                        int pid = (int)session.GetProcessID;
+
+                        // Skip system sessions
+                        if (pid == 0 || pid == 4) continue;
+
+                        string processName = "";
+
+                        if (!_processNameCache.TryGetValue(pid, out processName))
+                        {
+                            try
+                            {
+                                var process = Process.GetProcessById(pid);
+                                if (process != null && !process.HasExited)
+                                {
+                                    processName = process.ProcessName.ToLowerInvariant();
+                                    process.Dispose();
+                                }
+                                else
+                                {
+                                    processName = "";
+                                }
+                            }
+                            catch
+                            {
+                                processName = "";
+                            }
+
+                            _processNameCache[pid] = processName;
+                        }
+
+                        // Skip if we couldn't get a valid process name
+                        if (string.IsNullOrEmpty(processName)) continue;
+
+                        // Skip if this application is mapped to a slider
+                        if (mappedApplications.Contains(processName)) continue;
+
+                        // Get the peak level for this unmapped session
+                        try
+                        {
+                            float peak = session.AudioMeterInformation.MasterPeakValue;
+                            if (peak > highestPeak)
+                                highestPeak = peak;
+                            processedSessions++;
+                        }
+                        catch
+                        {
+                            // Session became invalid - ignore
+                        }
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Getting unmapped peak levels: {ex.Message}");
+            }
+
+            return highestPeak;
+        }
+
         private void UpdateMeters(object? sender, EventArgs e)
         {
             if (!_metersEnabled || _isClosing) return;
@@ -2383,6 +2457,21 @@ namespace DeejNG
                                     if (!_audioDevice.AudioEndpointVolume.Mute)
                                         allMuted = false;
                                 }
+                                else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // Get peak levels for all unmapped applications
+                                    var mappedApps = GetAllMappedApplications();
+                                    mappedApps.Remove("unmapped"); // Don't exclude unmapped from itself
+
+                                    float unmappedPeak = GetUnmappedApplicationsPeakLevel(mappedApps);
+
+                                    if (unmappedPeak > highestPeak)
+                                        highestPeak = unmappedPeak;
+
+                                    // For mute state, if the slider itself isn't muted, consider unmapped as not muted
+                                    if (!ctrl.IsMuted)
+                                        allMuted = false;
+                                }
                                 else
                                 {
                                     // Find matching session with proper exception handling
@@ -2402,31 +2491,27 @@ namespace DeejNG
                                             {
                                                 try
                                                 {
-                                                    // FIXED: Proper exception handling for Process.GetProcessById
                                                     var process = Process.GetProcessById(pid);
                                                     if (process != null && !process.HasExited)
                                                     {
                                                         procName = process.ProcessName.ToLowerInvariant();
-                                                        process.Dispose(); // Important: dispose immediately
+                                                        process.Dispose();
                                                     }
                                                     else
                                                     {
-                                                        procName = ""; // Mark as invalid
+                                                        procName = "";
                                                     }
                                                 }
                                                 catch (ArgumentException)
                                                 {
-                                                    // Process doesn't exist - cache empty result
                                                     procName = "";
                                                 }
                                                 catch (InvalidOperationException)
                                                 {
-                                                    // Process has exited - cache empty result  
                                                     procName = "";
                                                 }
                                                 catch
                                                 {
-                                                    // Any other exception - cache empty result
                                                     procName = "";
                                                 }
 
@@ -2496,6 +2581,23 @@ namespace DeejNG
             {
                 Debug.WriteLine($"[ERROR] Meter update: {ex.Message}");
             }
+        }
+        private HashSet<string> GetAllMappedApplications()
+        {
+            var mappedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var ctrl in _channelControls)
+            {
+                foreach (var target in ctrl.AudioTargets)
+                {
+                    if (!target.IsInputDevice && !string.IsNullOrWhiteSpace(target.Name))
+                    {
+                        mappedApps.Add(target.Name.ToLowerInvariant());
+                    }
+                }
+            }
+
+            return mappedApps;
         }
         #endregion Private Methods
 

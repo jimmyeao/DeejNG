@@ -15,6 +15,12 @@ namespace DeejNG.Services
         private readonly Dictionary<string, SessionInfo> _sessionCache = new Dictionary<string, SessionInfo>(StringComparer.OrdinalIgnoreCase);
         private DateTime _lastRefresh = DateTime.MinValue;
         private const int CACHE_REFRESH_SECONDS = 5; // Refresh cache every 5 seconds
+        private readonly Dictionary<int, string> _processNameCache = new();
+        private DateTime _lastProcessCacheCleanup = DateTime.MinValue;
+        private DateTime _lastUnmappedVolumeCall = DateTime.MinValue;
+        private float _lastUnmappedVolume = -1f;
+        private bool _lastUnmappedMuted = false;
+        private HashSet<string> _lastMappedApps = new();
 
         private class SessionInfo
         {
@@ -28,7 +34,100 @@ namespace DeejNG.Services
         {
             RefreshSessionCache();
         }
+        private string GetProcessNameSafely(int processId)
+        {
+            // Clean cache every 60 seconds (less frequent)
+            if ((DateTime.Now - _lastProcessCacheCleanup).TotalSeconds > 60)
+            {
+                CleanProcessCache();
+                _lastProcessCacheCleanup = DateTime.Now;
+            }
 
+            // Check cache first
+            if (_processNameCache.TryGetValue(processId, out string cachedName))
+            {
+                return cachedName;
+            }
+
+            // Skip system processes that we know will fail
+            if (processId == 0 || processId == 4) // System processes
+            {
+                _processNameCache[processId] = "";
+                return "";
+            }
+
+            string processName = "";
+
+            try
+            {
+                using (var process = Process.GetProcessById(processId))
+                {
+                    if (process != null && !process.HasExited)
+                    {
+                        try
+                        {
+                            // Try process name first (more reliable than MainModule)
+                            processName = process.ProcessName?.ToLowerInvariant() ?? "";
+
+                            // Only try MainModule if ProcessName succeeded and we need the exact filename
+                            if (!string.IsNullOrEmpty(processName) && process.MainModule != null)
+                            {
+                                var fileName = Path.GetFileNameWithoutExtension(process.MainModule.FileName);
+                                if (!string.IsNullOrEmpty(fileName))
+                                {
+                                    processName = fileName.ToLowerInvariant();
+                                }
+                            }
+                        }
+                        catch (System.ComponentModel.Win32Exception)
+                        {
+                            // Access denied - try just the process name
+                            try
+                            {
+                                processName = process.ProcessName?.ToLowerInvariant() ?? "";
+                            }
+                            catch
+                            {
+                                processName = "";
+                            }
+                        }
+                        catch
+                        {
+                            processName = "";
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                processName = "";
+            }
+
+            // Cache the result
+            _processNameCache[processId] = processName;
+
+            return processName;
+        }
+
+        private void CleanProcessCache()
+        {
+            try
+            {
+                // More aggressive cleanup - keep cache smaller
+                if (_processNameCache.Count > 50)
+                {
+                    var keysToRemove = _processNameCache.Keys.Take(_processNameCache.Count - 30).ToList();
+                    foreach (var key in keysToRemove)
+                    {
+                        _processNameCache.Remove(key);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ProcessCache] Error during cleanup: {ex.Message}");
+            }
+        }
         public void ApplyMuteStateToTarget(string target, bool isMuted)
         {
             if (string.IsNullOrWhiteSpace(target)) return;
@@ -271,7 +370,193 @@ namespace DeejNG.Services
                 Debug.WriteLine($"[AudioService] Failed to apply volume: {ex.Message}");
             }
         }
+        // Add this method to your AudioService class
+        public void ApplyVolumeToUnmappedApplications(float level, bool isMuted, HashSet<string> mappedApplications)
+        {
+            level = Math.Clamp(level, 0.0f, 1.0f);
 
+            // THROTTLING: Only process if enough time has passed or values changed significantly
+            var now = DateTime.Now;
+            var timeSinceLastCall = (now - _lastUnmappedVolumeCall).TotalMilliseconds;
+            var volumeChanged = Math.Abs(_lastUnmappedVolume - level) > 0.05f; // 5% change threshold
+            var muteChanged = _lastUnmappedMuted != isMuted;
+            var appsChanged = !_lastMappedApps.SetEquals(mappedApplications);
+
+            if (timeSinceLastCall < 100 && !volumeChanged && !muteChanged && !appsChanged) // 100ms throttle
+            {
+                return; // Skip this call to reduce processing
+            }
+
+            _lastUnmappedVolumeCall = now;
+            _lastUnmappedVolume = level;
+            _lastUnmappedMuted = isMuted;
+            _lastMappedApps = new HashSet<string>(mappedApplications);
+
+            try
+            {
+                var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                var sessions = device.AudioSessionManager.Sessions;
+
+                int processedCount = 0;
+                int skippedCount = 0;
+
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        if (session == null)
+                        {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        // Get process ID first
+                        int processId;
+                        try
+                        {
+                            processId = (int)session.GetProcessID;
+                        }
+                        catch
+                        {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        // Skip system sessions (PID 0) - these can't be controlled
+                        if (processId == 0)
+                        {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        // Get process name with caching
+                        string processName = GetProcessNameSafely(processId);
+
+                        if (string.IsNullOrEmpty(processName))
+                        {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        // Skip if this application is already mapped to a slider
+                        if (mappedApplications.Contains(processName))
+                        {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        // Apply volume to this unmapped session
+                        try
+                        {
+                            session.SimpleAudioVolume.Mute = isMuted;
+                            if (!isMuted)
+                            {
+                                session.SimpleAudioVolume.Volume = level;
+                            }
+                            processedCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[Unmapped] Failed to apply volume to {processName}: {ex.GetType().Name}");
+                            skippedCount++;
+                        }
+                    }
+                    catch
+                    {
+                        skippedCount++;
+                    }
+                }
+
+                // Only log significant changes or errors
+                if (processedCount > 0 || (DateTime.Now - _lastUnmappedVolumeCall).TotalSeconds > 5)
+                {
+                    Debug.WriteLine($"[Unmapped] Volume {level:F2} applied to {processedCount} apps (skipped {skippedCount})");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Unmapped] Failed to apply volume: {ex.GetType().Name}");
+            }
+        }
+
+        public void ApplyMuteStateToUnmappedApplications(bool isMuted, HashSet<string> mappedApplications)
+        {
+            try
+            {
+                var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                var sessions = device.AudioSessionManager.Sessions;
+
+                int processedCount = 0;
+                int skippedCount = 0;
+
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        if (session == null)
+                        {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        int processId;
+                        try
+                        {
+                            processId = (int)session.GetProcessID;
+                        }
+                        catch
+                        {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        // Skip system sessions (PID 0)
+                        if (processId == 0)
+                        {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        string processName = GetProcessNameSafely(processId);
+
+                        if (string.IsNullOrEmpty(processName))
+                        {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        // Skip if this application is already mapped
+                        if (mappedApplications.Contains(processName))
+                        {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        try
+                        {
+                            session.SimpleAudioVolume.Mute = isMuted;
+                            processedCount++;
+                        }
+                        catch
+                        {
+                            skippedCount++;
+                        }
+                    }
+                    catch
+                    {
+                        skippedCount++;
+                    }
+                }
+
+                Debug.WriteLine($"[Unmapped] Mute {isMuted} applied to {processedCount} apps");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Unmapped] Failed to mute unmapped applications: {ex.GetType().Name}");
+            }
+        }
         private void RefreshSessionCache()
         {
             try

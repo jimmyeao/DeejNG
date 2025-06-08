@@ -115,7 +115,7 @@ namespace DeejNG.Dialogs
 
         private void LoadSessions(HashSet<string> selectedNames)
         {
-            // Always add System
+            // Always add System first
             var systemSession = new SelectableSession
             {
                 Id = "system",
@@ -123,8 +123,17 @@ namespace DeejNG.Dialogs
                 IsSelected = selectedNames.Contains("system"),
                 IsInputDevice = false
             };
-
             AvailableSessions.Add(systemSession);
+
+            // Add Unmapped Applications option
+            var unmappedSession = new SelectableSession
+            {
+                Id = "unmapped",
+                FriendlyName = "Unmapped Applications",
+                IsSelected = selectedNames.Contains("unmapped"),
+                IsInputDevice = false
+            };
+            AvailableSessions.Add(unmappedSession);
 
             try
             {
@@ -134,6 +143,7 @@ namespace DeejNG.Dialogs
 
                 var seenProcesses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 seenProcesses.Add("system"); // Already added system
+                seenProcesses.Add("unmapped"); // Already added unmapped
 
                 // Get a fresh list of all running processes with audio sessions
                 for (int i = 0; i < sessions.Count; i++)
@@ -188,10 +198,15 @@ namespace DeejNG.Dialogs
                     }
                 }
 
-                // Sort the list alphabetically
-                var sortedList = AvailableSessions.OrderBy(s => s.Id == "system" ? 0 : 1)  // System first
-                                                  .ThenBy(s => s.FriendlyName)            // Then alphabetical
-                                                  .ToList();
+                // Sort the list: System first, then Unmapped, then alphabetical
+                var sortedList = AvailableSessions.OrderBy(s =>
+                {
+                    if (s.Id == "system") return 0;
+                    if (s.Id == "unmapped") return 1;
+                    return 2;
+                })
+                    .ThenBy(s => s.FriendlyName)
+                    .ToList();
 
                 AvailableSessions.Clear();
                 foreach (var session in sortedList)
