@@ -997,6 +997,8 @@ namespace DeejNG
             }
         }
 
+        // Replace your EnableStartup method in MainWindow.xaml.cs with this:
+
         private void EnableStartup()
         {
             string appName = "DeejNG";
@@ -1006,8 +1008,8 @@ namespace DeejNG
                 string shortcutPath = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                     "Microsoft", "Windows", "Start Menu", "Programs",
-                   
-                    "DeejNG",      // ← Product name
+                    "Jimmy White",  // ← Publisher name
+                    "DeejNG",       // ← Product name
                     "DeejNG.appref-ms");
 
                 if (File.Exists(shortcutPath))
