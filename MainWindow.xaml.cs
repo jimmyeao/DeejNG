@@ -1178,8 +1178,31 @@ namespace DeejNG
                             return;
                         }
 
-                        // If incoming data has different number of parts than we expect,
-                        // log it but don't regenerate sliders
+                        // NEW: If incoming data has MORE parts than we have sliders, regenerate
+                        if (parts.Length > _channelControls.Count)
+                        {
+                            Debug.WriteLine($"[INFO] Hardware sending {parts.Length} sliders but we only have {_channelControls.Count}. Regenerating sliders to match hardware.");
+
+                            // Save current targets before regenerating
+                            var currentTargets = _channelControls.Select(c => c.AudioTargets).ToList();
+                            var currentInputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList();
+
+                            _expectedSliderCount = parts.Length;
+                            GenerateSliders(parts.Length);
+
+                            // Restore saved targets for existing sliders
+                            for (int i = 0; i < Math.Min(currentTargets.Count, _channelControls.Count); i++)
+                            {
+                                _channelControls[i].AudioTargets = currentTargets[i];
+                                _channelControls[i].InputModeCheckBox.IsChecked = currentInputModes[i];
+                            }
+
+                            // Save the new configuration
+                            SaveSettings();
+                            return;
+                        }
+
+                        // If incoming data has fewer parts, just log it (don't reduce sliders)
                         if (_channelControls.Count != parts.Length)
                         {
                             Debug.WriteLine($"[INFO] Incoming data has {parts.Length} parts but we have {_channelControls.Count} sliders. Processing available data only.");
