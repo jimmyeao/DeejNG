@@ -21,6 +21,11 @@ namespace DeejNG.Services
         private float _lastUnmappedVolume = -1f;
         private bool _lastUnmappedMuted = false;
         private HashSet<string> _lastMappedApps = new();
+        private readonly HashSet<int> _systemProcessIds = new HashSet<int> { 0, 4, 8 }; // Known system process IDs
+        private const int MAX_SESSION_CACHE_SIZE = 15; // Reduced from unlimited
+        private const int MAX_PROCESS_CACHE_SIZE = 30; // Reduced from 50
+        private DateTime _lastCacheCleanup = DateTime.MinValue;
+ 
 
         private class SessionInfo
         {
@@ -54,7 +59,7 @@ namespace DeejNG.Services
             }
 
             // Skip system processes that cause Win32Exception
-            if (processId <= 4)
+            if (_systemProcessIds.Contains(processId) || processId < 100)
             {
                 _processNameCache[processId] = "";
                 return "";
@@ -87,15 +92,24 @@ namespace DeejNG.Services
         {
             try
             {
-                // More aggressive cleanup - keep cache smaller
-                if (_processNameCache.Count > 50)
+                // More frequent cleanup
+                if ((DateTime.Now - _lastCacheCleanup).TotalSeconds < 30) // Every 30 seconds instead of 60
                 {
-                    var keysToRemove = _processNameCache.Keys.Take(_processNameCache.Count - 30).ToList();
+                    return;
+                }
+
+                // More aggressive size limits
+                if (_processNameCache.Count > MAX_PROCESS_CACHE_SIZE)
+                {
+                    var keysToRemove = _processNameCache.Keys.Take(_processNameCache.Count - (MAX_PROCESS_CACHE_SIZE / 2)).ToList();
                     foreach (var key in keysToRemove)
                     {
                         _processNameCache.Remove(key);
                     }
                 }
+
+                _lastCacheCleanup = DateTime.Now;
+                Debug.WriteLine($"[ProcessCache] Cache size: {_processNameCache.Count}");
             }
             catch (Exception ex)
             {
@@ -163,13 +177,9 @@ namespace DeejNG.Services
 
                         // Try to get the process name
                         string processName = "";
-                        try
-                        {
-                            var process = Process.GetProcessById(processId);
-                            processName = Path.GetFileNameWithoutExtension(process.MainModule.FileName)
-                                         .ToLowerInvariant();
-                        }
-                        catch
+                        processName = GetProcessNameSafely(processId);
+                        
+                        if (string.IsNullOrEmpty(processName))
                         {
                             // If we can't get the name, use the ID in the session ID
                             processName = $"unknown_{processId}";
@@ -294,11 +304,9 @@ namespace DeejNG.Services
                         int processId = (int)session.GetProcessID;
                         string procName = "";
 
-                        try
-                        {
-                            procName = Process.GetProcessById(processId).ProcessName.ToLowerInvariant();
-                        }
-                        catch
+                        procName = GetProcessNameSafely(processId);
+                        
+                        if (string.IsNullOrEmpty(procName))
                         {
                             continue; // Skip if we can't get the process name
                         }
@@ -352,11 +360,11 @@ namespace DeejNG.Services
             // THROTTLING: Only process if enough time has passed or values changed significantly
             var now = DateTime.Now;
             var timeSinceLastCall = (now - _lastUnmappedVolumeCall).TotalMilliseconds;
-            var volumeChanged = Math.Abs(_lastUnmappedVolume - level) > 0.05f; // 5% change threshold
+            var volumeChanged = Math.Abs(_lastUnmappedVolume - level) > 0.05f; // 2% change threshold (more sensitive)
             var muteChanged = _lastUnmappedMuted != isMuted;
             var appsChanged = !_lastMappedApps.SetEquals(mappedApplications);
 
-            if (timeSinceLastCall < 100 && !volumeChanged && !muteChanged && !appsChanged) // 100ms throttle
+            if (timeSinceLastCall < 100 && !volumeChanged && !muteChanged && !appsChanged) // 250ms throttle
             {
                 return; // Skip this call to reduce processing
             }
@@ -398,7 +406,7 @@ namespace DeejNG.Services
                         }
 
                         // Skip system sessions immediately - these can't be controlled and cause Win32Exception
-                        if (processId <= 4) // System, idle, and other system processes
+                        if (_systemProcessIds.Contains(processId) || processId < 100)
                         {
                             skippedCount++;
                             continue;
@@ -490,7 +498,7 @@ namespace DeejNG.Services
                         }
 
                         // Skip system sessions that cause Win32Exception
-                        if (processId <= 4)
+                        if (_systemProcessIds.Contains(processId) || processId < 100)
                         {
                             skippedCount++;
                             continue;
@@ -545,33 +553,38 @@ namespace DeejNG.Services
                 var currentTime = DateTime.Now;
                 var processedSessions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                // Process all current sessions
-                for (int i = 0; i < sessions.Count; i++)
+                // Limit the number of sessions we process
+                int maxSessionsToProcess = Math.Min(sessions.Count, 20); // Don't process more than 20 sessions
+
+                for (int i = 0; i < maxSessionsToProcess; i++)
                 {
                     try
                     {
                         var session = sessions[i];
                         int processId = (int)session.GetProcessID;
 
-                        string procName = "";
-                        try
-                        {
-                            var proc = Process.GetProcessById(processId);
-                            procName = Path.GetFileNameWithoutExtension(proc.MainModule.FileName)
-                                     .ToLowerInvariant();
-                        }
-                        catch
-                        {
-                            continue; // Skip if we can't get process info
-                        }
+                        string procName = GetProcessNameSafely(processId);
 
-                        if (string.IsNullOrEmpty(procName)) continue;
+                        if (string.IsNullOrEmpty(procName))
+                        {
+                            continue;
+                        }
 
                         processedSessions.Add(procName);
 
                         lock (_cacheLock)
                         {
-                            // Update or add to cache
+                            // Limit session cache size
+                            if (_sessionCache.Count >= MAX_SESSION_CACHE_SIZE)
+                            {
+                                // Remove oldest entries
+                                var oldestKey = _sessionCache
+                                    .OrderBy(kvp => kvp.Value.LastSeen)
+                                    .First().Key;
+                                _sessionCache.Remove(oldestKey);
+                                _sessionAccessTimes.Remove(oldestKey);
+                            }
+
                             if (_sessionCache.TryGetValue(procName, out var existing))
                             {
                                 existing.LastSeen = currentTime;
@@ -594,11 +607,13 @@ namespace DeejNG.Services
                     }
                 }
 
-                // Remove any sessions from cache that weren't seen
+                // Remove stale entries more aggressively
                 lock (_cacheLock)
                 {
-                    var toRemove = _sessionCache.Keys
-                        .Where(key => !processedSessions.Contains(key))
+                    var staleThreshold = currentTime.AddMinutes(-2); // Reduce from default to 2 minutes
+                    var toRemove = _sessionCache
+                        .Where(kvp => kvp.Value.LastSeen < staleThreshold)
+                        .Select(kvp => kvp.Key)
                         .ToList();
 
                     foreach (var key in toRemove)
@@ -618,6 +633,67 @@ namespace DeejNG.Services
             catch (Exception ex)
             {
                 Debug.WriteLine($"[AudioService] Failed to refresh session cache: {ex.Message}");
+            }
+        }
+        public void ForceCleanup()
+        {
+            try
+            {
+                Debug.WriteLine("[AudioService] Force cleanup started");
+
+                lock (_cacheLock)
+                {
+                    // Clear session cache if it's too large
+                    if (_sessionCache.Count > 10)
+                    {
+                        var keysToKeep = _sessionCache
+                            .OrderByDescending(kvp => kvp.Value.LastSeen)
+                            .Take(5)
+                            .Select(kvp => kvp.Key)
+                            .ToList();
+
+                        // Create temporary dictionaries to hold the data we want to keep
+                        var sessionsToKeep = new Dictionary<string, SessionInfo>(StringComparer.OrdinalIgnoreCase);
+                        var accessTimesToKeep = new Dictionary<string, DateTime>();
+
+                        foreach (var key in keysToKeep)
+                        {
+                            if (_sessionCache.TryGetValue(key, out var sessionInfo))
+                            {
+                                sessionsToKeep[key] = sessionInfo;
+                                if (_sessionAccessTimes.TryGetValue(key, out var accessTime))
+                                {
+                                    accessTimesToKeep[key] = accessTime;
+                                }
+                            }
+                        }
+
+                        // Clear the readonly dictionaries and repopulate them
+                        _sessionCache.Clear();
+                        _sessionAccessTimes.Clear();
+
+                        foreach (var kvp in sessionsToKeep)
+                        {
+                            _sessionCache[kvp.Key] = kvp.Value;
+                        }
+
+                        foreach (var kvp in accessTimesToKeep)
+                        {
+                            _sessionAccessTimes[kvp.Key] = kvp.Value;
+                        }
+
+                        Debug.WriteLine($"[AudioService] Session cache reduced to {_sessionCache.Count} entries");
+                    }
+                }
+
+                // Force process cache cleanup
+                CleanProcessCache();
+
+                Debug.WriteLine("[AudioService] Force cleanup completed");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AudioService] Error during force cleanup: {ex.Message}");
             }
         }
     }

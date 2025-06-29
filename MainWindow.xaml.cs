@@ -49,6 +49,7 @@ namespace DeejNG
         private Dictionary<int, float> _initialSliderValues = new();
         private bool _hasReceivedInitialData = false;
         private const int METER_SESSION_CACHE_MS = 1000;
+        private int _meterSkipCounter = 0;
         private bool _hasLoadedInitialSettings = false;
         private bool _serialPortFullyInitialized = false;
         private DateTime _lastUnmappedMeterUpdate = DateTime.MinValue;
@@ -56,7 +57,14 @@ namespace DeejNG
         private DispatcherTimer _forceCleanupTimer;
         private int _sessionCacheHitCount = 0;
         private DateTime _lastForcedCleanup = DateTime.MinValue;
-
+        private readonly TimeSpan UNMAPPED_THROTTLE_INTERVAL = TimeSpan.FromMilliseconds(100); // Increase throttling
+        private readonly HashSet<string> _cachedMappedApplications = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private DateTime _lastMappedApplicationsUpdate = DateTime.MinValue;
+        private float _lastUnmappedPeak = 0;
+        private DateTime _lastUnmappedPeakUpdate = DateTime.MinValue;
+        private MMDevice _cachedAudioDevice;
+        private DateTime _lastDeviceCacheTime = DateTime.MinValue;
+        private readonly TimeSpan DEVICE_CACHE_DURATION = TimeSpan.FromSeconds(5);
         private int _expectedSliderCount = -1; // Track expected number of sliders
         private bool _hasReceivedInitialSerialData = false;
         private DateTime _lastSettingsSave = DateTime.MinValue;
@@ -91,7 +99,8 @@ namespace DeejNG
         private List<(AudioSessionControl session, string sessionId, string instanceId)> _sessionIdCache = new();
       //  private Dictionary<string, AudioSessionControl> _sessionLookup = new();
         private AudioEndpointVolume _systemVolume;
-        // Track connection state
+        private bool _manualDisconnect = false;
+        private string _userSelectedPort = string.Empty;
 
         private bool isDarkTheme = false;
 
@@ -120,7 +129,7 @@ namespace DeejNG
 
             _meterTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(50)
+                Interval = TimeSpan.FromMilliseconds(75)
             };
             _meterTimer.Tick += UpdateMeters;
             _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
@@ -158,7 +167,7 @@ namespace DeejNG
             }
             _forceCleanupTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromMinutes(10)
+                Interval = TimeSpan.FromMinutes(5) // More frequent cleanup
             };
             _forceCleanupTimer.Tick += ForceCleanupTimer_Tick;
             _forceCleanupTimer.Start();
@@ -204,9 +213,12 @@ namespace DeejNG
         {
             _isClosing = true;
 
-            // Stop all timers
+            // Stop all timers first
             _meterTimer?.Stop();
             _sessionCacheTimer?.Stop();
+            _forceCleanupTimer?.Stop();
+            _serialWatchdogTimer?.Stop();
+            _serialReconnectTimer?.Stop();
 
             // Clean up all registered event handlers
             foreach (var target in _registeredHandlers.Keys.ToList())
@@ -222,48 +234,63 @@ namespace DeejNG
                 }
             }
 
-            // Existing cleanup code
+            // Clean up serial port
             try
             {
                 if (_serialPort != null)
                 {
                     _serialPort.DataReceived -= SerialPort_DataReceived;
+                    _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
 
                     if (_serialPort.IsOpen)
                     {
+                        _serialPort.DiscardInBuffer();
+                        _serialPort.DiscardOutBuffer();
                         _serialPort.Close();
                     }
 
                     _serialPort.Dispose();
                     _serialPort = null;
                 }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Closing serial port: {ex.Message}");
+            }
 
-                // Unsubscribe from all events
+            // Unsubscribe from all events
+            try
+            {
                 if (_systemVolume != null)
                 {
                     _systemVolume.OnVolumeNotification -= AudioEndpointVolume_OnVolumeNotification;
                 }
+            }
+            catch { }
 
-                _isConnected = false;
-                UpdateConnectionStatus();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Error while closing serial port: {ex.Message}", "Cleanup Error", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
+            // Clean up all COM objects
             foreach (var sessionTuple in _sessionIdCache)
             {
                 try
                 {
                     if (sessionTuple.session != null)
-                        Marshal.ReleaseComObject(sessionTuple.session);
+                    {
+                        int refCount = Marshal.FinalReleaseComObject(sessionTuple.session);
+                        Debug.WriteLine($"[Cleanup] Released session COM object, final ref count: {refCount}");
+                    }
                 }
                 catch { }
             }
             _sessionIdCache.Clear();
-            _meterTimer?.Stop();
-            _sessionCacheTimer?.Stop();
-            _serialReconnectTimer?.Stop();
+            
+            // Clean up input device cache
+            _inputDeviceMap.Clear();
+            
+            // Force final garbage collection
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            
             base.OnClosed(e);
         }
 
@@ -326,6 +353,21 @@ namespace DeejNG
             attemptTimer.Interval = TimeSpan.FromSeconds(2);
             attemptTimer.Start();
         }
+        private void ComPortSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (ComPortSelector.SelectedItem is string selectedPort)
+            {
+                _userSelectedPort = selectedPort;
+                Debug.WriteLine($"[UI] User selected port: {selectedPort}");
+
+                // If user manually disconnected and now selects a port, clear the manual disconnect flag
+                if (_manualDisconnect)
+                {
+                    Debug.WriteLine("[UI] User selected new port after manual disconnect - clearing manual disconnect flag");
+                    _manualDisconnect = false;
+                }
+            }
+        }
         private void ForceCleanupTimer_Tick(object sender, EventArgs e)
         {
             if (_isClosing) return;
@@ -333,30 +375,19 @@ namespace DeejNG
             try
             {
                 Debug.WriteLine("[ForceCleanup] Starting aggressive cleanup...");
+                _audioService?.ForceCleanup();
+                // More frequent and aggressive cleanup
+                CleanupSessionCacheAggressively();
+                CleanupProcessCache();
+                CleanupInputDeviceCache();
+                CleanupEventHandlers();
 
-                // Force garbage collection before cleanup
+                // Force COM object cleanup
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
                 GC.Collect();
 
-                // Clean up session cache more aggressively
-                CleanupSessionCacheAggressively();
-
-                // Clean up process cache
-                CleanupProcessCache();
-
-                // Clean up input device cache
-                CleanupInputDeviceCache();
-
-                // Refresh audio device reference
-                RefreshAudioDeviceReference();
-
-                // Force cleanup of meter session cache
-                _cachedSessionsForMeters = null;
-                _lastMeterSessionRefresh = DateTime.MinValue;
-
                 _lastForcedCleanup = DateTime.Now;
-
                 Debug.WriteLine("[ForceCleanup] Cleanup completed");
             }
             catch (Exception ex)
@@ -364,14 +395,50 @@ namespace DeejNG
                 Debug.WriteLine($"[ForceCleanup] Error: {ex.Message}");
             }
         }
+        private void CleanupEventHandlers()
+        {
+            try
+            {
+                var handlersToRemove = new List<string>();
+
+                foreach (var kvp in _registeredHandlers)
+                {
+                    try
+                    {
+                        // Test if the handler is still valid by checking the target
+                        var currentTargets = GetCurrentTargets();
+                        if (!currentTargets.Contains(kvp.Key))
+                        {
+                            handlersToRemove.Add(kvp.Key);
+                        }
+                    }
+                    catch
+                    {
+                        handlersToRemove.Add(kvp.Key);
+                    }
+                }
+
+                foreach (var target in handlersToRemove)
+                {
+                    _registeredHandlers.Remove(target);
+                    Debug.WriteLine($"[Cleanup] Removed stale event handler for {target}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Cleanup] Error cleaning event handlers: {ex.Message}");
+            }
+        }
         private void CleanupSessionCacheAggressively()
         {
             try
             {
-                // More aggressive cleanup - keep only last 20 sessions instead of 100
-                if (_sessionIdCache.Count > 20)
+                // Reduce max sessions from 25 to 15
+                const int MAX_SESSIONS = 15;
+
+                if (_sessionIdCache.Count > MAX_SESSIONS)
                 {
-                    var sessionsToRemove = _sessionIdCache.Take(_sessionIdCache.Count - 20).ToList();
+                    var sessionsToRemove = _sessionIdCache.Take(_sessionIdCache.Count - MAX_SESSIONS).ToList();
 
                     foreach (var sessionTuple in sessionsToRemove)
                     {
@@ -380,7 +447,7 @@ namespace DeejNG
                             if (sessionTuple.session != null)
                             {
                                 // Properly release COM object
-                                Marshal.FinalReleaseComObject(sessionTuple.session);
+                                while (Marshal.ReleaseComObject(sessionTuple.session) > 0) { }
                             }
                         }
                         catch (Exception ex)
@@ -389,51 +456,51 @@ namespace DeejNG
                         }
                     }
 
-                    _sessionIdCache = _sessionIdCache.Skip(_sessionIdCache.Count - 20).ToList();
+                    _sessionIdCache = _sessionIdCache.Skip(_sessionIdCache.Count - MAX_SESSIONS).ToList();
                     Debug.WriteLine($"[Cleanup] Reduced session cache to {_sessionIdCache.Count} items");
                 }
 
-                // Also clean up any null or invalid sessions
-                _sessionIdCache = _sessionIdCache.Where(t => t.session != null).ToList();
+                // Also clean up invalid sessions
+                var validSessions = new List<(AudioSessionControl session, string sessionId, string instanceId)>();
+                foreach (var sessionTuple in _sessionIdCache)
+                {
+                    try
+                    {
+                        if (sessionTuple.session != null)
+                        {
+                            // Test if session is still valid
+                            var test = sessionTuple.session.GetProcessID;
+                            validSessions.Add(sessionTuple);
+                        }
+                    }
+                    catch
+                    {
+                        // Session is invalid, release it
+                        try
+                        {
+                            if (sessionTuple.session != null)
+                                while (Marshal.ReleaseComObject(sessionTuple.session) > 0) { }
+                        }
+                        catch { }
+                    }
+                }
+
+                _sessionIdCache = validSessions;
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[Cleanup] Error in session cache cleanup: {ex.Message}");
             }
         }
-
         // 5. Improved process cache cleanup
         private void CleanupProcessCache()
         {
             try
             {
-                // Keep only processes that are still running
-                var runningPids = new HashSet<int>();
-
-                try
+                // More aggressive - keep only last 30 processes instead of 50
+                if (_processNameCache.Count > 30)
                 {
-                    foreach (var proc in Process.GetProcesses())
-                    {
-                        try
-                        {
-                            runningPids.Add(proc.Id);
-                            proc.Dispose(); // Dispose process objects
-                        }
-                        catch { }
-                    }
-                }
-                catch { }
-
-                var keysToRemove = _processNameCache.Keys.Where(pid => !runningPids.Contains(pid)).ToList();
-                foreach (var key in keysToRemove)
-                {
-                    _processNameCache.Remove(key);
-                }
-
-                // Limit cache size more aggressively
-                if (_processNameCache.Count > 50)
-                {
-                    var oldestKeys = _processNameCache.Keys.Take(_processNameCache.Count - 30).ToList();
+                    var oldestKeys = _processNameCache.Keys.Take(_processNameCache.Count - 20).ToList();
                     foreach (var key in oldestKeys)
                     {
                         _processNameCache.Remove(key);
@@ -487,36 +554,20 @@ namespace DeejNG
 
             try
             {
-                // Get current process IDs with proper exception handling
                 var processes = Process.GetProcesses();
                 foreach (var proc in processes)
                 {
                     try
                     {
-                        if (proc != null && !proc.HasExited)
+                        if (proc?.Id > 0)
                         {
                             processIds.Add(proc.Id);
                         }
                     }
-                    catch (ArgumentException)
-                    {
-                        // Process doesn't exist or has exited - skip it
-                    }
-                    catch (InvalidOperationException)
-                    {
-                        // Process has exited - skip it  
-                    }
-                    catch
-                    {
-                        // Any other exception - skip it
-                    }
+                    catch { }
                     finally
                     {
-                        try
-                        {
-                            proc?.Dispose();
-                        }
-                        catch { }
+                        proc?.Dispose(); // Each Process object needs to be disposed
                     }
                 }
             }
@@ -533,88 +584,101 @@ namespace DeejNG
                 _processNameCache.Remove(pid);
             }
 
-            // Clean session cache
-            if (_sessionIdCache.Count > 100)
+            // CRITICAL FIX: Properly release COM objects when cleaning session cache
+            if (_sessionIdCache.Count > 20) // Reduce cache size more aggressively
             {
-                var sessionsToRemove = _sessionIdCache.Take(_sessionIdCache.Count - 100).ToList();
+                var sessionsToRemove = _sessionIdCache.Take(_sessionIdCache.Count - 15).ToList();
 
                 foreach (var sessionTuple in sessionsToRemove)
                 {
                     try
                     {
+                        // Check if session is still valid before releasing
                         if (sessionTuple.session != null)
                         {
-                            Marshal.ReleaseComObject(sessionTuple.session);
+                            try
+                            {
+                                var testPid = sessionTuple.session.GetProcessID; // Test if still valid
+                                if (!processIds.Contains((int)testPid))
+                                {
+                                    // Process is dead, safe to release
+                                    ReleaseComObject(sessionTuple.session);
+                                }
+                            }
+                            catch
+                            {
+                                // Session is invalid, release it
+                                ReleaseComObject(sessionTuple.session);
+                            }
                         }
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"[Error] Failed to release COM object: {ex.Message}");
+                        Debug.WriteLine($"[Error] Failed to release session COM object: {ex.Message}");
                     }
                 }
 
-                _sessionIdCache = _sessionIdCache.Skip(_sessionIdCache.Count - 100).ToList();
+                _sessionIdCache = _sessionIdCache.Skip(_sessionIdCache.Count - 15).ToList();
             }
 
-            // Clean input device cache
-            if (_inputDeviceMap.Count > 20)
-            {
-                var keysToRemove = _inputDeviceMap.Keys.Take(_inputDeviceMap.Count - 10).ToList();
-                foreach (var key in keysToRemove)
-                {
-                    _inputDeviceMap.Remove(key);
-                }
-            }
-
-            Debug.WriteLine($"[Cleanup] Removed {deadPids.Count} dead processes from cache. " +
-                           $"Process cache: {_processNameCache.Count}, " +
-                           $"Session cache: {_sessionIdCache.Count}, " +
-                           $"Input device cache: {_inputDeviceMap.Count}");
+            Debug.WriteLine($"[Cleanup] Process cache: {_processNameCache.Count}, Session cache: {_sessionIdCache.Count}");
         }
         private bool TryConnectToSavedPort()
         {
             try
             {
-                // Skip if already connected
                 if (_isConnected && !_serialDisconnected)
                 {
                     return true;
                 }
 
-                var settings = LoadSettingsFromDisk();
-                if (string.IsNullOrWhiteSpace(settings?.PortName))
+                // If user manually selected a port, use that instead of saved port
+                string portToTry;
+                if (!string.IsNullOrEmpty(_userSelectedPort))
                 {
-                    Debug.WriteLine("[AutoConnect] No saved port name");
-                    return false;
+                    portToTry = _userSelectedPort;
+                    Debug.WriteLine($"[AutoConnect] Using user-selected port: {portToTry}");
+                }
+                else
+                {
+                    var settings = LoadSettingsFromDisk();
+                    if (string.IsNullOrWhiteSpace(settings?.PortName))
+                    {
+                        Debug.WriteLine("[AutoConnect] No saved port name");
+                        return false;
+                    }
+                    portToTry = settings.PortName;
+                    Debug.WriteLine($"[AutoConnect] Using saved port: {portToTry}");
                 }
 
-                // Refresh available ports first
                 LoadAvailablePorts();
 
                 var availablePorts = SerialPort.GetPortNames();
-                if (!availablePorts.Contains(settings.PortName))
+                if (!availablePorts.Contains(portToTry))
                 {
-                    Debug.WriteLine($"[AutoConnect] Saved port '{settings.PortName}' not in available ports: [{string.Join(", ", availablePorts)}]");
+                    Debug.WriteLine($"[AutoConnect] Port '{portToTry}' not available. Available: [{string.Join(", ", availablePorts)}]");
                     return false;
                 }
 
-                // Update ComboBox selection to match the saved port
+                // Update ComboBox to show the port we're connecting to
                 Dispatcher.Invoke(() =>
                 {
-                    ComPortSelector.SelectedItem = settings.PortName;
+                    ComPortSelector.SelectedItem = portToTry;
                 });
 
-                Debug.WriteLine($"[AutoConnect] Attempting to connect to saved port: {settings.PortName}");
+                InitSerial(portToTry, 9600);
 
-                // Attempt connection
-                InitSerial(settings.PortName, 9600);
+                // Clear user selected port after successful connection
+                if (_isConnected && !_serialDisconnected)
+                {
+                    _userSelectedPort = string.Empty;
+                }
 
-                // Return true if connection succeeded
                 return _isConnected && !_serialDisconnected;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[AutoConnect] Exception during connection attempt: {ex.Message}");
+                Debug.WriteLine($"[AutoConnect] Exception: {ex.Message}");
                 return false;
             }
         }
@@ -829,9 +893,18 @@ namespace DeejNG
                     }
                     else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
                     {
-                        // Handle unmapped applications with throttling
+                        // Handle unmapped applications with aggressive throttling
                         lock (_unmappedLock)
                         {
+                            // More aggressive throttling for unmapped
+                            var now = DateTime.Now;
+                            if ((now - _lastUnmappedMeterUpdate) < UNMAPPED_THROTTLE_INTERVAL)
+                            {
+                               // continue; // Skip this update entirely
+                               // removed as this makes fast movements unresponsive
+                            }
+                            _lastUnmappedMeterUpdate = now;
+                            
                             var mappedApps = GetAllMappedApplications();
                             mappedApps.Remove("unmapped"); // Don't exclude unmapped from itself
 
@@ -904,32 +977,46 @@ namespace DeejNG
         {
             if (_isConnected && !_serialDisconnected)
             {
-                // Already connected, so user wants to disconnect
-                Disconnect_Click(sender, e);
+                // User wants to disconnect manually
+                ManualDisconnect();
             }
             else
             {
-                // Not connected, so user wants to connect
+                // User wants to connect to selected port
                 if (ComPortSelector.SelectedItem is string selectedPort)
                 {
                     Debug.WriteLine($"[Manual] User clicked connect for port: {selectedPort}");
+
+                    // Store user's port choice
+                    _userSelectedPort = selectedPort;
+                    _manualDisconnect = false; // Clear manual disconnect flag
+
                     // Update button state immediately
                     ConnectButton.IsEnabled = false;
                     ConnectButton.Content = "Connecting...";
+
+                    // Stop automatic reconnection while user is manually connecting
+                    if (_serialReconnectTimer.IsEnabled)
+                    {
+                        _serialReconnectTimer.Stop();
+                        Debug.WriteLine("[Manual] Stopped auto-reconnect for manual connection");
+                    }
+
                     // Try connection
                     InitSerial(selectedPort, 9600);
-                    // UpdateConnectionStatus() called within InitSerial will typically handle
-                    // the button state correctly after connection attempt. 
-                    // This timer can ensure the button is re-evaluated if InitSerial doesn't update UI
-                    // or for a minimum 'Connecting...' display time.
-                    var resetTimer = new DispatcherTimer
+
+                    // Re-enable auto-reconnect only if connection succeeded
+                    if (_isConnected && !_serialDisconnected)
                     {
-                        Interval = TimeSpan.FromSeconds(2)
-                    };
+                        _serialReconnectTimer.Start();
+                    }
+
+                    // Reset button after short delay
+                    var resetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
                     resetTimer.Tick += (s, args) =>
                     {
                         resetTimer.Stop();
-                        UpdateConnectionStatus(); // Ensure button state is accurate after attempt
+                        UpdateConnectionStatus();
                     };
                     resetTimer.Start();
                 }
@@ -941,6 +1028,45 @@ namespace DeejNG
             }
         }
 
+        // Add this new method
+        private void ManualDisconnect()
+        {
+            try
+            {
+                Debug.WriteLine("[Manual] User initiated manual disconnect");
+
+                // Set flag to prevent automatic reconnection
+                _manualDisconnect = true;
+
+                // Stop the auto-reconnect timer
+                if (_serialReconnectTimer.IsEnabled)
+                {
+                    _serialReconnectTimer.Stop();
+                    Debug.WriteLine("[Manual] Stopped auto-reconnect timer");
+                }
+
+                // Close the serial port
+                if (_serialPort != null && _serialPort.IsOpen)
+                {
+                    _serialPort.Close();
+                    _serialPort.DataReceived -= SerialPort_DataReceived;
+                    _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
+                }
+
+                _isConnected = false;
+                _serialDisconnected = true;
+                _serialPortFullyInitialized = false;
+                _allowVolumeApplication = false;
+
+                UpdateConnectionStatus();
+
+                Debug.WriteLine("[Manual] Manual disconnect completed");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Failed to disconnect manually: {ex.Message}");
+            }
+        }
         private void CreateNotifyIconContextMenu()
         {
 
@@ -1128,19 +1254,37 @@ namespace DeejNG
             Debug.WriteLine("[Serial] Disconnection detected");
             _serialDisconnected = true;
             _isConnected = false;
-
-            // Reset volume application flag
             _allowVolumeApplication = false;
 
-            // Update UI on the dispatcher thread
-            Dispatcher.BeginInvoke(() =>
+            // Only start auto-reconnect if this wasn't a manual disconnect
+            if (!_manualDisconnect)
             {
-                ConnectionStatus.Text = "Disconnected - Reconnecting...";
-                ConnectionStatus.Foreground = Brushes.Red;
-                ConnectButton.IsEnabled = true;
-            });
+                Dispatcher.BeginInvoke(() =>
+                {
+                    ConnectionStatus.Text = "Disconnected - Reconnecting...";
+                    ConnectionStatus.Foreground = Brushes.Red;
+                    ConnectButton.IsEnabled = true;
+                    ConnectButton.Content = "Connect";
+                });
 
-            // Try to clean up the serial port
+                if (!_serialReconnectTimer.IsEnabled)
+                {
+                    _serialReconnectTimer.Start();
+                }
+            }
+            else
+            {
+                // Manual disconnect - don't auto-reconnect, just update UI
+                Dispatcher.BeginInvoke(() =>
+                {
+                    ConnectionStatus.Text = "Disconnected";
+                    ConnectionStatus.Foreground = Brushes.Red;
+                    ConnectButton.IsEnabled = true;
+                    ConnectButton.Content = "Connect";
+                });
+            }
+
+            // Clean up the serial port
             try
             {
                 if (_serialPort != null)
@@ -1148,7 +1292,6 @@ namespace DeejNG
                     if (_serialPort.IsOpen)
                         _serialPort.Close();
 
-                    // Keep the serial port object but clean up event handlers
                     _serialPort.DataReceived -= SerialPort_DataReceived;
                     _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
                 }
@@ -1157,20 +1300,20 @@ namespace DeejNG
             {
                 Debug.WriteLine($"[ERROR] Failed to cleanup serial port: {ex.Message}");
             }
-
-            // Make sure reconnect timer is running
-            if (!_serialReconnectTimer.IsEnabled)
-            {
-                _serialReconnectTimer.Start();
-            }
         }
-
         private void HandleSliderData(string data)
         {
             if (string.IsNullOrWhiteSpace(data)) return;
 
             try
             {
+                // Validate data format before processing
+                if (!data.Contains('|') && !float.TryParse(data, out _))
+                {
+                    Debug.WriteLine($"[Serial] Invalid data format: {data}");
+                    return;
+                }
+
                 string[] parts = data.Split('|');
 
                 if (parts.Length == 0)
@@ -1182,19 +1325,10 @@ namespace DeejNG
                 {
                     try
                     {
-                        // Generate sliders if needed
-                        if (_channelControls.Count == 0)
+                        // Hardware slider count takes priority - regenerate if mismatch
+                        if (_channelControls.Count != parts.Length)
                         {
-                            Debug.WriteLine("[WARNING] No sliders exist, generating default set");
-                            _expectedSliderCount = Math.Max(parts.Length, 4);
-                            GenerateSliders(_expectedSliderCount);
-                            return;
-                        }
-
-                        // NEW: If incoming data has MORE parts than we have sliders, regenerate
-                        if (parts.Length > _channelControls.Count)
-                        {
-                            Debug.WriteLine($"[INFO] Hardware sending {parts.Length} sliders but we only have {_channelControls.Count}. Regenerating sliders to match hardware.");
+                            Debug.WriteLine($"[INFO] Hardware has {parts.Length} sliders but app has {_channelControls.Count}. Adjusting to match hardware.");
 
                             // Save current targets before regenerating
                             var currentTargets = _channelControls.Select(c => c.AudioTargets).ToList();
@@ -1203,7 +1337,7 @@ namespace DeejNG
                             _expectedSliderCount = parts.Length;
                             GenerateSliders(parts.Length);
 
-                            // Restore saved targets for existing sliders
+                            // Restore saved targets for sliders that still exist
                             for (int i = 0; i < Math.Min(currentTargets.Count, _channelControls.Count); i++)
                             {
                                 _channelControls[i].AudioTargets = currentTargets[i];
@@ -1213,12 +1347,6 @@ namespace DeejNG
                             // Save the new configuration
                             SaveSettings();
                             return;
-                        }
-
-                        // If incoming data has fewer parts, just log it (don't reduce sliders)
-                        if (_channelControls.Count != parts.Length)
-                        {
-                            Debug.WriteLine($"[INFO] Incoming data has {parts.Length} parts but we have {_channelControls.Count} sliders. Processing available data only.");
                         }
 
                         // Process the data for existing sliders only
@@ -1316,13 +1444,20 @@ namespace DeejNG
                 }
 
                 // Close existing connection if any
-                if (_serialPort != null && _serialPort.IsOpen)
+                if (_serialPort != null)
                 {
                     try
                     {
-                        _serialPort.Close();
                         _serialPort.DataReceived -= SerialPort_DataReceived;
                         _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
+                        
+                        if (_serialPort.IsOpen)
+                        {
+                            _serialPort.DiscardInBuffer();
+                            _serialPort.DiscardOutBuffer();
+                            _serialPort.Close();
+                        }
+                        _serialPort.Dispose();
                     }
                     catch (Exception ex)
                     {
@@ -1333,7 +1468,10 @@ namespace DeejNG
                 _serialPort = new SerialPort(portName, baudRate)
                 {
                     ReadTimeout = 1000,
-                    WriteTimeout = 1000
+                    WriteTimeout = 1000,
+                    ReceivedBytesThreshold = 1,
+                    DtrEnable = true,
+                    RtsEnable = true
                 };
 
                 _serialPort.DataReceived += SerialPort_DataReceived;
@@ -1704,24 +1842,56 @@ namespace DeejNG
                 _noDataCounter = 0;    // Reset the counter since we got data
 
                 // Check buffer size and truncate if it gets too large
-                if (_serialBuffer.Length > 8192) // 8KB limit
+                if (_serialBuffer.Length > 2048) // Reduced to 2KB limit
                 {
-                    _serialBuffer.Clear();
-                    Debug.WriteLine("[WARNING] Serial buffer exceeded limit and was cleared");
+                    // Try to salvage partial data by finding the last newline
+                    string bufferContent = _serialBuffer.ToString();
+                    int lastNewline = bufferContent.LastIndexOf('\n');
+                    
+                    if (lastNewline > 0)
+                    {
+                        _serialBuffer.Clear();
+                        _serialBuffer.Append(bufferContent.Substring(lastNewline + 1));
+                        Debug.WriteLine("[WARNING] Serial buffer trimmed to last valid line");
+                    }
+                    else
+                    {
+                        _serialBuffer.Clear();
+                        Debug.WriteLine("[WARNING] Serial buffer exceeded limit and was cleared");
+                    }
                 }
 
                 _serialBuffer.Append(incoming);
 
+                // Process all complete lines in the buffer
                 while (true)
                 {
                     string buffer = _serialBuffer.ToString();
                     int newLineIndex = buffer.IndexOf('\n');
-                    if (newLineIndex == -1) break;
+                    if (newLineIndex == -1)
+                    {
+                        // Also check for carriage return in case line endings vary
+                        newLineIndex = buffer.IndexOf('\r');
+                        if (newLineIndex == -1) break;
+                    }
 
                     string line = buffer.Substring(0, newLineIndex).Trim();
-                    _serialBuffer.Remove(0, newLineIndex + 1);
+                    
+                    // Remove the processed line including any CR/LF characters
+                    int removeLength = newLineIndex + 1;
+                    if (buffer.Length > newLineIndex + 1)
+                    {
+                        if (buffer[newLineIndex] == '\r' && buffer[newLineIndex + 1] == '\n')
+                            removeLength++;
+                    }
+                    
+                    _serialBuffer.Remove(0, removeLength);
 
-                    Dispatcher.BeginInvoke(() => HandleSliderData(line));
+                    // Skip empty lines
+                    if (!string.IsNullOrWhiteSpace(line))
+                    {
+                        Dispatcher.BeginInvoke(() => HandleSliderData(line));
+                    }
                 }
             }
             catch (IOException)
@@ -1755,11 +1925,19 @@ namespace DeejNG
 
         private void SerialReconnectTimer_Tick(object sender, EventArgs e)
         {
-            if (_isClosing || !_serialDisconnected) return;
+            // Don't auto-reconnect if user manually disconnected
+            if (_isClosing || !_serialDisconnected || _manualDisconnect)
+            {
+                if (_manualDisconnect)
+                {
+                    Debug.WriteLine("[SerialReconnect] Skipping auto-reconnect - user disconnected manually");
+                }
+                return;
+            }
 
             Debug.WriteLine("[SerialReconnect] Attempting to reconnect...");
 
-            // Try the saved port first
+            // Try the last connected port first
             if (TryConnectToSavedPort())
             {
                 Debug.WriteLine("[SerialReconnect] Successfully reconnected to saved port");
@@ -1778,12 +1956,12 @@ namespace DeejNG
                     {
                         ConnectionStatus.Text = "Waiting for device...";
                         ConnectionStatus.Foreground = Brushes.Orange;
-                        LoadAvailablePorts(); // Refresh the dropdown
+                        LoadAvailablePorts();
                     });
                     return;
                 }
 
-                // Try the first available port if our saved port isn't available
+                // Try the first available port
                 string portToTry = availablePorts[0];
                 Debug.WriteLine($"[SerialReconnect] Trying first available port: {portToTry}");
 
@@ -2081,64 +2259,59 @@ namespace DeejNG
                 var audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var sessions = audioDevice.AudioSessionManager.Sessions;
 
-                // Get all mapped applications for unmapped functionality
-                var allMappedApps = GetAllMappedApplications();
-
-                // First, unregister old handlers that aren't needed anymore
-                var currentTargets = GetCurrentTargets();
-                var targetsToRemove = _registeredHandlers.Keys
-                    .Where(t => !currentTargets.Contains(t))
-                    .ToList();
-
-                foreach (var target in targetsToRemove)
+                // CRITICAL FIX: Unregister ALL existing handlers first to prevent accumulation
+                var handlersToRemove = new List<string>(_registeredHandlers.Keys);
+                foreach (var target in handlersToRemove)
                 {
-                    if (_registeredHandlers.TryGetValue(target, out var handler))
+                    try
                     {
-                        try
-                        {
-                            _registeredHandlers.Remove(target);
-                            Debug.WriteLine($"[Cleanup] Unregistered event handler for {target}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"[ERROR] Failed to unregister handler for {target}: {ex.Message}");
-                        }
+                        _registeredHandlers.Remove(target);
+                        Debug.WriteLine($"[Sync] Unregistered handler for {target}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[ERROR] Failed to unregister handler for {target}: {ex.Message}");
                     }
                 }
+                _registeredHandlers.Clear(); // Ensure it's completely clear
 
-                // Create a dictionary for quick process name lookup
+                var allMappedApps = GetAllMappedApplications();
                 var processDict = new Dictionary<int, string>();
-
-                // Build map of sessions by process name for quicker lookup
                 var sessionsByProcess = new Dictionary<string, AudioSessionControl>(StringComparer.OrdinalIgnoreCase);
 
+                // Build session map with proper error handling
                 for (int i = 0; i < sessions.Count; i++)
                 {
                     var s = sessions[i];
                     try
                     {
                         int pid = (int)s.GetProcessID;
-
-                        // Get the process name
                         string procName;
+
                         if (!processDict.TryGetValue(pid, out procName))
                         {
                             try
                             {
-                                var proc = Process.GetProcessById(pid);
-                                procName = proc.ProcessName.ToLowerInvariant();
+                                using (var proc = Process.GetProcessById(pid))
+                                {
+                                    procName = proc?.ProcessName?.ToLowerInvariant() ?? "";
+                                }
                                 processDict[pid] = procName;
                             }
                             catch
                             {
                                 procName = "";
+                                processDict[pid] = procName;
                             }
                         }
 
-                        // Only store if we got a valid process name
                         if (!string.IsNullOrEmpty(procName))
                         {
-                            sessionsByProcess[procName] = s;
+                            // Only keep the first session per process to avoid duplicates
+                            if (!sessionsByProcess.ContainsKey(procName))
+                            {
+                                sessionsByProcess[procName] = s;
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -2152,56 +2325,44 @@ namespace DeejNG
                     var targets = ctrl.AudioTargets;
                     foreach (var target in targets)
                     {
-                        if (target.IsInputDevice) continue; // Skip input devices for mute sync
+                        if (target.IsInputDevice) continue;
 
                         string targetName = target.Name?.Trim().ToLower();
-                        bool isMuted = false;
-
-                        if (string.IsNullOrEmpty(targetName))
-                        {
-                            continue;
-                        }
+                        if (string.IsNullOrEmpty(targetName)) continue;
 
                         if (targetName == "system")
                         {
-                            isMuted = audioDevice.AudioEndpointVolume.Mute;
+                            bool isMuted = audioDevice.AudioEndpointVolume.Mute;
                             ctrl.SetMuted(isMuted);
-                            _audioService.ApplyMuteStateToTarget(targetName, isMuted);
                         }
                         else if (targetName == "unmapped")
                         {
-                            // For unmapped, we can't really get a single mute state since it controls multiple apps
-                            // Just ensure the unmapped applications follow this control's mute state
                             var mappedAppsForUnmapped = new HashSet<string>(allMappedApps);
-                            mappedAppsForUnmapped.Remove("unmapped"); // Don't exclude unmapped from itself
-
+                            mappedAppsForUnmapped.Remove("unmapped");
                             _audioService.ApplyMuteStateToUnmappedApplications(ctrl.IsMuted, mappedAppsForUnmapped);
                         }
                         else
                         {
-                            // Check if we have a matching session in our dictionary
                             if (sessionsByProcess.TryGetValue(targetName, out var matchedSession))
                             {
-                                isMuted = matchedSession.SimpleAudioVolume.Mute;
-
-                                // Only register if not already registered for this target
-                                if (!_registeredHandlers.ContainsKey(targetName))
+                                try
                                 {
-                                    try
+                                    bool isMuted = matchedSession.SimpleAudioVolume.Mute;
+                                    ctrl.SetMuted(isMuted);
+
+                                    // CRITICAL: Only register ONE handler per target
+                                    if (!_registeredHandlers.ContainsKey(targetName))
                                     {
                                         var handler = new AudioSessionEventsHandler(ctrl);
                                         matchedSession.RegisterEventClient(handler);
                                         _registeredHandlers[targetName] = handler;
-                                        Debug.WriteLine($"[Event] Registered handler for {targetName}");
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        Debug.WriteLine($"[ERROR] Failed to register handler for {targetName}: {ex.Message}");
+                                        Debug.WriteLine($"[Event] Registered NEW handler for {targetName}");
                                     }
                                 }
-
-                                ctrl.SetMuted(isMuted);
-                                _audioService.ApplyVolumeToTarget(targetName, ctrl.CurrentVolume, isMuted);
+                                catch (Exception ex)
+                                {
+                                    Debug.WriteLine($"[ERROR] Processing session for {targetName}: {ex.Message}");
+                                }
                             }
                         }
                     }
@@ -2221,6 +2382,24 @@ namespace DeejNG
             ApplyTheme(theme);
             SaveSettings();
 
+        }
+        private void ReleaseComObject(object comObject)
+        {
+            if (comObject != null)
+            {
+                try
+                {
+                    int refCount;
+                    do
+                    {
+                        refCount = Marshal.ReleaseComObject(comObject);
+                    } while (refCount > 0);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[COM] Error releasing COM object: {ex.Message}");
+                }
+            }
         }
 
         private void UpdateConnectionStatus()
@@ -2286,11 +2465,11 @@ namespace DeejNG
         {
             // Throttle meter updates for unmapped to reduce load
             var now = DateTime.Now;
-            if ((now - _lastUnmappedMeterUpdate).TotalMilliseconds < 200) // 200ms throttle for meters
+            if ((now - _lastUnmappedPeakUpdate).TotalMilliseconds < 200) // 200ms throttle for meters
             {
-                return 0; // Return 0 to reduce processing load
+                return _lastUnmappedPeak; // Return cached value
             }
-            _lastUnmappedMeterUpdate = now;
+            _lastUnmappedPeakUpdate = now;
 
             float highestPeak = 0;
 
@@ -2368,32 +2547,55 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] Getting unmapped peak levels: {ex.Message}");
             }
 
+            _lastUnmappedPeak = highestPeak;
             return highestPeak;
         }
+        private void DebugActiveTimers()
+        {
+            var timers = new List<string>();
+
+            if (_meterTimer?.IsEnabled == true) timers.Add("_meterTimer");
+            if (_serialWatchdogTimer?.IsEnabled == true) timers.Add("_serialWatchdogTimer");
+            if (_serialReconnectTimer?.IsEnabled == true) timers.Add("_serialReconnectTimer");
+            if (_sessionCacheTimer?.IsEnabled == true) timers.Add("_sessionCacheTimer");
+            if (_forceCleanupTimer?.IsEnabled == true) timers.Add("_forceCleanupTimer");
+
+            Debug.WriteLine($"[TIMERS] Active: {string.Join(", ", timers)} (Total: {timers.Count})");
+        }
+
         private void UpdateMeters(object? sender, EventArgs e)
         {
             if (!_metersEnabled || _isClosing) return;
 
+            // Only skip every 3rd update instead of every 2nd (better responsiveness)
+            if (++_meterSkipCounter % 3 == 0) return;
+
             const float visualGain = 1.5f;
             const float systemCalibrationFactor = 2.0f;
 
-            if ((DateTime.Now - _lastMeterSessionRefresh).TotalMilliseconds > METER_SESSION_CACHE_MS)
-            {
-                try
-                {
-                    _cachedSessionsForMeters = _audioDevice.AudioSessionManager.Sessions;
-                    _lastMeterSessionRefresh = DateTime.Now;
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[ERROR] Failed to cache sessions for meters: {ex.Message}");
-                    return;
-                }
-            }
-
             try
             {
-                var sessions = _cachedSessionsForMeters;
+                // Cache audio device but refresh more often for responsiveness
+                if (_cachedAudioDevice == null ||
+                    (DateTime.Now - _lastDeviceCacheTime) > TimeSpan.FromSeconds(2))
+                {
+                    _cachedAudioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                    _lastDeviceCacheTime = DateTime.Now;
+                }
+
+                // Get sessions more frequently for responsive meters
+                SessionCollection sessions = null;
+                if ((DateTime.Now - _lastMeterSessionRefresh).TotalMilliseconds > 500) // Back to 500ms from 2000ms
+                {
+                    sessions = _cachedAudioDevice.AudioSessionManager.Sessions;
+                    _cachedSessionsForMeters = sessions;
+                    _lastMeterSessionRefresh = DateTime.Now;
+                }
+                else
+                {
+                    sessions = _cachedSessionsForMeters;
+                }
+
                 if (sessions == null) return;
 
                 foreach (var ctrl in _channelControls)
@@ -2410,170 +2612,68 @@ namespace DeejNG
                         float highestPeak = 0;
                         bool allMuted = true;
 
-                        // Process input device targets
-                        var inputTargets = targets.Where(t => t.IsInputDevice).ToList();
-                        foreach (var target in inputTargets)
+                        // Process ALL targets but with optimizations
+                        foreach (var target in targets)
                         {
                             try
                             {
-                                if (!_inputDeviceMap.TryGetValue(target.Name.ToLowerInvariant(), out var mic))
+                                if (target.IsInputDevice)
                                 {
-                                    mic = new MMDeviceEnumerator()
-                                        .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-                                        .FirstOrDefault(d => d.FriendlyName.Equals(target.Name, StringComparison.OrdinalIgnoreCase));
-
-                                    if (mic != null)
-                                        _inputDeviceMap[target.Name.ToLowerInvariant()] = mic;
-                                }
-
-                                if (mic != null)
-                                {
-                                    float peak = mic.AudioMeterInformation.MasterPeakValue;
-                                    if (peak > highestPeak)
-                                        highestPeak = peak;
-
-                                    if (!mic.AudioEndpointVolume.Mute)
-                                        allMuted = false;
-                                }
-                            }
-                            catch (ArgumentException)
-                            {
-                                // Device no longer exists - remove from cache
-                                _inputDeviceMap.Remove(target.Name.ToLowerInvariant());
-                            }
-                            catch (Exception ex)
-                            {
-                                Debug.WriteLine($"[ERROR] Input device meter {target.Name}: {ex.Message}");
-                            }
-                        }
-
-                        // Process output app targets
-                        var outputTargets = targets.Where(t => !t.IsInputDevice).ToList();
-                        foreach (var target in outputTargets)
-                        {
-                            try
-                            {
-                                if (string.Equals(target.Name, "system", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    float peak = _audioDevice.AudioMeterInformation.MasterPeakValue;
-                                    float systemVol = _audioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
-                                    peak *= systemVol * systemCalibrationFactor;
-
-                                    if (peak > highestPeak)
-                                        highestPeak = peak;
-
-                                    if (!_audioDevice.AudioEndpointVolume.Mute)
-                                        allMuted = false;
-                                }
-                                else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    // Get peak levels for all unmapped applications
-                                    var mappedApps = GetAllMappedApplications();
-                                    mappedApps.Remove("unmapped"); // Don't exclude unmapped from itself
-
-                                    float unmappedPeak = GetUnmappedApplicationsPeakLevel(mappedApps);
-
-                                    if (unmappedPeak > highestPeak)
-                                        highestPeak = unmappedPeak;
-
-                                    // For mute state, if the slider itself isn't muted, consider unmapped as not muted
-                                    if (!ctrl.IsMuted)
-                                        allMuted = false;
-                                }
-                                else
-                                {
-                                    // Find matching session with proper exception handling
-                                    AudioSessionControl? matchingSession = null;
-                                    string targetName = target.Name.ToLowerInvariant();
-
-                                    for (int i = 0; i < sessions.Count; i++)
+                                    if (_inputDeviceMap.TryGetValue(target.Name.ToLowerInvariant(), out var mic))
                                     {
-                                        var s = sessions[i];
                                         try
                                         {
-                                            if (s == null) continue;
-
-                                            int pid = (int)s.GetProcessID;
-
-                                            if (!_processNameCache.TryGetValue(pid, out string procName))
-                                            {
-                                                // Skip system processes that cause Win32Exception
-                                                if (pid <= 4)
-                                                {
-                                                    procName = "";
-                                                }
-                                                else
-                                                {
-                                                    try
-                                                    {
-                                                        using (var process = Process.GetProcessById(pid))
-                                                        {
-                                                            if (process != null && !process.HasExited)
-                                                            {
-                                                                procName = process.ProcessName?.ToLowerInvariant() ?? "";
-                                                            }
-                                                            else
-                                                            {
-                                                                procName = "";
-                                                            }
-                                                        }
-                                                    }
-                                                    catch
-                                                    {
-                                                        // Any exception - just cache empty and continue
-                                                        procName = "";
-                                                    }
-                                                }
-
-                                                _processNameCache[pid] = procName;
-                                            }
-
-                                            // Skip if we couldn't get a valid process name
-                                            if (string.IsNullOrEmpty(procName)) continue;
-
-                                            if (procName == targetName)
-                                            {
-                                                matchingSession = s;
-                                                break;
-                                            }
+                                            float peak = mic.AudioMeterInformation.MasterPeakValue;
+                                            if (peak > highestPeak) highestPeak = peak;
+                                            if (!mic.AudioEndpointVolume.Mute) allMuted = false;
                                         }
                                         catch (ArgumentException)
                                         {
-                                            // Session no longer valid - skip it
-                                            continue;
-                                        }
-                                        catch (Exception sessionEx)
-                                        {
-                                            Debug.WriteLine($"[ERROR] Session access: {sessionEx.Message}");
-                                            continue;
+                                            _inputDeviceMap.Remove(target.Name.ToLowerInvariant());
                                         }
                                     }
+                                }
+                                else if (string.Equals(target.Name, "system", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    float peak = _cachedAudioDevice.AudioMeterInformation.MasterPeakValue;
+                                    float systemVol = _cachedAudioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
+                                    peak *= systemVol * systemCalibrationFactor;
+
+                                    if (peak > highestPeak) highestPeak = peak;
+                                    if (!_cachedAudioDevice.AudioEndpointVolume.Mute) allMuted = false;
+                                }
+                                else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    var mappedApps = GetAllMappedApplications();
+                                    mappedApps.Remove("unmapped");
+                                    float unmappedPeak = GetUnmappedApplicationsPeakLevelOptimized(mappedApps, sessions);
+                                    if (unmappedPeak > highestPeak) highestPeak = unmappedPeak;
+                                    if (!ctrl.IsMuted) allMuted = false;
+                                }
+                                else
+                                {
+                                    // Find specific application with reasonable limit
+                                    AudioSessionControl? matchingSession = FindSessionOptimized(sessions, target.Name.ToLowerInvariant());
 
                                     if (matchingSession != null)
                                     {
                                         try
                                         {
                                             float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
-                                            if (peak > highestPeak)
-                                                highestPeak = peak;
-
-                                            if (!matchingSession.SimpleAudioVolume.Mute)
-                                                allMuted = false;
+                                            if (peak > highestPeak) highestPeak = peak;
+                                            if (!matchingSession.SimpleAudioVolume.Mute) allMuted = false;
                                         }
                                         catch (ArgumentException)
                                         {
-                                            // Session became invalid - ignore this update
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            Debug.WriteLine($"[ERROR] Session meter: {ex.Message}");
+                                            // Session became invalid during access
+                                            continue;
                                         }
                                     }
                                 }
                             }
                             catch (Exception ex)
                             {
-                                Debug.WriteLine($"[ERROR] Output target meter {target.Name}: {ex.Message}");
+                                Debug.WriteLine($"[ERROR] Processing target {target.Name}: {ex.Message}");
                             }
                         }
 
@@ -2589,8 +2689,225 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[ERROR] Meter update: {ex.Message}");
+                Debug.WriteLine($"[ERROR] UpdateMeters: {ex.Message}");
             }
+        }
+        private AudioSessionControl? FindSessionOptimized(SessionCollection sessions, string targetName)
+        {
+            try
+            {
+                // Limit search to prevent hanging but check enough to find the session
+                int maxSessions = Math.Min(sessions.Count, 20); // Increased from 10
+
+                for (int i = 0; i < maxSessions; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        if (session == null) continue;
+
+                        int pid = (int)session.GetProcessID;
+                        if (pid <= 4) continue;
+
+                        if (_processNameCache.TryGetValue(pid, out string procName))
+                        {
+                            if (procName == targetName) return session;
+                        }
+                        else
+                        {
+                            try
+                            {
+                                using (var process = Process.GetProcessById(pid))
+                                {
+                                    if (process?.ProcessName?.ToLowerInvariant() == targetName)
+                                    {
+                                        _processNameCache[pid] = targetName;
+                                        return session;
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                                _processNameCache[pid] = "";
+                            }
+                        }
+                    }
+                    catch (ArgumentException) { continue; }
+                    catch { continue; }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Finding session optimized: {ex.Message}");
+            }
+
+            return null;
+        }
+
+        // Optimized unmapped peak level detection
+        private float GetUnmappedApplicationsPeakLevelOptimized(HashSet<string> mappedApplications, SessionCollection sessions)
+        {
+            float highestPeak = 0;
+
+            try
+            {
+                // Check fewer sessions but still get representative data
+                int maxSessions = Math.Min(sessions.Count, 15);
+
+                for (int i = 0; i < maxSessions; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        if (session == null) continue;
+
+                        int pid = (int)session.GetProcessID;
+                        if (pid <= 4) continue;
+
+                        string processName = "";
+                        if (!_processNameCache.TryGetValue(pid, out processName))
+                        {
+                            try
+                            {
+                                using (var process = Process.GetProcessById(pid))
+                                {
+                                    if (process != null && !process.HasExited)
+                                    {
+                                        processName = process.ProcessName.ToLowerInvariant();
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                                processName = "";
+                            }
+                            _processNameCache[pid] = processName;
+                        }
+
+                        if (string.IsNullOrEmpty(processName) || mappedApplications.Contains(processName))
+                            continue;
+
+                        try
+                        {
+                            float peak = session.AudioMeterInformation.MasterPeakValue;
+                            if (peak > highestPeak) highestPeak = peak;
+                        }
+                        catch { continue; }
+                    }
+                    catch { continue; }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Getting unmapped peak levels optimized: {ex.Message}");
+            }
+
+            return highestPeak;
+        }
+        // Also add this helper method:
+        private string GetProcessNameSafely(int processId)
+        {
+            if (_processNameCache.TryGetValue(processId, out string cachedName))
+            {
+                return cachedName;
+            }
+
+            if (processId <= 4)
+            {
+                _processNameCache[processId] = "";
+                return "";
+            }
+
+            string processName = "";
+            try
+            {
+                using (var process = Process.GetProcessById(processId))
+                {
+                    if (process != null && !process.HasExited)
+                    {
+                        processName = process.ProcessName?.ToLowerInvariant() ?? "";
+                    }
+                }
+            }
+            catch
+            {
+                processName = "";
+            }
+
+            _processNameCache[processId] = processName;
+            return processName;
+        }
+        private float GetControlPeakOptimized(ChannelControl ctrl)
+        {
+            // Only process first target to reduce CPU load
+            var firstTarget = ctrl.AudioTargets.FirstOrDefault();
+            if (firstTarget == null) return 0;
+
+            if (firstTarget.Name?.ToLower() == "system")
+            {
+                return _cachedAudioDevice.AudioMeterInformation.MasterPeakValue * 1.5f;
+            }
+
+            // For other targets, return cached value or skip this cycle
+            return 0; // Simplified for now
+        }
+        private AudioSessionControl? FindSessionSafely(SessionCollection sessions, string targetName)
+        {
+            try
+            {
+                // Limit search to prevent hanging
+                int maxSessions = Math.Min(sessions.Count, 15);
+
+                for (int i = 0; i < maxSessions; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        if (session == null) continue;
+
+                        int pid = (int)session.GetProcessID;
+                        if (pid <= 4) continue; // Skip system processes
+
+                        if (_processNameCache.TryGetValue(pid, out string procName))
+                        {
+                            if (procName == targetName) return session;
+                        }
+                        else
+                        {
+                            try
+                            {
+                                using (var process = Process.GetProcessById(pid))
+                                {
+                                    if (process?.ProcessName?.ToLowerInvariant() == targetName)
+                                    {
+                                        _processNameCache[pid] = targetName;
+                                        return session;
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                                _processNameCache[pid] = "";
+                            }
+                        }
+                    }
+                    catch (ArgumentException)
+                    {
+                        // Session no longer valid
+                        continue;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Finding session safely: {ex.Message}");
+            }
+
+            return null;
         }
         private HashSet<string> GetAllMappedApplications()
         {
