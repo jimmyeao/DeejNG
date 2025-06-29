@@ -6,8 +6,6 @@ using System.Linq;
 using System.Windows;
 using NAudio.CoreAudioApi;
 
-
-
 namespace DeejNG.Dialogs
 {
     public static class AudioSessionManagerHelper
@@ -18,7 +16,8 @@ namespace DeejNG.Dialogs
         {
             var sessionList = new List<SessionInfo>
             {
-                new SessionInfo { Id = "system", FriendlyName = "System" } // Always include system
+                new SessionInfo { Id = "system", FriendlyName = "System" }, // Always include system
+                new SessionInfo { Id = "unmapped", FriendlyName = "Unmapped Applications" } // Add unmapped option
             };
 
             var enumerator = new MMDeviceEnumerator();
@@ -27,7 +26,8 @@ namespace DeejNG.Dialogs
 
             var seenFriendlyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "system"
+                "system",
+                "unmapped" // Don't duplicate these
             };
 
             foreach (var used in alreadyUsed)
@@ -94,7 +94,6 @@ namespace DeejNG.Dialogs
         #endregion Public Classes
     }
 
-
     public partial class SessionPickerDialog : Window
     {
         #region Public Constructors
@@ -104,7 +103,7 @@ namespace DeejNG.Dialogs
         public SessionPickerDialog(bool isInputMode)
         {
             InitializeComponent();
-            LoadSessions(isInputMode);
+            LoadSessions(isInputMode); // This calls the bool version - keep as is
         }
 
         public SessionPickerDialog(string current)
@@ -117,7 +116,6 @@ namespace DeejNG.Dialogs
             SessionComboBox.ItemsSource = sessions;
             SessionComboBox.DisplayMemberPath = "FriendlyName";
             SessionComboBox.SelectedValuePath = "Id";
-      
 
             SessionComboBox.SelectedValue = current;
         }
@@ -143,6 +141,7 @@ namespace DeejNG.Dialogs
             Close();
         }
 
+        // Keep the original LoadSessions method for input mode - DON'T change this one
         private void LoadSessions(bool isInputMode)
         {
             var items = new List<KeyValuePair<string, string>>();
@@ -165,6 +164,9 @@ namespace DeejNG.Dialogs
             {
                 // Always include system
                 items.Add(new("System", "system"));
+
+                // Add Unmapped Applications option for output mode
+                items.Add(new("Unmapped Applications", "unmapped"));
 
                 var sessions = new MMDeviceEnumerator()
                     .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
