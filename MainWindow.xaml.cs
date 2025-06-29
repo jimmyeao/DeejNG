@@ -101,7 +101,7 @@ namespace DeejNG
         private AudioEndpointVolume _systemVolume;
         private bool _manualDisconnect = false;
         private string _userSelectedPort = string.Empty;
-
+        private MediaControlService _mediaControlService;
         private bool isDarkTheme = false;
 
         #endregion Private Fields
@@ -126,7 +126,7 @@ namespace DeejNG
             _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
             _systemVolume = _audioDevice.AudioEndpointVolume;
             _systemVolume.OnVolumeNotification += AudioEndpointVolume_OnVolumeNotification;
-
+            _mediaControlService = new MediaControlService();
             _meterTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(75)
@@ -237,7 +237,7 @@ namespace DeejNG
             _forceCleanupTimer?.Stop();
             _serialWatchdogTimer?.Stop();
             _serialReconnectTimer?.Stop();
-
+            _mediaControlService?.Dispose();
             // Clean up all registered event handlers
             foreach (var target in _registeredHandlers.Keys.ToList())
             {
@@ -1240,6 +1240,9 @@ namespace DeejNG
             {
                 var control = new ChannelControl();
 
+                // Set the media control service
+                control.SetMediaControlService(_mediaControlService);
+
                 // Set targets for this control
                 List<AudioTarget> targetsForThisControl;
 
@@ -1299,15 +1302,32 @@ namespace DeejNG
             // DON'T start meters or sync mute states until first data received
             Debug.WriteLine("[Init] Sliders generated, waiting for first hardware data before completing initialization");
         }
-        // Add a method to reset calibration state (call this when serial disconnects)
-        private void ResetCalibrationState()
+        private async void UpdateMediaControlStates()
         {
-            _isCalibrating = false;
-            _hasReceivedInitialData = false;
-            _initialSliderValues.Clear();
-            _calibrationStartTime = DateTime.MinValue;
-            Debug.WriteLine("[Calibration] Reset calibration state");
+            if (_mediaControlService == null) return;
+
+            foreach (var control in _channelControls)
+            {
+                if (control.AudioTargets.Count == 1 && !control.AudioTargets[0].IsInputDevice)
+                {
+                    var target = control.AudioTargets[0].Name;
+                    try
+                    {
+                        bool isPaused = await _mediaControlService.IsApplicationPausedAsync(target);
+                        if (isPaused != control.IsPaused)
+                        {
+                            control.SetPaused(isPaused);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[MediaControl] Error checking pause state for {target}: {ex.Message}");
+                    }
+                }
+            }
         }
+
+       
         // Method to handle serial disconnection
         private void HandleSerialDisconnection()
         {
@@ -2253,6 +2273,11 @@ namespace DeejNG
                     foreach (var pid in pidsToRemove)
                     {
                         _processNameCache.Remove(pid);
+                    }
+
+                    if (tickCount % 4 == 0) // Every 20 seconds
+                    {
+                        UpdateMediaControlStates();
                     }
 
                     // Resync and cleanup on intervals

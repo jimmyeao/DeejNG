@@ -1,5 +1,8 @@
 ﻿using DeejNG.Models;
 using System.Diagnostics;
+using DeejNG.Services;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -37,6 +40,9 @@ namespace DeejNG.Dialogs
         private float _smoothedVolume;
 
         private bool _suppressEvents = false;
+        private bool _isPaused = false;
+        private bool _supportsMediaControl = false;
+        private MediaControlService? _mediaControlService;
 
         #endregion Private Fields
 
@@ -61,10 +67,39 @@ namespace DeejNG.Dialogs
 
         public event Action<List<AudioTarget>, float, bool> VolumeOrMuteChanged;
 
+        public event PropertyChangedEventHandler? PropertyChanged;
+        protected virtual void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
         #endregion Public Events
 
         #region Public Properties
+        public bool IsPaused
+        {
+            get => _isPaused;
+            private set
+            {
+                if (_isPaused != value)
+                {
+                    _isPaused = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
 
+        public bool SupportsMediaControl
+        {
+            get => _supportsMediaControl;
+            private set
+            {
+                if (_supportsMediaControl != value)
+                {
+                    _supportsMediaControl = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
         public List<AudioTarget> AudioTargets
         {
             get => _audioTargets;
@@ -89,7 +124,18 @@ namespace DeejNG.Dialogs
                 // we should present the picker dialog
             }
         }
-        public bool IsMuted => _isMuted;
+        public bool IsMuted
+        {
+            get => _isMuted;
+            private set
+            {
+                if (_isMuted != value)
+                {
+                    _isMuted = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
         public string TargetExecutable =>
              _audioTargets.FirstOrDefault()?.Name ?? "";
 
@@ -97,9 +143,34 @@ namespace DeejNG.Dialogs
 
         #region Public Methods
 
-        /// <summary>
-        /// Handles when an audio session is disconnected
-        /// </summary>
+        public void SetMediaControlService(MediaControlService mediaControlService)
+        {
+            _mediaControlService = mediaControlService;
+            _ = CheckMediaControlSupportAsync();
+        }
+        private async Task CheckMediaControlSupportAsync()
+        {
+            if (_mediaControlService == null || _audioTargets.Count != 1 || _audioTargets[0].IsInputDevice)
+            {
+                SupportsMediaControl = false;
+                UpdateMuteButtonVisual();
+                return;
+            }
+
+            try
+            {
+                SupportsMediaControl = await _mediaControlService.SupportsMediaControlAsync(_audioTargets[0].Name);
+                Debug.WriteLine($"[MediaControl] {_audioTargets[0].Name} supports media control: {SupportsMediaControl}");
+
+                UpdateMuteButtonVisual();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[MediaControl] Error checking support for {_audioTargets[0].Name}: {ex.Message}");
+                SupportsMediaControl = false;
+                UpdateMuteButtonVisual();
+            }
+        }
         public void HandleSessionDisconnected()
         {
             // If we were controlling this session exclusively
@@ -165,8 +236,23 @@ namespace DeejNG.Dialogs
         public void SetMuted(bool muted)
         {
             _suppressEvents = true;
-            _isMuted = muted;
-            MuteButton.IsChecked = muted;
+            IsMuted = muted;
+            IsPaused = false; // External mute changes should clear pause state
+            MuteButton.IsChecked = muted || _isPaused;
+            UpdateMuteButtonVisual();
+            _suppressEvents = false;
+        }
+
+        // Add a new method to set paused state:
+        public void SetPaused(bool paused)
+        {
+            _suppressEvents = true;
+            IsPaused = paused;
+            if (paused)
+            {
+                IsMuted = false; // If paused, we're not muted
+            }
+            MuteButton.IsChecked = _isMuted || _isPaused;
             UpdateMuteButtonVisual();
             _suppressEvents = false;
         }
@@ -288,20 +374,52 @@ namespace DeejNG.Dialogs
             RaiseTargetChanged();
         }
 
-        private void MuteButton_Checked(object sender, RoutedEventArgs e)
+        private async void MuteButton_Checked(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
 
-            _isMuted = true;
+            // Try pause first if supported
+           if (_supportsMediaControl && _audioTargets.Count == 1 && !_audioTargets[0].IsInputDevice)
+           // if (_audioTargets.Count == 1 && !_audioTargets[0].IsInputDevice)
+            {
+                var result = await _mediaControlService?.PauseApplicationAsync(_audioTargets[0].Name);
+                if (result == MediaControlResult.Success)
+                {
+                    IsPaused = true;
+                    IsMuted = false; // Not technically muted, just paused
+                    UpdateMuteButtonVisual();
+                    // Don't call VolumeOrMuteChanged for pause - the app is still "playing" from an audio perspective
+                    return;
+                }
+            }
+
+            // Fall back to mute
+            IsMuted = true;
+            IsPaused = false;
             UpdateMuteButtonVisual();
             VolumeOrMuteChanged?.Invoke(_audioTargets, CurrentVolume, _isMuted);
         }
 
-        private void MuteButton_Unchecked(object sender, RoutedEventArgs e)
+        private async void MuteButton_Unchecked(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
 
-            _isMuted = false;
+            // If we were paused, try to resume
+            if (_isPaused && _supportsMediaControl && _audioTargets.Count == 1 && !_audioTargets[0].IsInputDevice)
+            {
+                var result = await _mediaControlService?.PlayApplicationAsync(_audioTargets[0].Name);
+                if (result == MediaControlResult.Success)
+                {
+                    IsPaused = false;
+                    IsMuted = false;
+                    UpdateMuteButtonVisual();
+                    return;
+                }
+            }
+
+            // Otherwise unmute
+            IsMuted = false;
+            IsPaused = false;
             UpdateMuteButtonVisual();
             VolumeOrMuteChanged?.Invoke(_audioTargets, CurrentVolume, _isMuted);
         }
@@ -326,9 +444,41 @@ namespace DeejNG.Dialogs
         {
             if (MuteButton != null)
             {
-                MuteButton.Content = _isMuted ? "Unmute" : "Mute";
-                MuteButton.Background = _isMuted ? _muteOnBrush : _muteOffBrush;
+                string buttonText;
+                Brush buttonBrush;
+                string tooltip;
+
+                if (_isPaused)
+                {
+                    buttonText = "▶️ Resume";
+                    buttonBrush = new SolidColorBrush(Color.FromRgb(255, 165, 0)); // Orange for paused
+                    tooltip = $"Resume playback of {_audioTargets.FirstOrDefault()?.Name ?? "application"}";
+                }
+                else if (_isMuted)
+                {
+                    buttonText = "🔊 Unmute";
+                    buttonBrush = _muteOnBrush; // Red for muted
+                    tooltip = $"Unmute {_audioTargets.FirstOrDefault()?.Name ?? "application"}";
+                }
+                else
+                {
+                    if (_supportsMediaControl && _audioTargets.Count == 1 && !_audioTargets[0].IsInputDevice)
+                    {
+                        buttonText = "⏸️ Pause";
+                        tooltip = $"Pause playback of {_audioTargets[0].Name} (Media Control)";
+                    }
+                    else
+                    {
+                        buttonText = "🔇 Mute";
+                        tooltip = $"Mute {_audioTargets.FirstOrDefault()?.Name ?? "application"}";
+                    }
+                    buttonBrush = _muteOffBrush; // Gray for normal state
+                }
+
+                MuteButton.Content = buttonText;
+                MuteButton.Background = buttonBrush;
                 MuteButton.Foreground = Brushes.White;
+                MuteButton.ToolTip = tooltip;
             }
         }
 
