@@ -43,7 +43,7 @@ namespace DeejNG.Services
 
         // Replace ONLY your GetProcessNameSafely method in AudioService.cs with this:
 
-        private string GetProcessNameSafely(int processId)
+        public string GetProcessNameSafely(int processId)
         {
             // Clean cache every 60 seconds (less frequent)
             if ((DateTime.Now - _lastProcessCacheCleanup).TotalSeconds > 60)

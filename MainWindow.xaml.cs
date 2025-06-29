@@ -2150,38 +2150,9 @@ namespace DeejNG
                             int processId = (int)session.GetProcessID;
                             string processName = "";
 
-                            if (!_processNameCache.TryGetValue(processId, out processName))
-                            {
-                                if (processId <= 4)
-                                {
-                                    processName = "";
-                                }
-                                else
-                                {
-                                    try
-                                    {
-                                        using (var process = Process.GetProcessById(processId))
-                                        {
-                                            if (process != null && !process.HasExited)
-                                            {
-                                                // Only use ProcessName - avoid MainModule
-                                                processName = process.ProcessName?.ToLowerInvariant() ?? "";
-                                            }
-                                            else
-                                            {
-                                                processName = "";
-                                            }
-                                        }
-                                    }
-                                    catch
-                                    {
-                                        // Any exception - just use empty string
-                                        processName = "";
-                                    }
-                                }
-
-                                _processNameCache[processId] = processName;
-                            }
+                            // Use AudioService method instead of duplicate logic
+                            processName = _audioService.GetProcessNameSafely(processId);
+                            _processNameCache[processId] = processName;
 
                             // Only process if we got a valid name
                             if (!string.IsNullOrEmpty(processName))
@@ -2494,28 +2465,9 @@ namespace DeejNG
 
                         string processName = "";
 
-                        if (!_processNameCache.TryGetValue(pid, out processName))
-                        {
-                            try
-                            {
-                                var process = Process.GetProcessById(pid);
-                                if (process != null && !process.HasExited)
-                                {
-                                    processName = process.ProcessName.ToLowerInvariant();
-                                    process.Dispose();
-                                }
-                                else
-                                {
-                                    processName = "";
-                                }
-                            }
-                            catch
-                            {
-                                processName = "";
-                            }
-
-                            _processNameCache[pid] = processName;
-                        }
+                        // Use AudioService method instead of duplicate logic
+                        processName = _audioService.GetProcessNameSafely(pid);
+                        _processNameCache[pid] = processName;
 
                         // Skip if we couldn't get a valid process name
                         if (string.IsNullOrEmpty(processName)) continue;
