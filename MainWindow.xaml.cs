@@ -463,11 +463,9 @@ namespace DeejNG
                     {
                         try
                         {
-                            if (sessionTuple.session != null)
-                            {
-                                // Properly release COM object
-                                while (Marshal.ReleaseComObject(sessionTuple.session) > 0) { }
-                            }
+
+                            ReleaseComObject(sessionTuple.session);
+                            
                         }
                         catch (Exception ex)
                         {
@@ -498,7 +496,7 @@ namespace DeejNG
                         try
                         {
                             if (sessionTuple.session != null)
-                                while (Marshal.ReleaseComObject(sessionTuple.session) > 0) { }
+                                ReleaseComObject(sessionTuple.session);
                         }
                         catch { }
                     }
@@ -858,6 +856,51 @@ namespace DeejNG
         }
 
         private void ApplyTheme(string theme)
+        {
+            try
+            {
+                isDarkTheme = theme == "Dark";
+                Uri themeUri;
+                if (theme == "Dark")
+                {
+                    themeUri = new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml");
+                    isDarkTheme = true;
+                }
+                else
+                {
+                    themeUri = new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Light.xaml");
+                    isDarkTheme = false;
+                }
+
+                // Update the theme
+                var existingTheme = Application.Current.Resources.MergedDictionaries.FirstOrDefault(d => d.Source == themeUri);
+                if (existingTheme == null)
+                {
+                    existingTheme = new ResourceDictionary() { Source = themeUri };
+                    Application.Current.Resources.MergedDictionaries.Add(existingTheme);
+                }
+
+                // Remove the other theme
+                var otherThemeUri = isDarkTheme
+                    ? new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Light.xaml")
+                    : new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml");
+
+                var currentTheme = Application.Current.Resources.MergedDictionaries.FirstOrDefault(d => d.Source == otherThemeUri);
+                if (currentTheme != null)
+                {
+                    Application.Current.Resources.MergedDictionaries.Remove(currentTheme);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Applying theme '{theme}': {ex.Message}");
+                // Fallback to default theme if there's an error
+                ApplyThemeFallback("Light");
+            }
+        }
+
+
+        private void ApplyThemeFallback(string theme)
         {
             isDarkTheme = theme == "Dark";
             Uri themeUri;
@@ -2370,8 +2413,24 @@ namespace DeejNG
             isDarkTheme = !isDarkTheme;
             string theme = isDarkTheme ? "Dark" : "Light";
             ApplyTheme(theme);
-            SaveSettings();
 
+            // Force immediate UI refresh
+            Dispatcher.Invoke(() =>
+            {
+                // Clear all explicitly set foreground colors on channel controls
+                foreach (var control in _channelControls)
+                {
+                    control.TargetTextBox.ClearValue(TextBox.ForegroundProperty);
+                    control.InvalidateVisual();
+                }
+
+                // Force a complete visual refresh
+                this.InvalidateVisual();
+                this.UpdateLayout();
+
+            }, DispatcherPriority.Render);
+
+            SaveSettings();
         }
         private void ReleaseComObject(object comObject)
         {
