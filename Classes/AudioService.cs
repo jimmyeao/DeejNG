@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using NAudio.CoreAudioApi;
+using DeejNG.Classes;
 
 namespace DeejNG.Services
 {
@@ -15,16 +16,12 @@ namespace DeejNG.Services
         private readonly Dictionary<string, SessionInfo> _sessionCache = new Dictionary<string, SessionInfo>(StringComparer.OrdinalIgnoreCase);
         private DateTime _lastRefresh = DateTime.MinValue;
         private const int CACHE_REFRESH_SECONDS = 5; // Refresh cache every 5 seconds
-        private readonly Dictionary<int, string> _processNameCache = new();
-        private DateTime _lastProcessCacheCleanup = DateTime.MinValue;
         private DateTime _lastUnmappedVolumeCall = DateTime.MinValue;
         private float _lastUnmappedVolume = -1f;
         private bool _lastUnmappedMuted = false;
         private HashSet<string> _lastMappedApps = new();
         private readonly HashSet<int> _systemProcessIds = new HashSet<int> { 0, 4, 8 }; // Known system process IDs
         private const int MAX_SESSION_CACHE_SIZE = 15; // Reduced from unlimited
-        private const int MAX_PROCESS_CACHE_SIZE = 30; // Reduced from 50
-        private DateTime _lastCacheCleanup = DateTime.MinValue;
  
 
         private class SessionInfo
@@ -39,83 +36,7 @@ namespace DeejNG.Services
         {
             RefreshSessionCache();
         }
-        // In your AudioService.cs, update the GetProcessNameSafely method:
 
-        // Replace ONLY your GetProcessNameSafely method in AudioService.cs with this:
-
-        public string GetProcessNameSafely(int processId)
-        {
-            // Clean cache every 60 seconds (less frequent)
-            if ((DateTime.Now - _lastProcessCacheCleanup).TotalSeconds > 60)
-            {
-                CleanProcessCache();
-                _lastProcessCacheCleanup = DateTime.Now;
-            }
-
-            // Check cache first
-            if (_processNameCache.TryGetValue(processId, out string cachedName))
-            {
-                return cachedName;
-            }
-
-            // Skip system processes that cause Win32Exception
-            if (_systemProcessIds.Contains(processId) || processId < 100)
-            {
-                _processNameCache[processId] = "";
-                return "";
-            }
-
-            string processName = "";
-
-            try
-            {
-                // Only use ProcessName property - never access MainModule
-                using (var process = Process.GetProcessById(processId))
-                {
-                    if (process != null && !process.HasExited)
-                    {
-                        processName = process.ProcessName?.ToLowerInvariant() ?? "";
-                    }
-                }
-            }
-            catch
-            {
-                // Any exception - just return empty
-                processName = "";
-            }
-
-            // Cache the result
-            _processNameCache[processId] = processName;
-            return processName;
-        }
-        private void CleanProcessCache()
-        {
-            try
-            {
-                // More frequent cleanup
-                if ((DateTime.Now - _lastCacheCleanup).TotalSeconds < 30) // Every 30 seconds instead of 60
-                {
-                    return;
-                }
-
-                // More aggressive size limits
-                if (_processNameCache.Count > MAX_PROCESS_CACHE_SIZE)
-                {
-                    var keysToRemove = _processNameCache.Keys.Take(_processNameCache.Count - (MAX_PROCESS_CACHE_SIZE / 2)).ToList();
-                    foreach (var key in keysToRemove)
-                    {
-                        _processNameCache.Remove(key);
-                    }
-                }
-
-                _lastCacheCleanup = DateTime.Now;
-                Debug.WriteLine($"[ProcessCache] Cache size: {_processNameCache.Count}");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ProcessCache] Error during cleanup: {ex.Message}");
-            }
-        }
         public void ApplyMuteStateToTarget(string target, bool isMuted)
         {
             if (string.IsNullOrWhiteSpace(target)) return;
@@ -176,8 +97,7 @@ namespace DeejNG.Services
                         catch { continue; } // Skip if we can't get process ID
 
                         // Try to get the process name
-                        string processName = "";
-                        processName = GetProcessNameSafely(processId);
+                        string processName = AudioUtilities.GetProcessNameSafely(processId);
                         
                         if (string.IsNullOrEmpty(processName))
                         {
@@ -302,9 +222,7 @@ namespace DeejNG.Services
                     try
                     {
                         int processId = (int)session.GetProcessID;
-                        string procName = "";
-
-                        procName = GetProcessNameSafely(processId);
+                        string procName = AudioUtilities.GetProcessNameSafely(processId);
                         
                         if (string.IsNullOrEmpty(procName))
                         {
@@ -413,7 +331,7 @@ namespace DeejNG.Services
                         }
 
                         // Get process name with caching
-                        string processName = GetProcessNameSafely(processId);
+                        string processName = AudioUtilities.GetProcessNameSafely(processId);
 
                         if (string.IsNullOrEmpty(processName))
                         {
@@ -504,7 +422,7 @@ namespace DeejNG.Services
                             continue;
                         }
 
-                        string processName = GetProcessNameSafely(processId);
+                        string processName = AudioUtilities.GetProcessNameSafely(processId);
 
                         if (string.IsNullOrEmpty(processName))
                         {
@@ -563,7 +481,7 @@ namespace DeejNG.Services
                         var session = sessions[i];
                         int processId = (int)session.GetProcessID;
 
-                        string procName = GetProcessNameSafely(processId);
+                        string procName = AudioUtilities.GetProcessNameSafely(processId);
 
                         if (string.IsNullOrEmpty(procName))
                         {
@@ -686,8 +604,8 @@ namespace DeejNG.Services
                     }
                 }
 
-                // Force process cache cleanup
-                CleanProcessCache();
+                // Force process cache cleanup via centralized utility
+                AudioUtilities.ForceCleanup();
 
                 Debug.WriteLine("[AudioService] Force cleanup completed");
             }

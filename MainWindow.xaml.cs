@@ -205,6 +205,24 @@ namespace DeejNG
                 .ToList();
         }
 
+        //public HashSet<string> GetAllMappedApplications()
+        //{
+        //    var mappedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            
+        //    foreach (var control in _channelControls)
+        //    {
+        //        foreach (var target in control.AudioTargets)
+        //        {
+        //            if (!target.IsInputDevice && !string.IsNullOrEmpty(target.Name))
+        //            {
+        //                mappedApps.Add(target.Name.ToLowerInvariant());
+        //            }
+        //        }
+        //    }
+            
+        //    return mappedApps;
+        //}
+
         #endregion Public Methods
 
         #region Protected Methods
@@ -376,6 +394,7 @@ namespace DeejNG
             {
                 Debug.WriteLine("[ForceCleanup] Starting aggressive cleanup...");
                 _audioService?.ForceCleanup();
+                AudioUtilities.ForceCleanup();
                 // More frequent and aggressive cleanup
                 CleanupSessionCacheAggressively();
                 CleanupProcessCache();
@@ -2150,8 +2169,8 @@ namespace DeejNG
                             int processId = (int)session.GetProcessID;
                             string processName = "";
 
-                            // Use AudioService method instead of duplicate logic
-                            processName = _audioService.GetProcessNameSafely(processId);
+                            // Use centralized AudioUtilities method
+                            processName = AudioUtilities.GetProcessNameSafely(processId);
                             _processNameCache[processId] = processName;
 
                             // Only process if we got a valid name
@@ -2465,8 +2484,8 @@ namespace DeejNG
 
                         string processName = "";
 
-                        // Use AudioService method instead of duplicate logic
-                        processName = _audioService.GetProcessNameSafely(pid);
+                        // Use centralized AudioUtilities method
+                        processName = AudioUtilities.GetProcessNameSafely(pid);
                         _processNameCache[pid] = processName;
 
                         // Skip if we couldn't get a valid process name
