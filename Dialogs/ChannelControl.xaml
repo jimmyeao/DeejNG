@@ -13,7 +13,7 @@
              FontFamily="{materialDesign:MaterialDesignFont}"
              TextOptions.TextFormattingMode="Ideal"
              TextOptions.TextRenderingMode="Auto"
-             Width="115" Height="347">
+             Width="129" Height="347">
 
     <Border BorderThickness="1" BorderBrush="Gray" Margin="5" Padding="5" CornerRadius="4">
         <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
@@ -31,11 +31,14 @@
             <!-- Read-only target name textbox -->
             <TextBox x:Name="TargetTextBox"
                      Margin="0,0,0,10"
-                     Width="80"
+                     Width="95"
                      HorizontalAlignment="Center"
                      TextAlignment="Center"
                      IsReadOnly="True"
-                     Style="{DynamicResource MaterialDesignOutlinedTextBox}" />
+                     Style="{DynamicResource MaterialDesignOutlinedTextBox}"
+                      Foreground="{DynamicResource MaterialDesign.Brush.Foreground}" />
+        
+                  
 
             <!-- Grid containing slider and meter -->
             <Grid>
