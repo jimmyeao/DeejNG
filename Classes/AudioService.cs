@@ -470,6 +470,7 @@ namespace DeejNG.Services
 
                 var currentTime = DateTime.Now;
                 var processedSessions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var currentProcessIds = new HashSet<int>();
 
                 // Limit the number of sessions we process
                 int maxSessionsToProcess = Math.Min(sessions.Count, 20); // Don't process more than 20 sessions
@@ -480,6 +481,7 @@ namespace DeejNG.Services
                     {
                         var session = sessions[i];
                         int processId = (int)session.GetProcessID;
+                        currentProcessIds.Add(processId);
 
                         string procName = AudioUtilities.GetProcessNameSafely(processId);
 
@@ -503,9 +505,26 @@ namespace DeejNG.Services
                                 _sessionAccessTimes.Remove(oldestKey);
                             }
 
+                            // CRITICAL FIX: Check if we have a cached session for this process name
+                            // but with a different PID (indicating app restart)
                             if (_sessionCache.TryGetValue(procName, out var existing))
                             {
-                                existing.LastSeen = currentTime;
+                                if (existing.ProcessId != processId)
+                                {
+                                    // Process restarted with new PID - replace the cached session
+                                    Debug.WriteLine($"[AudioService] Process {procName} restarted: PID {existing.ProcessId} -> {processId}");
+                                    _sessionCache[procName] = new SessionInfo
+                                    {
+                                        Session = session,
+                                        ProcessName = procName,
+                                        ProcessId = processId,
+                                        LastSeen = currentTime
+                                    };
+                                }
+                                else
+                                {
+                                    existing.LastSeen = currentTime;
+                                }
                             }
                             else
                             {
@@ -525,14 +544,20 @@ namespace DeejNG.Services
                     }
                 }
 
-                // Remove stale entries more aggressively
+                // Remove stale entries more aggressively and invalidate sessions for dead processes
                 lock (_cacheLock)
                 {
                     var staleThreshold = currentTime.AddMinutes(-2); // Reduce from default to 2 minutes
-                    var toRemove = _sessionCache
-                        .Where(kvp => kvp.Value.LastSeen < staleThreshold)
-                        .Select(kvp => kvp.Key)
-                        .ToList();
+                    var toRemove = new List<string>();
+
+                    foreach (var kvp in _sessionCache)
+                    {
+                        // Remove if too old OR if the process ID is no longer active
+                        if (kvp.Value.LastSeen < staleThreshold || !currentProcessIds.Contains(kvp.Value.ProcessId))
+                        {
+                            toRemove.Add(kvp.Key);
+                        }
+                    }
 
                     foreach (var key in toRemove)
                     {

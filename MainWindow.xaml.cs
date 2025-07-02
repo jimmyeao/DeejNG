@@ -395,11 +395,19 @@ namespace DeejNG
                 Debug.WriteLine("[ForceCleanup] Starting aggressive cleanup...");
                 _audioService?.ForceCleanup();
                 AudioUtilities.ForceCleanup();
+                
                 // More frequent and aggressive cleanup
                 CleanupSessionCacheAggressively();
                 CleanupProcessCache();
                 CleanupInputDeviceCache();
                 CleanupEventHandlers();
+
+                // IMPROVED: Reset serial communication state periodically to prevent corruption
+                if ((DateTime.Now - _lastForcedCleanup).TotalMinutes > 30) // Every 30 minutes
+                {
+                    Debug.WriteLine("[ForceCleanup] Performing periodic state reset...");
+                    PerformPeriodicStateReset();
+                }
 
                 // Force COM object cleanup
                 GC.Collect();
@@ -412,6 +420,42 @@ namespace DeejNG
             catch (Exception ex)
             {
                 Debug.WriteLine($"[ForceCleanup] Error: {ex.Message}");
+            }
+        }
+
+        // IMPROVED: Add periodic state reset to prevent long-running issues
+        private void PerformPeriodicStateReset()
+        {
+            try
+            {
+                // Clear and reset serial buffer
+                _serialBuffer.Clear();
+         
+                
+                // Reset volume application flags to ensure responsiveness
+                if (_isConnected && !_serialDisconnected)
+                {
+                    _allowVolumeApplication = true;
+                }
+                
+                // Refresh audio device reference
+                try
+                {
+                    _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                }
+                catch { }
+                
+                // Force a complete mute state resync
+                if (_allowVolumeApplication && _channelControls.Count > 0)
+                {
+                    SyncMuteStates();
+                }
+                
+                Debug.WriteLine("[PeriodicReset] State reset completed");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[PeriodicReset] Error during state reset: {ex.Message}");
             }
         }
         private void CleanupEventHandlers()
@@ -1903,12 +1947,12 @@ namespace DeejNG
                 _expectingData = true; // We're now expecting regular data
                 _noDataCounter = 0;    // Reset the counter since we got data
 
-                // Check buffer size and truncate if it gets too large
-                if (_serialBuffer.Length > 2048) // Reduced to 2KB limit
+                // IMPROVED: More aggressive buffer management to prevent long-running issues
+                if (_serialBuffer.Length > 1024) // Further reduced to 1KB limit
                 {
                     // Try to salvage partial data by finding the last newline
                     string bufferContent = _serialBuffer.ToString();
-                    int lastNewline = bufferContent.LastIndexOf('\n');
+                    int lastNewline = Math.Max(bufferContent.LastIndexOf('\n'), bufferContent.LastIndexOf('\r'));
                     
                     if (lastNewline > 0)
                     {
@@ -1923,6 +1967,8 @@ namespace DeejNG
                     }
                 }
 
+                // IMPROVED: Filter out non-printable characters and invalid data to prevent corruption
+                incoming = System.Text.RegularExpressions.Regex.Replace(incoming, @"[^\x20-\x7E\r\n]", "");
                 _serialBuffer.Append(incoming);
 
                 // Process all complete lines in the buffer
@@ -1945,15 +1991,24 @@ namespace DeejNG
                     {
                         if (buffer[newLineIndex] == '\r' && buffer[newLineIndex + 1] == '\n')
                             removeLength++;
+                        else if (buffer[newLineIndex] == '\n' && buffer[newLineIndex + 1] == '\r')
+                            removeLength++;
                     }
                     
                     _serialBuffer.Remove(0, removeLength);
 
-                    // Skip empty lines
-                    if (!string.IsNullOrWhiteSpace(line))
+                    // IMPROVED: More strict validation to prevent processing corrupt data
+                    if (!string.IsNullOrWhiteSpace(line) && line.Length < 200) // Reasonable max length check
                     {
                         Dispatcher.BeginInvoke(() => HandleSliderData(line));
                     }
+                }
+
+                // IMPROVED: Periodic buffer cleanup to prevent memory issues
+                if (_serialBuffer.Length == 0 && DateTime.Now.Minute % 5 == 0) // Every 5 minutes
+                {
+                    _serialBuffer.Clear();
+                    
                 }
             }
             catch (IOException)
@@ -1970,6 +2025,7 @@ namespace DeejNG
             {
                 Debug.WriteLine($"[ERROR] Serial read: {ex.Message}");
                 _serialBuffer.Clear(); // Clear the buffer on unexpected errors
+               
             }
         }
 
@@ -2311,8 +2367,9 @@ namespace DeejNG
                 var allMappedApps = GetAllMappedApplications();
                 var processDict = new Dictionary<int, string>();
                 var sessionsByProcess = new Dictionary<string, AudioSessionControl>(StringComparer.OrdinalIgnoreCase);
+                var sessionProcessIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-                // Build session map with proper error handling
+                // Build session map with proper error handling and PID tracking
                 for (int i = 0; i < sessions.Count; i++)
                 {
                     var s = sessions[i];
@@ -2323,28 +2380,24 @@ namespace DeejNG
 
                         if (!processDict.TryGetValue(pid, out procName))
                         {
-                            try
-                            {
-                                using (var proc = Process.GetProcessById(pid))
-                                {
-                                    procName = proc?.ProcessName?.ToLowerInvariant() ?? "";
-                                }
-                                processDict[pid] = procName;
-                            }
-                            catch
-                            {
-                                procName = "";
-                                processDict[pid] = procName;
-                            }
+                            // IMPROVED: Use centralized AudioUtilities method for consistency
+                            procName = AudioUtilities.GetProcessNameSafely(pid);
+                            processDict[pid] = procName;
                         }
 
                         if (!string.IsNullOrEmpty(procName))
                         {
-                            // Only keep the first session per process to avoid duplicates
-                            if (!sessionsByProcess.ContainsKey(procName))
+                            // CRITICAL FIX: Always update with the latest session for process restarts
+                            // Check if we already have this process but with a different PID (restart scenario)
+                            if (sessionsByProcess.TryGetValue(procName, out var existingSession) && 
+                                sessionProcessIds.TryGetValue(procName, out var existingPid) && 
+                                existingPid != pid)
                             {
-                                sessionsByProcess[procName] = s;
+                                Debug.WriteLine($"[Sync] Detected {procName} restart: PID {existingPid} -> {pid}");
                             }
+                            
+                            sessionsByProcess[procName] = s;
+                            sessionProcessIds[procName] = pid;
                         }
                     }
                     catch (Exception ex)
@@ -2383,19 +2436,20 @@ namespace DeejNG
                                     bool isMuted = matchedSession.SimpleAudioVolume.Mute;
                                     ctrl.SetMuted(isMuted);
 
-                                    // CRITICAL: Only register ONE handler per target
-                                    if (!_registeredHandlers.ContainsKey(targetName))
-                                    {
-                                        var handler = new AudioSessionEventsHandler(ctrl);
-                                        matchedSession.RegisterEventClient(handler);
-                                        _registeredHandlers[targetName] = handler;
-                                        Debug.WriteLine($"[Event] Registered NEW handler for {targetName}");
-                                    }
+                                    // CRITICAL: Always register a fresh handler for potential restarts
+                                    var handler = new AudioSessionEventsHandler(ctrl);
+                                    matchedSession.RegisterEventClient(handler);
+                                    _registeredHandlers[targetName] = handler;
+                                    Debug.WriteLine($"[Event] Registered NEW handler for {targetName} (PID: {sessionProcessIds[targetName]})");
                                 }
                                 catch (Exception ex)
                                 {
                                     Debug.WriteLine($"[ERROR] Processing session for {targetName}: {ex.Message}");
                                 }
+                            }
+                            else
+                            {
+                                Debug.WriteLine($"[Sync] No active session found for {targetName}");
                             }
                         }
                     }
