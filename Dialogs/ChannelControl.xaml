@@ -2,33 +2,29 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:skia="clr-namespace:SkiaSharp.Views.WPF;assembly=SkiaSharp.Views.WPF"
              mc:Ignorable="d"
+             Width="129" Height="347"
              TextElement.Foreground="{DynamicResource MaterialDesign.Brush.Foreground}"
-             
              Background="{DynamicResource MaterialDesign.Brush.Background}"
              TextElement.FontWeight="Regular"
              TextElement.FontSize="12"
              FontFamily="{materialDesign:MaterialDesignFont}"
              TextOptions.TextFormattingMode="Ideal"
-             TextOptions.TextRenderingMode="Auto"
-             Width="129" Height="347">
+             TextOptions.TextRenderingMode="Auto">
 
     <Border BorderThickness="1" BorderBrush="Gray" Margin="5" Padding="5" CornerRadius="4">
         <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
+
             <CheckBox x:Name="InputModeCheckBox"
-          Content="Mic Input"
-          Margin="0,5,0,5"
-          HorizontalAlignment="Center"
-          
-          Checked="InputModeCheckBox_Checked"
-          Unchecked="InputModeCheckBox_Unchecked"
-         />
+                      Content="Mic Input"
+                      Margin="0,5,0,5"
+                      HorizontalAlignment="Center"
+                      Checked="InputModeCheckBox_Checked"
+                      Unchecked="InputModeCheckBox_Unchecked"/>
 
-
-
-            <!-- Read-only target name textbox -->
             <TextBox x:Name="TargetTextBox"
                      Margin="0,0,0,10"
                      Width="95"
@@ -36,11 +32,8 @@
                      TextAlignment="Center"
                      IsReadOnly="True"
                      Style="{DynamicResource MaterialDesignOutlinedTextBox}"
-                      Foreground="{DynamicResource MaterialDesign.Brush.Foreground}" />
-        
-                  
+                     Foreground="{DynamicResource MaterialDesign.Brush.Foreground}" />
 
-            <!-- Grid containing slider and meter -->
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="40"/>
@@ -50,7 +43,6 @@
                     <ColumnDefinition Width="20"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Shared height container -->
                 <Grid Grid.ColumnSpan="5"
                       Height="180"
                       VerticalAlignment="Bottom"
@@ -61,7 +53,7 @@
                         <ColumnDefinition Width="20"/>
                     </Grid.ColumnDefinitions>
 
-                    <!-- Slider -->
+                    <!-- Volume Slider -->
                     <Slider x:Name="VolumeSlider"
                             Grid.Column="0"
                             Orientation="Vertical"
@@ -71,47 +63,12 @@
                             VerticalAlignment="Stretch"
                             Style="{DynamicResource MaterialDesignSlider}" />
 
-                    <!-- Meter -->
-                    <Grid x:Name="MeterVisuals" Grid.Column="2"
-                          Width="12"
-                          VerticalAlignment="Stretch">
-
-                        <!-- Gradient background -->
-                        <Rectangle RadiusX="2" RadiusY="2">
-                            <Rectangle.Fill>
-                                <LinearGradientBrush StartPoint="0,1" EndPoint="0,0">
-                                    <GradientStop Color="Green" Offset="0.0" />
-                                    <GradientStop Color="Yellow" Offset="0.6" />
-                                    <GradientStop Color="Red" Offset="0.9" />
-                                </LinearGradientBrush>
-                            </Rectangle.Fill>
-                        </Rectangle>
-
-                        <!-- Audio mask -->
-                        <Rectangle x:Name="AudioMask"
-                                   Fill="Black"
-                                   RadiusX="2" RadiusY="2"
-                                   VerticalAlignment="Top"/>
-
-                        <!-- Peak Hold -->
-                        <Rectangle x:Name="PeakHoldBar"
-                                   Height="2"
-                                   Width="12"
-                                   Fill="White"
-                                   VerticalAlignment="Top"
-                                   Visibility="Collapsed"/>
-
-                        <!-- Clip -->
-                        <Ellipse x:Name="ClipLight"
-                                 Width="8" Height="8"
-                                 HorizontalAlignment="Right"
-                                 VerticalAlignment="Top"
-                                 Fill="Red"
-                                 Stroke="Black"
-                                 StrokeThickness="1"
-                                 Margin="0,2,2,0"
-                                 Visibility="Collapsed"/>
-                    </Grid>
+                    <!-- SkiaSharp Meter Canvas -->
+                    <skia:SKElement x:Name="SkiaCanvas"
+                                    Grid.Column="2"
+                                    VerticalAlignment="Stretch"
+                                    HorizontalAlignment="Stretch"
+                                    PaintSurface="SkiaCanvas_PaintSurface"/>
                 </Grid>
 
                 <!-- dB Labels -->
@@ -121,19 +78,17 @@
                     <TextBlock Text="-12" FontSize="8" Margin="0,30,0,0" Style="{DynamicResource MaterialDesignTextBlock}"/>
                     <TextBlock Text="-18" FontSize="8" Margin="0,30,0,0" Style="{DynamicResource MaterialDesignTextBlock}"/>
                 </StackPanel>
-                
-            </Grid>
-            <ToggleButton x:Name="MuteButton"
-              Content="Mute"
-              Margin="0,5,0,0"
-              HorizontalAlignment="Center"
-              Checked="MuteButton_Checked"
-              Unchecked="MuteButton_Unchecked"
-              Style="{DynamicResource MaterialDesignFlatButton}" />
 
+            </Grid>
+
+            <ToggleButton x:Name="MuteButton"
+                          Content="Mute"
+                          Margin="0,5,0,0"
+                          HorizontalAlignment="Center"
+                          Checked="MuteButton_Checked"
+                          Unchecked="MuteButton_Unchecked"
+                          Style="{DynamicResource MaterialDesignFlatButton}" />
 
         </StackPanel>
-      
-
     </Border>
 </UserControl>

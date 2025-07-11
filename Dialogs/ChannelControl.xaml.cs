@@ -6,6 +6,10 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using SkiaSharp;
+using SkiaSharp.Views.Desktop;
+using SkiaSharp.Views.WPF;
+
 
 namespace DeejNG.Dialogs
 {
@@ -14,6 +18,8 @@ namespace DeejNG.Dialogs
         #region Private Fields
 
         private const float ClipThreshold = 0.98f;
+
+        private DispatcherTimer _skiaRedrawTimer;
 
         private const float SmoothingFactor = 0.1f;
 
@@ -50,6 +56,13 @@ namespace DeejNG.Dialogs
             Loaded += ChannelControl_Loaded;
             Unloaded += ChannelControl_Unloaded;
             MouseDoubleClick += ChannelControl_MouseDoubleClick;
+            _skiaRedrawTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(33)
+            };
+            _skiaRedrawTimer.Tick += (s, e) => SkiaCanvas.InvalidateVisual();
+            _skiaRedrawTimer.Start();
+
         }
 
         #endregion Public Constructors
@@ -161,8 +174,10 @@ namespace DeejNG.Dialogs
 
         public void SetMeterVisibility(bool visible)
         {
-            MeterVisuals.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            // MeterVisuals.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            SkiaCanvas.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         }
+
 
         public void SetMuted(bool muted)
         {
@@ -224,27 +239,67 @@ namespace DeejNG.Dialogs
 
         public void UpdateAudioMeter(float rawLevel)
         {
-            if (AudioMask.Visibility != Visibility.Visible)
-                return;
-
             _meterLevel += (rawLevel - _meterLevel) * 0.3f;
-            double maxHeight = VolumeSlider.ActualHeight > 0 ? VolumeSlider.ActualHeight : 180;
-
-            double maskedHeight = maxHeight * (1 - _meterLevel);
-            AudioMask.Height = maskedHeight;
-
-            double peakOffset = maxHeight * _peakLevel;
-            PeakHoldBar.Visibility = _peakLevel > 0.01 ? Visibility.Visible : Visibility.Collapsed;
-            PeakHoldBar.Margin = new Thickness(0, maxHeight - peakOffset, 0, 0);
-
-            ClipLight.Visibility = rawLevel >= ClipThreshold ? Visibility.Visible : Visibility.Collapsed;
 
             if (rawLevel > _peakLevel || DateTime.Now - _peakTimestamp > PeakHoldDuration)
             {
                 _peakLevel = rawLevel;
                 _peakTimestamp = DateTime.Now;
             }
+
+            SkiaCanvas.InvalidateVisual(); // Trigger redraw
         }
+        private void SkiaCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)
+        {
+            var canvas = e.Surface.Canvas;
+            canvas.Clear(SKColors.Transparent);
+
+            int width = e.Info.Width;
+            int height = e.Info.Height;
+
+            // Configurable LED segment layout
+            int segmentCount = 20;
+            float segmentSpacing = 2f;
+            float segmentHeight = (height - ((segmentCount - 1) * segmentSpacing)) / segmentCount;
+
+            float levelValue = _meterLevel; // 0.0 to 1.0
+            int activeSegments = (int)(levelValue * segmentCount);
+            int peakSegment = (int)(_peakLevel * segmentCount);
+
+            for (int i = 0; i < segmentCount; i++)
+            {
+                float top = i * (segmentHeight + segmentSpacing);
+                float bottom = top + segmentHeight;
+
+                SKColor color = i switch
+                {
+                    <= 12 => SKColors.LimeGreen,
+                    <= 16 => SKColors.Yellow,
+                    _ => SKColors.Red
+                };
+
+                bool isActive = i < activeSegments;
+                bool isPeak = i == peakSegment;
+
+                using var paint = new SKPaint
+                {
+                    Color = isPeak ? SKColors.White : (isActive ? color : SKColors.DarkSlateGray),
+                    Style = SKPaintStyle.Fill,
+                    IsAntialias = true
+                };
+
+                // Optional glow
+                if (isActive || isPeak)
+                {
+                    paint.ImageFilter = SKImageFilter.CreateDropShadow(0, 0, 2, 2, color.WithAlpha(128));
+                }
+
+                canvas.DrawRoundRect(
+                    new SKRoundRect(new SKRect(0, height - bottom, width, height - top), 2, 2),
+                    paint);
+            }
+        }
+
 
         #endregion Public Methods
 
