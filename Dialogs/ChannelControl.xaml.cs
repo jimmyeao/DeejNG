@@ -1,4 +1,5 @@
 ﻿using DeejNG.Models;
+using DeejNG.Classes;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
@@ -47,6 +48,7 @@ namespace DeejNG.Dialogs
         {
             InitializeComponent();
             Loaded += ChannelControl_Loaded;
+            Unloaded += ChannelControl_Unloaded;
             MouseDoubleClick += ChannelControl_MouseDoubleClick;
         }
 
@@ -252,6 +254,11 @@ namespace DeejNG.Dialogs
         {
             _layoutReady = true;
             UpdateMuteButtonVisual();
+        }
+
+        private void ChannelControl_Unloaded(object sender, RoutedEventArgs e)
+        {
+            // Cleanup is now handled by the decoupled architecture in MainWindow
         }
 
         private void ChannelControl_MouseDoubleClick(object sender, MouseButtonEventArgs e)

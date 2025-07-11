@@ -209,23 +209,74 @@ namespace DeejNG
                 .ToList();
         }
 
-        //public HashSet<string> GetAllMappedApplications()
-        //{
-        //    var mappedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> GetAllMappedApplications()
+        {
+            var mappedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             
-        //    foreach (var control in _channelControls)
-        //    {
-        //        foreach (var target in control.AudioTargets)
-        //        {
-        //            if (!target.IsInputDevice && !string.IsNullOrEmpty(target.Name))
-        //            {
-        //                mappedApps.Add(target.Name.ToLowerInvariant());
-        //            }
-        //        }
-        //    }
+            foreach (var control in _channelControls)
+            {
+                foreach (var target in control.AudioTargets)
+                {
+                    if (!target.IsInputDevice && !string.IsNullOrEmpty(target.Name))
+                    {
+                        mappedApps.Add(target.Name.ToLowerInvariant());
+                    }
+                }
+            }
             
-        //    return mappedApps;
-        //}
+            return mappedApps;
+        }
+
+        #region Decoupled Handler Support
+
+        /// <summary>
+        /// Finds the ChannelControl that currently controls the specified target
+        /// </summary>
+        /// <param name="targetName">The target application name</param>
+        /// <returns>The control managing this target, or null if not found</returns>
+        public ChannelControl FindControlForTarget(string targetName)
+        {
+            if (string.IsNullOrWhiteSpace(targetName)) return null;
+            
+            string normalizedTarget = targetName.ToLowerInvariant();
+            
+            foreach (var control in _channelControls)
+            {
+                foreach (var target in control.AudioTargets)
+                {
+                    if (!target.IsInputDevice && 
+                        string.Equals(target.Name, normalizedTarget, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return control;
+                    }
+                }
+            }
+            
+            return null;
+        }
+
+        /// <summary>
+        /// Handles session disconnection events from the decoupled handlers
+        /// </summary>
+        /// <param name="targetName">The target that disconnected</param>
+        public void HandleSessionDisconnected(string targetName)
+        {
+            try
+            {
+                // Clean up the handler registration
+                if (_registeredHandlers.TryGetValue(targetName, out var handler))
+                {
+                    _registeredHandlers.Remove(targetName);
+                    Debug.WriteLine($"[MainWindow] Removed handler for disconnected session: {targetName}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[MainWindow] Error handling session disconnect for {targetName}: {ex.Message}");
+            }
+        }
+
+        #endregion
 
         #endregion Public Methods
 
@@ -255,6 +306,8 @@ namespace DeejNG
                     Debug.WriteLine($"[ERROR] Failed to unregister handler for {target} on close: {ex.Message}");
                 }
             }
+            
+            // Session tracking is now handled by the decoupled handlers
 
             // Clean up serial port
             try
@@ -338,8 +391,7 @@ namespace DeejNG
         #region Private Methods
         // Improved automatic serial connection logic
         // Replace these methods in your MainWindow.xaml.cs
-
-      
+        //version    
 
         // NEW: Setup automatic serial connection with retry logic
         private void SetupAutomaticSerialConnection()
@@ -2374,51 +2426,98 @@ namespace DeejNG
                 var audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var sessions = audioDevice.AudioSessionManager.Sessions;
 
-                // IMPROVED FIX: Build session map first for O(M + N) complexity instead of O(N*M)
-                var sessionsByProcessName = new Dictionary<string, AudioSessionControl>(StringComparer.OrdinalIgnoreCase);
-                var sessionProcessIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                
-                // Build the session map once (O(M))
-                for (int i = 0; i < sessions.Count; i++)
+                // CRITICAL FIX: Unregister ALL existing handlers first to prevent accumulation
+                var handlersToRemove = new List<string>(_registeredHandlers.Keys);
+                foreach (var target in handlersToRemove)
                 {
                     try
                     {
-                        var session = sessions[i];
-                        int pid = (int)session.GetProcessID;
-                        string processName = AudioUtilities.GetProcessNameSafely(pid);
-                        
-                        if (!string.IsNullOrEmpty(processName))
+                        _registeredHandlers.Remove(target);
+                        Debug.WriteLine($"[Sync] Unregistered handler for {target}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[ERROR] Failed to unregister handler for {target}: {ex.Message}");
+                    }
+                }
+                _registeredHandlers.Clear();
+
+                var allMappedApps = GetAllMappedApplications();
+                var processDict = new Dictionary<int, string>();
+                var sessionsByProcess = new Dictionary<string, AudioSessionControl>(StringComparer.OrdinalIgnoreCase);
+                var sessionProcessIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+                // Build session map with proper error handling and PID tracking
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    var s = sessions[i];
+                    try
+                    {
+                        int pid = (int)s.GetProcessID;
+                        string procName;
+
+                        if (!processDict.TryGetValue(pid, out procName))
                         {
-                            sessionsByProcessName[processName] = session;
-                            sessionProcessIds[processName] = pid;
+                            procName = AudioUtilities.GetProcessNameSafely(pid);
+                            processDict[pid] = procName;
+                        }
+
+                        if (!string.IsNullOrEmpty(procName))
+                        {
+                            // Check for process restarts
+                            if (sessionsByProcess.TryGetValue(procName, out var existingSession) && 
+                                sessionProcessIds.TryGetValue(procName, out var existingPid) && 
+                                existingPid != pid)
+                            {
+                                Debug.WriteLine($"[Sync] Detected {procName} restart: PID {existingPid} -> {pid}");
+                            }
+                            
+                            sessionsByProcess[procName] = s;
+                            sessionProcessIds[procName] = pid;
                         }
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"[Sync] Error processing session {i}: {ex.Message}");
-                        continue;
+                        Debug.WriteLine($"[ERROR] Mapping session in SyncMuteStates: {ex.Message}");
                     }
                 }
-                
-                // Now check existing handlers efficiently (O(N))
-                var existingHandlerTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var kvp in _registeredHandlers)
+
+                // Get all unique targets across all controls
+                var allTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var ctrl in _channelControls)
                 {
-                    string target = kvp.Key;
-                    if (sessionsByProcessName.ContainsKey(target))
+                    foreach (var target in ctrl.AudioTargets)
                     {
-                        existingHandlerTargets.Add(target);
-                        Debug.WriteLine($"[Sync] Found existing handler for {target} (PID: {sessionProcessIds[target]})");
+                        if (!target.IsInputDevice && !string.IsNullOrWhiteSpace(target.Name))
+                        {
+                            allTargets.Add(target.Name.ToLowerInvariant());
+                        }
                     }
                 }
-                
-                // Clear the handlers dictionary - we'll rebuild it properly
-                _registeredHandlers.Clear();
 
-                var allMappedApps = GetAllMappedApplications();
-                
-                // Session map already built above - no need to rebuild
+                // Register handlers for each unique target (not per control)
+                foreach (var targetName in allTargets)
+                {
+                    if (targetName == "system" || targetName == "unmapped") continue;
 
+                    if (sessionsByProcess.TryGetValue(targetName, out var matchedSession))
+                    {
+                        try
+                        {
+                            // Create ONE decoupled handler per target
+                            var handler = new DecoupledAudioSessionEventsHandler(this, targetName);
+                            matchedSession.RegisterEventClient(handler);
+                            _registeredHandlers[targetName] = handler;
+                            Debug.WriteLine($"[Event] Registered DECOUPLED handler for {targetName} (PID: {sessionProcessIds[targetName]})");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[ERROR] Registering handler for {targetName}: {ex.Message}");
+                        }
+                    }
+                }
+
+                // Apply mute states to all controls
                 foreach (var ctrl in _channelControls)
                 {
                     var targets = ctrl.AudioTargets;
@@ -2442,31 +2541,16 @@ namespace DeejNG
                         }
                         else
                         {
-                            if (sessionsByProcessName.TryGetValue(targetName, out var matchedSession))
+                            if (sessionsByProcess.TryGetValue(targetName, out var matchedSession))
                             {
                                 try
                                 {
                                     bool isMuted = matchedSession.SimpleAudioVolume.Mute;
                                     ctrl.SetMuted(isMuted);
-
-                                    // CRITICAL FIX: Always register handler - reassignments need fresh handlers
-                                    // Even if a session had a handler before, the control may have changed
-                                    var handler = new AudioSessionEventsHandler(ctrl);
-                                    matchedSession.RegisterEventClient(handler);
-                                    _registeredHandlers[targetName] = handler;
-                                    
-                                    if (existingHandlerTargets.Contains(targetName))
-                                    {
-                                        Debug.WriteLine($"[Event] Replaced handler for {targetName} (PID: {sessionProcessIds[targetName]}) - may be reassigned to different slider");
-                                    }
-                                    else
-                                    {
-                                        Debug.WriteLine($"[Event] Registered NEW handler for {targetName} (PID: {sessionProcessIds[targetName]})");
-                                    }
                                 }
                                 catch (Exception ex)
                                 {
-                                    Debug.WriteLine($"[ERROR] Processing session for {targetName}: {ex.Message}");
+                                    Debug.WriteLine($"[ERROR] Getting mute state for {targetName}: {ex.Message}");
                                 }
                             }
                             else
@@ -2478,6 +2562,7 @@ namespace DeejNG
                 }
 
                 _hasSyncedMuteStates = true;
+                Debug.WriteLine($"[Sync] Registered {_registeredHandlers.Count} decoupled handlers for unique targets");
             }
             catch (Exception ex)
             {
@@ -2910,37 +2995,75 @@ namespace DeejNG
 
             return highestPeak;
         }
-        // Also add this helper method:
-      
-        private HashSet<string> GetAllMappedApplications()
-        {
-            var mappedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var ctrl in _channelControls)
-            {
-                foreach (var target in ctrl.AudioTargets)
-                {
-                    if (!target.IsInputDevice && !string.IsNullOrWhiteSpace(target.Name))
-                    {
-                        mappedApps.Add(target.Name.ToLowerInvariant());
-                    }
-                }
-            }
-
-            return mappedApps;
-        }
         #endregion Private Methods
 
         #region Private Classes
 
+        /// <summary>
+        /// Handles centralized audio session events and dispatches them to the correct control
+        /// based on current slider configuration - this solves the app reassignment issue
+        /// </summary>
+        public class DecoupledAudioSessionEventsHandler : IAudioSessionEventsHandler
+        {
+            private readonly MainWindow _mainWindow;
+            private readonly string _targetName;
+
+            public DecoupledAudioSessionEventsHandler(MainWindow mainWindow, string targetName)
+            {
+                _mainWindow = mainWindow;
+                _targetName = targetName;
+            }
+
+            public void OnSimpleVolumeChanged(float volume, bool mute)
+            {
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var control = _mainWindow.FindControlForTarget(_targetName);
+                    control?.SetMuted(mute);
+                });
+            }
+
+            public void OnVolumeChanged(float volume, bool mute)
+            {
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var control = _mainWindow.FindControlForTarget(_targetName);
+                    control?.SetMuted(mute);
+                });
+            }
+
+            public void OnDisplayNameChanged(string displayName) { }
+            public void OnIconPathChanged(string iconPath) { }
+            public void OnChannelVolumeChanged(uint channelCount, nint newVolumes, uint channelIndex) { }
+            public void OnGroupingParamChanged(ref Guid groupingId) { }
+
+            public void OnStateChanged(AudioSessionState state)
+            {
+                if (state == AudioSessionState.AudioSessionStateExpired)
+                {
+                    System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        var control = _mainWindow.FindControlForTarget(_targetName);
+                        control?.HandleSessionExpired();
+                    });
+                }
+            }
+
+            public void OnSessionDisconnected(AudioSessionDisconnectReason disconnectReason)
+            {
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                {
+                    Debug.WriteLine($"[DecoupledHandler] Session disconnected for {_targetName}: {disconnectReason}");
+                    _mainWindow.HandleSessionDisconnected(_targetName);
+                });
+            }
+        }
         private class AppSettings
         {
             #region Public Properties
 
             public bool DisableSmoothing { get; set; }
-            // 👇 ADD THIS:
             public List<bool> InputModes { get; set; } = new();
-
             public bool IsDarkTheme { get; set; }
             public bool IsSliderInverted { get; set; }
             public List<bool> MuteStates { get; set; } = new();
@@ -2955,6 +3078,8 @@ namespace DeejNG
 
         #endregion Private Classes
     }
+    
+
     static class IconHandler
     {
 
