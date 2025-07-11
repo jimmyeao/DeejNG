@@ -21,6 +21,9 @@
 
             <Style TargetType="{x:Type Button}" BasedOn="{StaticResource MaterialDesignRaisedButton}">
                 <Setter Property="materialDesign:ButtonAssist.CornerRadius" Value="20" />
+                <Setter Property="materialDesign:RippleAssist.IsDisabled" Value="True"/>
+                <Setter Property="Focusable" Value="False"/>
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             </Style>
 
         </ResourceDictionary>

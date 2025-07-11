@@ -17,65 +17,111 @@
 
     <UserControl.Resources>
         <!-- Mute Button Style -->
-        <Style x:Key="MixerMuteButtonStyle" TargetType="ToggleButton">
-            <Setter Property="Background" Value="#333"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="FontWeight" Value="Bold"/>
-            <Setter Property="Padding" Value="6,2"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="BorderBrush" Value="#666"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Effect">
+        <Style x:Key="MixerMuteButtonStyle" TargetType="ToggleButton" BasedOn="{x:Null}">
+            <Setter Property="Background" Value="#333" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="BorderBrush" Value="#666" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Template">
                 <Setter.Value>
-                    <DropShadowEffect BlurRadius="4" ShadowDepth="0" Color="#444"/>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="{TemplateBinding Background}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        CornerRadius="3"
+                        Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      RecognizesAccessKey="True"/>
+                        </Border>
+                    </ControlTemplate>
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#555"/>
+                    <Setter Property="Background" Value="#555" />
                 </Trigger>
                 <Trigger Property="IsChecked" Value="True">
-                    <Setter Property="Background" Value="Red"/>
-                    <Setter Property="Foreground" Value="White"/>
-                    <Setter Property="Content" Value="Unmute"/>
+                    <Setter Property="Background" Value="Red" />
+                    <Setter Property="Foreground" Value="White" />
+                    <Setter Property="Content" Value="Unmute" />
                 </Trigger>
             </Style.Triggers>
         </Style>
 
         <!-- Studio-style Fader Slider -->
-        <Style x:Key="StudioFaderSliderStyle" TargetType="Slider">
+        <!-- Studio-style Fader Slider with NO hover effects -->
+        <Style x:Key="StudioFaderSliderStyle" TargetType="Slider" BasedOn="{x:Null}">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Slider">
-                        <Grid Width="30" Margin="0">
-                            <!-- Narrow Track as background -->
-                            <Rectangle Fill="#444" Width="3"
-                               HorizontalAlignment="Center" VerticalAlignment="Stretch"
+                        <Grid Width="30" Background="Transparent">
+                            <!-- Track background -->
+                            <Rectangle Fill="#444"
+                               Width="3"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Stretch"
                                RadiusX="2" RadiusY="2"/>
 
                             <Track x:Name="PART_Track"
-                           IsDirectionReversed="false"
                            Orientation="Vertical"
+                           Focusable="False"
+                           FocusVisualStyle="{x:Null}"
+                         
                            VerticalAlignment="Stretch"
                            HorizontalAlignment="Center">
+
                                 <Track.DecreaseRepeatButton>
-                                    <RepeatButton Command="Slider.DecreaseLarge"
-                                          Style="{x:Null}" IsTabStop="False"
-                                          Background="Transparent" BorderBrush="Transparent"/>
+                                    <RepeatButton Style="{x:Null}"
+                                          Background="Transparent"
+                                          BorderBrush="Transparent"
+                                          IsTabStop="False"
+                                          Focusable="False"
+                                          OverridesDefaultStyle="True"
+                                          Template="{x:Null}"/>
                                 </Track.DecreaseRepeatButton>
 
                                 <Track.Thumb>
                                     <Thumb Width="22" Height="12"
                                    Background="#aaa"
-                                   BorderBrush="#444" BorderThickness="1"
+                                   BorderBrush="#444" 
+                                   BorderThickness="1"
                                    Cursor="Hand"
-                                   SnapsToDevicePixels="True"/>
+                                   SnapsToDevicePixels="True"
+                                   Focusable="False"
+                                   FocusVisualStyle="{x:Null}"
+                                   IsTabStop="False"
+                                   OverridesDefaultStyle="True">
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="2"
+                                                SnapsToDevicePixels="True">
+                                                    <!-- No hover triggers here -->
+                                                </Border>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
                                 </Track.Thumb>
 
                                 <Track.IncreaseRepeatButton>
-                                    <RepeatButton Command="Slider.IncreaseLarge"
-                                          Style="{x:Null}" IsTabStop="False"
-                                          Background="Transparent" BorderBrush="Transparent"/>
+                                    <RepeatButton Style="{x:Null}"
+                                          Background="Transparent"
+                                          BorderBrush="Transparent"
+                                          IsTabStop="False"
+                                          Focusable="False"
+                                          OverridesDefaultStyle="True"
+                                          Template="{x:Null}"/>
                                 </Track.IncreaseRepeatButton>
                             </Track>
                         </Grid>
@@ -83,7 +129,6 @@
                 </Setter.Value>
             </Setter>
         </Style>
-
     </UserControl.Resources>
 
     <Border BorderThickness="1" BorderBrush="Gray" Margin="5" Padding="5" CornerRadius="4">
@@ -126,12 +171,16 @@
 
                     <!-- Volume Slider -->
                     <Slider x:Name="VolumeSlider"
-                            Grid.Column="0"
-                            Orientation="Vertical"
-                            Minimum="0"
-                            Maximum="1"
-                            VerticalAlignment="Stretch"
-                            Style="{StaticResource StudioFaderSliderStyle}" />
+                        Grid.Column="0"
+                        Orientation="Vertical"
+                        Minimum="0"
+                        Maximum="1"
+                        VerticalAlignment="Stretch"
+                        Focusable="False"
+                        FocusVisualStyle="{x:Null}"
+                        Style="{StaticResource StudioFaderSliderStyle}" />
+
+
 
                     <!-- SkiaSharp Meter Canvas -->
                     <skia:SKElement x:Name="SkiaCanvas"
