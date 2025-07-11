@@ -36,6 +36,7 @@ namespace DeejNG
         // You'll also need to make _channelControls accessible to allow the ChannelControl to get its index
         // In MainWindow.xaml.cs, change the private field to:
         public List<ChannelControl> _channelControls = new();
+        private static readonly System.Text.RegularExpressions.Regex _invalidSerialCharsRegex = new System.Text.RegularExpressions.Regex(@"[^\x20-\x7E\r\n]", System.Text.RegularExpressions.RegexOptions.Compiled);
 
         #endregion Public Fields
 
@@ -1993,7 +1994,7 @@ namespace DeejNG
                 }
 
                 // IMPROVED: Filter out non-printable characters and invalid data to prevent corruption
-                incoming = System.Text.RegularExpressions.Regex.Replace(incoming, @"[^\x20-\x7E\r\n]", "");
+                incoming = _invalidSerialCharsRegex.Replace(incoming, "");
                 _serialBuffer.Append(incoming);
 
                 // Process all complete lines in the buffer
@@ -2373,63 +2374,50 @@ namespace DeejNG
                 var audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var sessions = audioDevice.AudioSessionManager.Sessions;
 
-                // CRITICAL FIX: Unregister ALL existing handlers first to prevent accumulation
-                var handlersToRemove = new List<string>(_registeredHandlers.Keys);
-                foreach (var target in handlersToRemove)
-                {
-                    try
-                    {
-                        _registeredHandlers.Remove(target);
-                        Debug.WriteLine($"[Sync] Unregistered handler for {target}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[ERROR] Failed to unregister handler for {target}: {ex.Message}");
-                    }
-                }
-                _registeredHandlers.Clear(); // Ensure it's completely clear
-
-                var allMappedApps = GetAllMappedApplications();
-                var processDict = new Dictionary<int, string>();
-                var sessionsByProcess = new Dictionary<string, AudioSessionControl>(StringComparer.OrdinalIgnoreCase);
+                // IMPROVED FIX: Build session map first for O(M + N) complexity instead of O(N*M)
+                var sessionsByProcessName = new Dictionary<string, AudioSessionControl>(StringComparer.OrdinalIgnoreCase);
                 var sessionProcessIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-                // Build session map with proper error handling and PID tracking
+                
+                // Build the session map once (O(M))
                 for (int i = 0; i < sessions.Count; i++)
                 {
-                    var s = sessions[i];
                     try
                     {
-                        int pid = (int)s.GetProcessID;
-                        string procName;
-
-                        if (!processDict.TryGetValue(pid, out procName))
+                        var session = sessions[i];
+                        int pid = (int)session.GetProcessID;
+                        string processName = AudioUtilities.GetProcessNameSafely(pid);
+                        
+                        if (!string.IsNullOrEmpty(processName))
                         {
-                            // IMPROVED: Use centralized AudioUtilities method for consistency
-                            procName = AudioUtilities.GetProcessNameSafely(pid);
-                            processDict[pid] = procName;
-                        }
-
-                        if (!string.IsNullOrEmpty(procName))
-                        {
-                            // CRITICAL FIX: Always update with the latest session for process restarts
-                            // Check if we already have this process but with a different PID (restart scenario)
-                            if (sessionsByProcess.TryGetValue(procName, out var existingSession) && 
-                                sessionProcessIds.TryGetValue(procName, out var existingPid) && 
-                                existingPid != pid)
-                            {
-                                Debug.WriteLine($"[Sync] Detected {procName} restart: PID {existingPid} -> {pid}");
-                            }
-                            
-                            sessionsByProcess[procName] = s;
-                            sessionProcessIds[procName] = pid;
+                            sessionsByProcessName[processName] = session;
+                            sessionProcessIds[processName] = pid;
                         }
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"[ERROR] Mapping session in SyncMuteStates: {ex.Message}");
+                        Debug.WriteLine($"[Sync] Error processing session {i}: {ex.Message}");
+                        continue;
                     }
                 }
+                
+                // Now check existing handlers efficiently (O(N))
+                var existingHandlerTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var kvp in _registeredHandlers)
+                {
+                    string target = kvp.Key;
+                    if (sessionsByProcessName.ContainsKey(target))
+                    {
+                        existingHandlerTargets.Add(target);
+                        Debug.WriteLine($"[Sync] Found existing handler for {target} (PID: {sessionProcessIds[target]})");
+                    }
+                }
+                
+                // Clear the handlers dictionary - we'll rebuild it properly
+                _registeredHandlers.Clear();
+
+                var allMappedApps = GetAllMappedApplications();
+                
+                // Session map already built above - no need to rebuild
 
                 foreach (var ctrl in _channelControls)
                 {
@@ -2454,18 +2442,27 @@ namespace DeejNG
                         }
                         else
                         {
-                            if (sessionsByProcess.TryGetValue(targetName, out var matchedSession))
+                            if (sessionsByProcessName.TryGetValue(targetName, out var matchedSession))
                             {
                                 try
                                 {
                                     bool isMuted = matchedSession.SimpleAudioVolume.Mute;
                                     ctrl.SetMuted(isMuted);
 
-                                    // CRITICAL: Always register a fresh handler for potential restarts
+                                    // CRITICAL FIX: Always register handler - reassignments need fresh handlers
+                                    // Even if a session had a handler before, the control may have changed
                                     var handler = new AudioSessionEventsHandler(ctrl);
                                     matchedSession.RegisterEventClient(handler);
                                     _registeredHandlers[targetName] = handler;
-                                    Debug.WriteLine($"[Event] Registered NEW handler for {targetName} (PID: {sessionProcessIds[targetName]})");
+                                    
+                                    if (existingHandlerTargets.Contains(targetName))
+                                    {
+                                        Debug.WriteLine($"[Event] Replaced handler for {targetName} (PID: {sessionProcessIds[targetName]}) - may be reassigned to different slider");
+                                    }
+                                    else
+                                    {
+                                        Debug.WriteLine($"[Event] Registered NEW handler for {targetName} (PID: {sessionProcessIds[targetName]})");
+                                    }
                                 }
                                 catch (Exception ex)
                                 {
