@@ -16,18 +16,28 @@ namespace DeejNG.Dialogs
     public partial class ChannelControl : UserControl
     {
         #region Private Fields
+        private const int SegmentCount = 15;
+        private readonly float SegmentSpacing = 4f;
+
+        private SKRect[] _segmentRects = Array.Empty<SKRect>();
+        private int _cachedWidth = 0;
+        private int _cachedHeight = 0;
+
+        private float _previousMeterLevel = 0f;
+        private float _peakFade = 1f;
 
         private const float ClipThreshold = 0.98f;
 
         private DispatcherTimer _skiaRedrawTimer;
 
-        private const float SmoothingFactor = 0.1f;
+        private const float SmoothingFactor = 0.3f;
 
         private readonly Brush _muteOffBrush = Brushes.Gray;
 
         private readonly Brush _muteOnBrush = new SolidColorBrush(Color.FromRgb(255, 64, 64));
 
-        private readonly TimeSpan PeakHoldDuration = TimeSpan.FromSeconds(1);
+        private readonly TimeSpan PeakHoldDuration = TimeSpan.FromMilliseconds(500); // was 1000ms
+
 
         private List<AudioTarget> _audioTargets = new();
 
@@ -56,12 +66,11 @@ namespace DeejNG.Dialogs
             Loaded += ChannelControl_Loaded;
             Unloaded += ChannelControl_Unloaded;
             MouseDoubleClick += ChannelControl_MouseDoubleClick;
-            _skiaRedrawTimer = new DispatcherTimer
+            CompositionTarget.Rendering += (s, e) =>
             {
-                Interval = TimeSpan.FromMilliseconds(33)
+                SkiaCanvas?.InvalidateVisual();
             };
-            _skiaRedrawTimer.Tick += (s, e) => SkiaCanvas.InvalidateVisual();
-            _skiaRedrawTimer.Start();
+
 
         }
 
@@ -239,16 +248,36 @@ namespace DeejNG.Dialogs
 
         public void UpdateAudioMeter(float rawLevel)
         {
-            _meterLevel += (rawLevel - _meterLevel) * 0.3f;
+            const float noiseFloor = 0.02f; // or 0.01f for ultra-sensitive
+
+            if (rawLevel < noiseFloor)
+            {
+                _meterLevel = 0f;
+                _peakLevel = 0f;
+                _peakFade = 0f;
+                SkiaCanvas.InvalidateVisual();
+                return;
+            }
+
+            // Fast rise, slow fall
+            if (rawLevel > _meterLevel)
+                _meterLevel = rawLevel;
+            else
+                _meterLevel += (rawLevel - _meterLevel) * 0.5f;
 
             if (rawLevel > _peakLevel || DateTime.Now - _peakTimestamp > PeakHoldDuration)
             {
                 _peakLevel = rawLevel;
                 _peakTimestamp = DateTime.Now;
+                _peakFade = 1f;
             }
 
-            SkiaCanvas.InvalidateVisual(); // Trigger redraw
+            _peakFade -= 0.05f;
+            _peakFade = Math.Clamp(_peakFade, 0f, 1f);
+
+            SkiaCanvas.InvalidateVisual();
         }
+
         private void SkiaCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)
         {
             var canvas = e.Surface.Canvas;
@@ -257,12 +286,13 @@ namespace DeejNG.Dialogs
             int width = e.Info.Width;
             int height = e.Info.Height;
 
-            // Configurable LED segment layout
-            int segmentCount = 20;
-            float segmentSpacing = 2f;
-            float segmentHeight = (height - ((segmentCount - 1) * segmentSpacing)) / segmentCount;
+            // Segment config
+            const int segmentCount = 16;
+            const float segmentSpacing = 3f;
+            float totalSpacing = (segmentCount - 1) * segmentSpacing;
+            float segmentHeight = (height - totalSpacing) / segmentCount;
 
-            float levelValue = _meterLevel; // 0.0 to 1.0
+            float levelValue = _meterLevel;
             int activeSegments = (int)(levelValue * segmentCount);
             int peakSegment = (int)(_peakLevel * segmentCount);
 
@@ -273,30 +303,38 @@ namespace DeejNG.Dialogs
 
                 SKColor color = i switch
                 {
-                    <= 12 => SKColors.LimeGreen,
-                    <= 16 => SKColors.Yellow,
+                    <= 10 => SKColors.LimeGreen,
+                    <= 13 => SKColors.Yellow,
                     _ => SKColors.Red
                 };
 
                 bool isActive = i < activeSegments;
                 bool isPeak = i == peakSegment;
 
+                var segmentRect = new SKRect(0, height - bottom, width, height - top);
+                var segmentRound = new SKRoundRect(segmentRect, 3f, 3f);
+
                 using var paint = new SKPaint
                 {
-                    Color = isPeak ? SKColors.White : (isActive ? color : SKColors.DarkSlateGray),
-                    Style = SKPaintStyle.Fill,
-                    IsAntialias = true
+                    Color = isPeak
+                        ? SKColors.White.WithAlpha((byte)(_peakFade * 255))
+                        : isActive ? color : new SKColor(60, 60, 60), // dim inactive
+                    IsAntialias = true,
+                    Style = SKPaintStyle.Fill
                 };
 
-                // Optional glow
-                if (isActive || isPeak)
-                {
-                    paint.ImageFilter = SKImageFilter.CreateDropShadow(0, 0, 2, 2, color.WithAlpha(128));
-                }
+                canvas.DrawRoundRect(segmentRound, paint);
+            }
 
-                canvas.DrawRoundRect(
-                    new SKRoundRect(new SKRect(0, height - bottom, width, height - top), 2, 2),
-                    paint);
+            // Optional clip flash
+            if (_meterLevel >= ClipThreshold)
+            {
+                using var clipPaint = new SKPaint
+                {
+                    Color = SKColors.Red.WithAlpha(180),
+                    IsAntialias = false
+                };
+                canvas.DrawRect(0, 0, width, 3, clipPaint);
             }
         }
 

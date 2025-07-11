@@ -2776,7 +2776,7 @@ namespace DeejNG
 
                 // Get sessions more frequently for responsive meters
                 SessionCollection sessions = null;
-                if ((DateTime.Now - _lastMeterSessionRefresh).TotalMilliseconds > 500) // Back to 500ms from 2000ms
+                if ((DateTime.Now - _lastMeterSessionRefresh).TotalMilliseconds > 100) // Back to 500ms from 2000ms
                 {
                     sessions = _cachedAudioDevice.AudioSessionManager.Sessions;
                     _cachedSessionsForMeters = sessions;
