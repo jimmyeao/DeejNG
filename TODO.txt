@@ -5,5 +5,3 @@
 //COMPLETED: ✅ Fixed critical event handler memory leak - handlers now properly unregistered from COM sessions
 //COMPLETED: ✅ Fixed critical functional bug identified in code review - app reassignment between sliders now works
 //COMPLETED: ✅ Fixed performance issue - reduced O(N*M) complexity to O(M + N) for handler sync
-//COMPLETED: ✅ Fixed handler accumulation issue - handlers no longer registered multiple times per session
-//TODO: ⚠️ Architectural improvement needed - decouple AudioSessionEventsHandler from ChannelControl for full app reassignment support
