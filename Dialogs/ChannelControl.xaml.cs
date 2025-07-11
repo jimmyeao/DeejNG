@@ -34,7 +34,7 @@ namespace DeejNG.Dialogs
 
         private readonly Brush _muteOffBrush = Brushes.Gray;
 
-        private readonly Brush _muteOnBrush = new SolidColorBrush(Color.FromRgb(255, 64, 64));
+        private readonly Brush _muteOnBrush = new SolidColorBrush(Color.FromRgb(255, 12, 12));
 
         private readonly TimeSpan PeakHoldDuration = TimeSpan.FromMilliseconds(500); // was 1000ms
 
@@ -281,60 +281,85 @@ namespace DeejNG.Dialogs
         private void SkiaCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)
         {
             var canvas = e.Surface.Canvas;
+            var info = e.Info;
             canvas.Clear(SKColors.Transparent);
 
-            int width = e.Info.Width;
-            int height = e.Info.Height;
-
-            // Segment config
-            const int segmentCount = 16;
-            const float segmentSpacing = 3f;
-            float totalSpacing = (segmentCount - 1) * segmentSpacing;
-            float segmentHeight = (height - totalSpacing) / segmentCount;
-
-            float levelValue = _meterLevel;
-            int activeSegments = (int)(levelValue * segmentCount);
-            int peakSegment = (int)(_peakLevel * segmentCount);
+            int segmentCount = 20;
+            float gap = info.Height * 0.005f;
+            float segmentHeight = (info.Height - (segmentCount - 1) * gap) / segmentCount;
+            float segmentWidth = info.Width;
+            float cornerRadius = segmentHeight / 2.5f;
+            float activeHeight = _meterLevel * info.Height;
 
             for (int i = 0; i < segmentCount; i++)
             {
-                float top = i * (segmentHeight + segmentSpacing);
-                float bottom = top + segmentHeight;
+                float y = info.Height - ((i + 1) * segmentHeight + i * gap);
+                var rect = new SKRect(0, y, segmentWidth, y + segmentHeight);
 
-                SKColor color = i switch
+                bool isActive = info.Height - y <= activeHeight;
+
+                SKColor baseColor = SKColors.Gray.WithAlpha(50);
+                if (isActive)
                 {
-                    <= 10 => SKColors.LimeGreen,
-                    <= 13 => SKColors.Yellow,
-                    _ => SKColors.Red
-                };
+                    if (i > segmentCount * 0.9f)
+                        baseColor = new SKColor(255, 60, 60, 180); // red
+                    else if (i > segmentCount * 0.6f)
+                        baseColor = new SKColor(255, 220, 50, 180); // yellow
+                    else
+                        baseColor = new SKColor(80, 255, 80, 180); // green
+                }
 
-                bool isActive = i < activeSegments;
-                bool isPeak = i == peakSegment;
-
-                var segmentRect = new SKRect(0, height - bottom, width, height - top);
-                var segmentRound = new SKRoundRect(segmentRect, 3f, 3f);
-
-                using var paint = new SKPaint
+                // Glass background with transparency
+                var glassPaint = new SKPaint
                 {
-                    Color = isPeak
-                        ? SKColors.White.WithAlpha((byte)(_peakFade * 255))
-                        : isActive ? color : new SKColor(60, 60, 60), // dim inactive
-                    IsAntialias = true,
-                    Style = SKPaintStyle.Fill
+                    Style = SKPaintStyle.Fill,
+                    Color = baseColor,
+                    IsAntialias = true
                 };
+                canvas.DrawRoundRect(rect, cornerRadius, cornerRadius, glassPaint);
 
-                canvas.DrawRoundRect(segmentRound, paint);
+                // Glossy top highlight
+                if (isActive)
+                {
+                    var glossRect = new SKRect(rect.Left, rect.Top, rect.Right, rect.Top + segmentHeight * 0.4f);
+                    var glossPaint = new SKPaint
+                    {
+                        Shader = SKShader.CreateLinearGradient(
+                            new SKPoint(glossRect.Left, glossRect.Top),
+                            new SKPoint(glossRect.Left, glossRect.Bottom),
+                            new[] {
+                        SKColors.White.WithAlpha(90),
+                        SKColors.Transparent
+                            },
+                            null,
+                            SKShaderTileMode.Clamp),
+                        IsAntialias = true
+                    };
+                    canvas.DrawRoundRect(glossRect, cornerRadius, cornerRadius, glossPaint);
+                }
+
+                // Subtle border
+                var borderPaint = new SKPaint
+                {
+                    Style = SKPaintStyle.Stroke,
+                    Color = SKColors.White.WithAlpha(40),
+                    StrokeWidth = 1f,
+                    IsAntialias = true
+                };
+                canvas.DrawRoundRect(rect, cornerRadius, cornerRadius, borderPaint);
             }
 
-            // Optional clip flash
-            if (_meterLevel >= ClipThreshold)
+            // Peak marker
+            if (_peakLevel > 0.01f)
             {
-                using var clipPaint = new SKPaint
+                float peakY = info.Height - (_peakLevel * info.Height);
+                var peakPaint = new SKPaint
                 {
-                    Color = SKColors.Red.WithAlpha(180),
-                    IsAntialias = false
+                    Color = SKColors.White,
+                    Style = SKPaintStyle.Fill,
+                    IsAntialias = true
                 };
-                canvas.DrawRect(0, 0, width, 3, clipPaint);
+                canvas.DrawRect(new SKRect(0, peakY, segmentWidth, peakY + 2), peakPaint);
             }
         }
 

@@ -2,29 +2,27 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
-             xmlns:local="clr-namespace:DeejNG"
+             xmlns:local="clr-namespace:DeejNG.Classes"
              StartupUri="MainWindow.xaml">
+
     <Application.Resources>
         <ResourceDictionary>
+
+            <!-- FIRST: Merged dictionaries -->
             <ResourceDictionary.MergedDictionaries>
-            <!-- Material Design's ResourceDictionaries -->
+                <materialDesign:BundledTheme BaseTheme="Light" PrimaryColor="LightGreen" SecondaryColor="Lime" />
+                <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Light.xaml" />
+                <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml" />
+                <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesign3.Defaults.xaml" />
+            </ResourceDictionary.MergedDictionaries>
 
-            <materialDesign:BundledTheme BaseTheme="Light" PrimaryColor="LightGreen" SecondaryColor="Lime"/>
-            <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Light.xaml"/>
-            <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml"/>
-            <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesign3.Defaults.xaml"/>
+            <!-- THEN: Converters and styles -->
+            <local:VolumeToHeightConverter x:Key="VolumeToHeightConverter" />
 
-            <!-- Other dictionaries -->
-        </ResourceDictionary.MergedDictionaries>
-           
+            <Style TargetType="{x:Type Button}" BasedOn="{StaticResource MaterialDesignRaisedButton}">
+                <Setter Property="materialDesign:ButtonAssist.CornerRadius" Value="20" />
+            </Style>
 
-            <Style BasedOn="{StaticResource MaterialDesignRaisedButton}" TargetType="{x:Type Button}">
-            <Setter Property="materialDesign:ButtonAssist.CornerRadius" Value="20" />
-        </Style>
-
-        <!--<Style TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
-        <Setter Property="materialDesign:ButtonAssist.CornerRadius" Value="10" />
-    </Style>-->
         </ResourceDictionary>
     </Application.Resources>
 </Application>
