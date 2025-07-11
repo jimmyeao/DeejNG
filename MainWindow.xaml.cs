@@ -120,7 +120,10 @@ namespace DeejNG
             _audioService = new AudioService();
             BuildInputDeviceCache();
 
-            // Load ports BEFORE loading settings so ComboBox is populated
+            // Load the saved port name from settings BEFORE populating ports
+            LoadSavedPortName();
+            
+            // Load ports AFTER loading the saved port name so ComboBox can select the correct port
             LoadAvailablePorts();
 
             _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
@@ -743,6 +746,27 @@ namespace DeejNG
                 return false;
             }
         }
+        private void LoadSavedPortName()
+        {
+            try
+            {
+                var settings = LoadSettingsFromDisk();
+                if (!string.IsNullOrWhiteSpace(settings?.PortName))
+                {
+                    _lastConnectedPort = settings.PortName;
+                    Debug.WriteLine($"[Settings] Loaded saved port name: {_lastConnectedPort}");
+                }
+                else
+                {
+                    Debug.WriteLine("[Settings] No saved port name found");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Failed to load saved port name: {ex.Message}");
+            }
+        }
+
         private void LoadSettingsWithoutSerialConnection()
         {
             try
@@ -1690,6 +1714,7 @@ namespace DeejNG
                 ComPortSelector.ItemsSource = availablePorts;
 
                 Debug.WriteLine($"[Ports] Found {availablePorts.Length} ports: [{string.Join(", ", availablePorts)}]");
+                Debug.WriteLine($"[Ports] Current selection: '{currentSelection}', Last connected port: '{_lastConnectedPort}'");
 
                 // Try to restore previous selection first
                 if (!string.IsNullOrEmpty(currentSelection) && availablePorts.Contains(currentSelection))
@@ -1707,7 +1732,7 @@ namespace DeejNG
                 else if (availablePorts.Length > 0)
                 {
                     ComPortSelector.SelectedIndex = 0;
-                    Debug.WriteLine($"[Ports] Selected first available port: {availablePorts[0]}");
+                    Debug.WriteLine($"[Ports] No saved port found or available, selected first available port: {availablePorts[0]}");
                 }
                 else
                 {
