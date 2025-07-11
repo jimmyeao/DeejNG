@@ -2836,9 +2836,14 @@ namespace DeejNG
                                 else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
                                 {
                                     var mappedApps = GetAllMappedApplications();
-                                    mappedApps.Remove("unmapped");
+                                    mappedApps.Remove("unmapped"); // Don't exclude unmapped from itself
+                                   
                                     float unmappedPeak = GetUnmappedApplicationsPeakLevelOptimized(mappedApps, sessions);
-                                    if (unmappedPeak > highestPeak) highestPeak = unmappedPeak;
+                                    if (unmappedPeak > highestPeak) 
+                                    {
+                                        highestPeak = unmappedPeak;
+                                       
+                                    }
                                     if (!ctrl.IsMuted) allMuted = false;
                                 }
                                 else
@@ -2851,7 +2856,11 @@ namespace DeejNG
                                         try
                                         {
                                             float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
-                                            if (peak > highestPeak) highestPeak = peak;
+                                            if (peak > highestPeak) 
+                                            {
+                                                highestPeak = peak;
+                                              
+                                            }
                                             if (!matchingSession.SimpleAudioVolume.Mute) allMuted = false;
                                         }
                                         catch (ArgumentException)
@@ -2869,6 +2878,9 @@ namespace DeejNG
                         }
 
                         float finalLevel = ctrl.IsMuted || allMuted ? 0 : Math.Min(highestPeak * visualGain, 1.0f);
+                        
+              
+                        
                         ctrl.UpdateAudioMeter(finalLevel);
                     }
                     catch (Exception ex)
@@ -2955,33 +2967,30 @@ namespace DeejNG
                         int pid = (int)session.GetProcessID;
                         if (pid <= 4) continue;
 
-                        string processName = "";
-                        if (!_processNameCache.TryGetValue(pid, out processName))
+                        // Use centralized method for consistency
+                        string processName = AudioUtilities.GetProcessNameSafely(pid);
+                        
+                        if (string.IsNullOrEmpty(processName))
                         {
-                            try
-                            {
-                                using (var process = Process.GetProcessById(pid))
-                                {
-                                    if (process != null && !process.HasExited)
-                                    {
-                                        processName = process.ProcessName.ToLowerInvariant();
-                                    }
-                                }
-                            }
-                            catch
-                            {
-                                processName = "";
-                            }
-                            _processNameCache[pid] = processName;
+                            continue;
                         }
 
-                        if (string.IsNullOrEmpty(processName) || mappedApplications.Contains(processName))
+                        // Check if this process is in mapped applications
+                        if (mappedApplications.Contains(processName))
+                        {
                             continue;
+                        }
 
                         try
                         {
                             float peak = session.AudioMeterInformation.MasterPeakValue;
-                            if (peak > highestPeak) highestPeak = peak;
+                            if (peak > 0.01f) // Only count meaningful audio levels
+                            {
+                                if (peak > highestPeak) 
+                                {
+                                    highestPeak = peak;
+                                }
+                            }
                         }
                         catch { continue; }
                     }

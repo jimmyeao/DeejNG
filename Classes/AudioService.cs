@@ -369,12 +369,7 @@ namespace DeejNG.Services
                 }
 
                 // Only log significant changes or errors
-                if (processedCount > 0 || (DateTime.Now - _lastUnmappedVolumeCall).TotalSeconds > 5)
-                {
-                    Debug.WriteLine(
-                        $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [Unmapped] Volume {level:F2} applied to {processedCount} apps (skipped {skippedCount})"
-                    );
-                }
+              
             }
             catch (Exception ex)
             {
