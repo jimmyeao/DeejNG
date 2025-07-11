@@ -36,6 +36,7 @@ namespace DeejNG
         // You'll also need to make _channelControls accessible to allow the ChannelControl to get its index
         // In MainWindow.xaml.cs, change the private field to:
         public List<ChannelControl> _channelControls = new();
+        private static readonly System.Text.RegularExpressions.Regex _invalidSerialCharsRegex = new System.Text.RegularExpressions.Regex(@"[^\x20-\x7E\r\n]", System.Text.RegularExpressions.RegexOptions.Compiled);
 
         #endregion Public Fields
 
@@ -1993,7 +1994,7 @@ namespace DeejNG
                 }
 
                 // IMPROVED: Filter out non-printable characters and invalid data to prevent corruption
-                incoming = System.Text.RegularExpressions.Regex.Replace(incoming, @"[^\x20-\x7E\r\n]", "");
+                incoming = _invalidSerialCharsRegex.Replace(incoming, "");
                 _serialBuffer.Append(incoming);
 
                 // Process all complete lines in the buffer
@@ -2373,21 +2374,40 @@ namespace DeejNG
                 var audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var sessions = audioDevice.AudioSessionManager.Sessions;
 
-                // CRITICAL FIX: Unregister ALL existing handlers first to prevent accumulation
-                var handlersToRemove = new List<string>(_registeredHandlers.Keys);
-                foreach (var target in handlersToRemove)
+                // IMPROVED FIX: Instead of trying to unregister (which may not be supported),
+                // we'll track which sessions already have handlers and avoid re-registering
+                var existingHandlerSessions = new Dictionary<string, AudioSessionControl>(StringComparer.OrdinalIgnoreCase);
+                
+                // First, identify which current sessions already have our handlers
+                foreach (var kvp in _registeredHandlers)
                 {
-                    try
+                    string target = kvp.Key;
+                    // Try to find the current session for this target
+                    for (int i = 0; i < sessions.Count; i++)
                     {
-                        _registeredHandlers.Remove(target);
-                        Debug.WriteLine($"[Sync] Unregistered handler for {target}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[ERROR] Failed to unregister handler for {target}: {ex.Message}");
+                        try
+                        {
+                            var session = sessions[i];
+                            int pid = (int)session.GetProcessID;
+                            string processName = AudioUtilities.GetProcessNameSafely(pid);
+                            
+                            if (string.Equals(processName, target, StringComparison.OrdinalIgnoreCase))
+                            {
+                                existingHandlerSessions[target] = session;
+                                Debug.WriteLine($"[Sync] Found existing handler for {target} (PID: {pid})");
+                                break;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[Sync] Error checking session {i}: {ex.Message}");
+                            continue;
+                        }
                     }
                 }
-                _registeredHandlers.Clear(); // Ensure it's completely clear
+                
+                // Clear the handlers dictionary but keep track of existing registrations
+                _registeredHandlers.Clear();
 
                 var allMappedApps = GetAllMappedApplications();
                 var processDict = new Dictionary<int, string>();
@@ -2461,11 +2481,23 @@ namespace DeejNG
                                     bool isMuted = matchedSession.SimpleAudioVolume.Mute;
                                     ctrl.SetMuted(isMuted);
 
-                                    // CRITICAL: Always register a fresh handler for potential restarts
-                                    var handler = new AudioSessionEventsHandler(ctrl);
-                                    matchedSession.RegisterEventClient(handler);
-                                    _registeredHandlers[targetName] = handler;
-                                    Debug.WriteLine($"[Event] Registered NEW handler for {targetName} (PID: {sessionProcessIds[targetName]})");
+                                    // IMPROVED: Only register a new handler if we don't already have one for this session
+                                    if (!existingHandlerSessions.ContainsKey(targetName))
+                                    {
+                                        var handler = new AudioSessionEventsHandler(ctrl);
+                                        matchedSession.RegisterEventClient(handler);
+                                        _registeredHandlers[targetName] = handler;
+                                        Debug.WriteLine($"[Event] Registered NEW handler for {targetName} (PID: {sessionProcessIds[targetName]})");
+                                    }
+                                    else
+                                    {
+                                        // Re-add the existing handler to our tracking dictionary
+                                        // We can't get the handler reference back easily, so we create a placeholder entry
+                                        // This prevents registering duplicate handlers
+                                        var handler = new AudioSessionEventsHandler(ctrl);
+                                        _registeredHandlers[targetName] = handler;
+                                        Debug.WriteLine($"[Event] Kept existing handler for {targetName} (PID: {sessionProcessIds[targetName]})");
+                                    }
                                 }
                                 catch (Exception ex)
                                 {

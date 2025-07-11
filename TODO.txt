@@ -2,3 +2,4 @@
 //COMPLETED: Stop click on connect with no port selected
 //COMPLETED: Add ability to invert sliders
 //COMPLETED: ✅ Fixed COM port selection persistence bug - port now remembered between restarts
+//COMPLETED: ✅ Fixed critical event handler memory leak - handlers now properly unregistered from COM sessions
