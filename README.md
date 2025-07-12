@@ -3,7 +3,9 @@
 
 A simple Windows Companion app to Deej
 
-![Screen Recording 2025-04-26 152503 (1)](https://github.com/user-attachments/assets/5255def8-f8c6-408b-9a84-e075d52c9844)
+
+![Screen Recording 2025-07-12 134720 (1)](https://github.com/user-attachments/assets/f6480159-9857-4fb0-8840-5471621184ac)
+
 
 Allows to assign multiple apps to one slider, and control of audio input sources.
 
