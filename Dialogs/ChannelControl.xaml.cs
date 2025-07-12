@@ -132,7 +132,7 @@ namespace DeejNG.Dialogs
             // Replace CompositionTarget.Rendering with controlled timer for better performance
             _meterUpdateTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(8) // Very high FPS for ultra-smooth visuals
+                Interval = TimeSpan.FromMilliseconds(16) // Very high FPS for ultra-smooth visuals
             };
             _meterUpdateTimer.Tick += MeterUpdateTimer_Tick;
             _meterUpdateTimer.Start();
