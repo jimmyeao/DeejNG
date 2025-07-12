@@ -56,6 +56,18 @@ namespace DeejNG
         private DateTime _lastUnmappedMeterUpdate = DateTime.MinValue;
         private readonly object _unmappedLock = new object();
         private DispatcherTimer _forceCleanupTimer;
+        
+        // Cache unmapped peak calculations
+        private DateTime _lastUnmappedPeakCalculation = DateTime.MinValue;
+        private float _cachedUnmappedPeak = 0;
+        
+        // Object pools to reduce allocations
+        private readonly Queue<List<AudioTarget>> _audioTargetListPool = new();
+        private readonly Queue<HashSet<string>> _stringHashSetPool = new();
+        
+        // Cached collections to avoid repeated allocations
+        private readonly List<AudioTarget> _tempTargetList = new();
+        private readonly HashSet<string> _tempStringSet = new(StringComparer.OrdinalIgnoreCase);
         private int _sessionCacheHitCount = 0;
         private DateTime _lastForcedCleanup = DateTime.MinValue;
         private readonly TimeSpan UNMAPPED_THROTTLE_INTERVAL = TimeSpan.FromMilliseconds(100); // Increase throttling
@@ -133,7 +145,7 @@ namespace DeejNG
 
             _meterTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(75)
+                Interval = TimeSpan.FromMilliseconds(25) // Much more responsive - 40 FPS
             };
             _meterTimer.Tick += UpdateMeters;
             _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
@@ -211,7 +223,8 @@ namespace DeejNG
 
         public HashSet<string> GetAllMappedApplications()
         {
-            var mappedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // Reuse the temp set instead of creating new ones
+            _tempStringSet.Clear();
             
             foreach (var control in _channelControls)
             {
@@ -219,12 +232,13 @@ namespace DeejNG
                 {
                     if (!target.IsInputDevice && !string.IsNullOrEmpty(target.Name))
                     {
-                        mappedApps.Add(target.Name.ToLowerInvariant());
+                        _tempStringSet.Add(target.Name.ToLowerInvariant());
                     }
                 }
             }
             
-            return mappedApps;
+            // Return a copy to avoid modification issues
+            return new HashSet<string>(_tempStringSet, StringComparer.OrdinalIgnoreCase);
         }
 
         #region Decoupled Handler Support
@@ -2315,7 +2329,7 @@ namespace DeejNG
         {
             _sessionCacheTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromSeconds(5)
+                Interval = TimeSpan.FromSeconds(7) // Balance between performance and responsiveness
             };
 
             int tickCount = 0;
@@ -2326,83 +2340,18 @@ namespace DeejNG
 
                 try
                 {
-                    var defaultDevice = new MMDeviceEnumerator()
-                        .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-
-                    _audioDevice = defaultDevice;
-
-                    var sessions = defaultDevice.AudioSessionManager.Sessions;
-                    var activeSessions = new Dictionary<string, AudioSessionControl>();
-                    var activeProcesses = new Dictionary<int, string>();
-
-                    // Get all current sessions with proper exception handling
-                    for (int i = 0; i < sessions.Count; i++)
+                    // Batch multiple operations together for better performance
+                    if (tickCount % 2 == 0) // Every other tick
                     {
-                        var session = sessions[i];
-                        try
-                        {
-                            if (session == null) continue;
-
-                            int processId = (int)session.GetProcessID;
-                            string processName = "";
-
-                            // Use centralized AudioUtilities method
-                            processName = AudioUtilities.GetProcessNameSafely(processId);
-                            _processNameCache[processId] = processName;
-
-                            // Only process if we got a valid name
-                            if (!string.IsNullOrEmpty(processName))
-                            {
-                                activeProcesses[processId] = processName;
-
-                                string sessionId = session.GetSessionIdentifier?.ToLowerInvariant() ?? "";
-                                string instanceId = session.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
-
-                                string sessionKey = $"{processName}_{instanceId}";
-                                activeSessions[sessionKey] = session;
-
-                                if (!_sessionIdCache.Any(t => t.sessionId == sessionId && t.instanceId == instanceId))
-                                {
-                                    _sessionIdCache.Add((session, sessionId, instanceId));
-                                }
-                            }
-                        }
-                        catch (ArgumentException)
-                        {
-                            // Session no longer valid - skip it
-                            continue;
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"[ERROR] Processing session in cache updater: {ex.Message}");
-                            continue;
-                        }
+                        UpdateSessionCache();
                     }
 
-                    // Clean up stale entries
-                    var pidsToRemove = _processNameCache.Keys
-                        .Where(pid => !activeProcesses.ContainsKey(pid))
-                        .ToList();
-
-                    foreach (var pid in pidsToRemove)
+                    if (tickCount % 6 == 0) // Every 6th tick (1 minute)
                     {
-                        _processNameCache.Remove(pid);
+                        PerformMaintenance();
                     }
 
-                    // Resync and cleanup on intervals
-                    if (++tickCount % 3 == 0)
-                    {
-                        foreach (var control in _channelControls)
-                        {
-                            control.ResetConnectionState();
-                        }
-                        SyncMuteStates();
-                    }
-
-                    if (tickCount % 12 == 0)
-                    {
-                        CleanupDeadSessions();
-                    }
+                    tickCount++;
                 }
                 catch (Exception ex)
                 {
@@ -2411,6 +2360,95 @@ namespace DeejNG
             };
 
             _sessionCacheTimer.Start();
+        }
+        
+        private void UpdateSessionCache()
+        {
+            var defaultDevice = new MMDeviceEnumerator()
+                .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+
+            _audioDevice = defaultDevice;
+            
+            // Process in smaller batches to reduce GC pressure
+            var sessions = defaultDevice.AudioSessionManager.Sessions;
+            int batchSize = Math.Min(sessions.Count, 15); // Process max 15 sessions
+
+            for (int i = 0; i < batchSize; i++)
+            {
+                var session = sessions[i];
+                try
+                {
+                    if (session == null) continue;
+                    
+                    int processId = (int)session.GetProcessID;
+                    string processName = AudioUtilities.GetProcessNameSafely(processId);
+                    _processNameCache[processId] = processName;
+                    
+                    if (!string.IsNullOrEmpty(processName))
+                    {
+                        // Update cache without creating unnecessary objects
+                        UpdateSessionCacheEntry(session, processName, processId);
+                    }
+                }
+                catch (ArgumentException)
+                {
+                    continue; // Session no longer valid
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ERROR] Processing session in cache updater: {ex.Message}");
+                    continue;
+                }
+            }
+        }
+        
+        private void PerformMaintenance()
+        {
+            // Reset connection states and sync mute states less frequently
+            foreach (var control in _channelControls)
+            {
+                control.ResetConnectionState();
+            }
+            SyncMuteStates();
+            
+            // Clean up collections less frequently but more thoroughly
+            CleanupSessionCacheAggressively();
+            CleanupProcessCache();
+            
+            // Force a small GC if memory pressure is high
+            if (GC.GetTotalMemory(false) > 50_000_000) // 50MB threshold
+            {
+                GC.Collect(0, GCCollectionMode.Optimized);
+            }
+        }
+        
+        private void UpdateSessionCacheEntry(AudioSessionControl session, string processName, int processId)
+        {
+            try
+            {
+                string sessionId = session.GetSessionIdentifier?.ToLowerInvariant() ?? "";
+                string instanceId = session.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
+
+                // Update cache only if needed
+                bool found = false;
+                for (int i = 0; i < _sessionIdCache.Count; i++)
+                {
+                    if (_sessionIdCache[i].sessionId == sessionId && _sessionIdCache[i].instanceId == instanceId)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    _sessionIdCache.Add((session, sessionId, instanceId));
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Updating session cache entry: {ex.Message}");
+            }
         }
 
         private void SyncMuteStates()
@@ -2673,13 +2711,11 @@ namespace DeejNG
 
         private float GetUnmappedApplicationsPeakLevel(HashSet<string> mappedApplications)
         {
-            // Throttle meter updates for unmapped to reduce load
-            var now = DateTime.Now;
-            if ((now - _lastUnmappedPeakUpdate).TotalMilliseconds < 200) // 200ms throttle for meters
+            // Minimal caching for maximum responsiveness
+            if ((DateTime.Now - _lastUnmappedPeakCalculation).TotalMilliseconds < 25) // Very minimal caching
             {
-                return _lastUnmappedPeak; // Return cached value
+                return _cachedUnmappedPeak;
             }
-            _lastUnmappedPeakUpdate = now;
 
             float highestPeak = 0;
 
@@ -2688,9 +2724,10 @@ namespace DeejNG
                 var sessions = _cachedSessionsForMeters;
                 if (sessions == null) return 0;
 
-                int processedSessions = 0;
+                // Process more sessions for better responsiveness
+                int maxSessions = Math.Min(sessions.Count, 15); // Process more sessions for completeness
 
-                for (int i = 0; i < sessions.Count && processedSessions < 10; i++) // Limit processing to 10 sessions max
+                for (int i = 0; i < maxSessions; i++)
                 {
                     var session = sessions[i];
                     try
@@ -2702,10 +2739,7 @@ namespace DeejNG
                         // Skip system sessions and low PIDs
                         if (pid <= 4) continue;
 
-                        string processName = "";
-
-                        // Use centralized AudioUtilities method
-                        processName = AudioUtilities.GetProcessNameSafely(pid);
+                        string processName = AudioUtilities.GetProcessNameSafely(pid);
                         _processNameCache[pid] = processName;
 
                         // Skip if we couldn't get a valid process name
@@ -2720,7 +2754,6 @@ namespace DeejNG
                             float peak = session.AudioMeterInformation.MasterPeakValue;
                             if (peak > highestPeak)
                                 highestPeak = peak;
-                            processedSessions++;
                         }
                         catch
                         {
@@ -2738,7 +2771,9 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] Getting unmapped peak levels: {ex.Message}");
             }
 
-            _lastUnmappedPeak = highestPeak;
+            _cachedUnmappedPeak = highestPeak;
+            _lastUnmappedPeakCalculation = DateTime.Now;
+            
             return highestPeak;
         }
         private void DebugActiveTimers()
@@ -2758,8 +2793,8 @@ namespace DeejNG
         {
             if (!_metersEnabled || _isClosing) return;
 
-            // Only skip every 3rd update instead of every 2nd (better responsiveness)
-            if (++_meterSkipCounter % 3 == 0) return;
+            // Remove skip counter for maximum responsiveness - update every tick
+            // if (++_meterSkipCounter % 2 != 0) return; // Commented out for responsiveness
 
             const float visualGain = 1.5f;
             const float systemCalibrationFactor = 2.0f;
@@ -2774,9 +2809,9 @@ namespace DeejNG
                     _lastDeviceCacheTime = DateTime.Now;
                 }
 
-                // Get sessions more frequently for responsive meters
+                // Get sessions very frequently for real-time response
                 SessionCollection sessions = null;
-                if ((DateTime.Now - _lastMeterSessionRefresh).TotalMilliseconds > 500) // Back to 500ms from 2000ms
+                if ((DateTime.Now - _lastMeterSessionRefresh).TotalMilliseconds > 50) // Very frequent updates for responsiveness
                 {
                     sessions = _cachedAudioDevice.AudioSessionManager.Sessions;
                     _cachedSessionsForMeters = sessions;
@@ -2836,9 +2871,14 @@ namespace DeejNG
                                 else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
                                 {
                                     var mappedApps = GetAllMappedApplications();
-                                    mappedApps.Remove("unmapped");
+                                    mappedApps.Remove("unmapped"); // Don't exclude unmapped from itself
+                                   
                                     float unmappedPeak = GetUnmappedApplicationsPeakLevelOptimized(mappedApps, sessions);
-                                    if (unmappedPeak > highestPeak) highestPeak = unmappedPeak;
+                                    if (unmappedPeak > highestPeak) 
+                                    {
+                                        highestPeak = unmappedPeak;
+                                       
+                                    }
                                     if (!ctrl.IsMuted) allMuted = false;
                                 }
                                 else
@@ -2851,7 +2891,11 @@ namespace DeejNG
                                         try
                                         {
                                             float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
-                                            if (peak > highestPeak) highestPeak = peak;
+                                            if (peak > highestPeak) 
+                                            {
+                                                highestPeak = peak;
+                                              
+                                            }
                                             if (!matchingSession.SimpleAudioVolume.Mute) allMuted = false;
                                         }
                                         catch (ArgumentException)
@@ -2869,6 +2913,9 @@ namespace DeejNG
                         }
 
                         float finalLevel = ctrl.IsMuted || allMuted ? 0 : Math.Min(highestPeak * visualGain, 1.0f);
+                        
+              
+                        
                         ctrl.UpdateAudioMeter(finalLevel);
                     }
                     catch (Exception ex)
@@ -2955,33 +3002,30 @@ namespace DeejNG
                         int pid = (int)session.GetProcessID;
                         if (pid <= 4) continue;
 
-                        string processName = "";
-                        if (!_processNameCache.TryGetValue(pid, out processName))
+                        // Use centralized method for consistency
+                        string processName = AudioUtilities.GetProcessNameSafely(pid);
+                        
+                        if (string.IsNullOrEmpty(processName))
                         {
-                            try
-                            {
-                                using (var process = Process.GetProcessById(pid))
-                                {
-                                    if (process != null && !process.HasExited)
-                                    {
-                                        processName = process.ProcessName.ToLowerInvariant();
-                                    }
-                                }
-                            }
-                            catch
-                            {
-                                processName = "";
-                            }
-                            _processNameCache[pid] = processName;
+                            continue;
                         }
 
-                        if (string.IsNullOrEmpty(processName) || mappedApplications.Contains(processName))
+                        // Check if this process is in mapped applications
+                        if (mappedApplications.Contains(processName))
+                        {
                             continue;
+                        }
 
                         try
                         {
                             float peak = session.AudioMeterInformation.MasterPeakValue;
-                            if (peak > highestPeak) highestPeak = peak;
+                            if (peak > 0.01f) // Only count meaningful audio levels
+                            {
+                                if (peak > highestPeak) 
+                                {
+                                    highestPeak = peak;
+                                }
+                            }
                         }
                         catch { continue; }
                     }
