@@ -52,6 +52,9 @@ DeejNG is a modern, extensible audio mixer and controller for Windows, built wit
 - Select from running applications, "System", "Unmapped Applications", or microphones.
 - You can select multiple targets per slider. One slider can control multiple apps or a mic.
 
+ <img width="786" height="593" alt="image" src="https://github.com/user-attachments/assets/3f5bce09-0e8b-498c-a69d-1f040545139d" />
+
+
 ### 🔇 Mute / Unmute
 
 - Click the **Mute** button on each channel to toggle audio mute.
