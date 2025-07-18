@@ -91,6 +91,7 @@ namespace DeejNG
         private bool _expectingData = false;
         private bool _hasSyncedMuteStates = false;
         private Dictionary<string, MMDevice> _inputDeviceMap = new();
+        private Dictionary<string, MMDevice> _outputDeviceMap = new();
         private bool _isClosing = false;
         private bool _isConnected = false;
         private bool _isInitializing = true;
@@ -132,6 +133,7 @@ namespace DeejNG
 
             _audioService = new AudioService();
             BuildInputDeviceCache();
+            BuildOutputDeviceCache();
 
             // Load the saved port name from settings BEFORE populating ports
             LoadSavedPortName();
@@ -955,6 +957,35 @@ namespace DeejNG
             }
         }
 
+        private void ApplyOutputDeviceVolume(string deviceName, float level, bool isMuted)
+        {
+            if (!_outputDeviceMap.TryGetValue(deviceName.ToLowerInvariant(), out var spkr))
+            {
+                spkr = new MMDeviceEnumerator()
+                    .EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active)
+                    .FirstOrDefault(d => d.FriendlyName.Equals(deviceName, StringComparison.OrdinalIgnoreCase));
+
+                if (spkr != null)
+                {
+                    _outputDeviceMap[deviceName.ToLowerInvariant()] = spkr;
+                }
+            }
+
+            if (spkr != null)
+            {
+                try
+                {
+                    spkr.AudioEndpointVolume.Mute = isMuted;
+                    spkr.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ERROR] Setting output device volume for '{deviceName}': {ex.Message}");
+                    _outputDeviceMap.Remove(deviceName.ToLowerInvariant());
+                }
+            }
+        }
+
         // Break out the input volume handling logic to a separate method to simplify the main method
         private void ApplyInputVolume(ChannelControl ctrl, string target, float level)
         {
@@ -1088,6 +1119,10 @@ namespace DeejNG
                     {
                         ApplyInputDeviceVolume(target.Name, level, ctrl.IsMuted);
                     }
+                    else if (target.IsOutputDevice)
+                    {
+                        ApplyOutputDeviceVolume(target.Name, level, ctrl.IsMuted);
+                    }
                     else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
                     {
                         // Handle unmapped applications with aggressive throttling
@@ -1163,6 +1198,30 @@ namespace DeejNG
             }
         }
 
+        private void BuildOutputDeviceCache()
+        {
+            try
+            {
+                _outputDeviceMap.Clear();
+                var devices = new MMDeviceEnumerator()
+                    .EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
+
+                foreach (var d in devices)
+                {
+                    var key = d.FriendlyName.Trim().ToLowerInvariant();
+                    if (!_outputDeviceMap.ContainsKey(key))
+                    {
+                        _outputDeviceMap[key] = d;
+                    }
+                }
+
+                Debug.WriteLine($"[Init] Cached {_outputDeviceMap.Count} output devices.");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Init] Failed to build output device cache: {ex.Message}");
+            }
+        }
 
         private void ComPortSelector_DropDownOpened(object sender, EventArgs e)
         {
@@ -2563,6 +2622,16 @@ namespace DeejNG
                     {
                         if (target.IsInputDevice) continue;
 
+                        if (target.IsOutputDevice)
+                        {
+                            if (_outputDeviceMap.TryGetValue(target.Name.ToLowerInvariant(), out var spkr))
+                            {
+                                bool isMuted = spkr.AudioEndpointVolume.Mute;
+                                ctrl.SetMuted(isMuted);
+                            }
+                            continue;
+                        }
+
                         string targetName = target.Name?.Trim().ToLower();
                         if (string.IsNullOrEmpty(targetName)) continue;
 
@@ -2859,6 +2928,22 @@ namespace DeejNG
                                         }
                                     }
                                 }
+                                else if (target.IsOutputDevice)
+                                {
+                                    if (_outputDeviceMap.TryGetValue(target.Name.ToLowerInvariant(), out var spkr))
+                                    {
+                                        try
+                                        {
+                                            float peak = spkr.AudioMeterInformation.MasterPeakValue;
+                                            if (peak > highestPeak) highestPeak = peak;
+                                            if (!spkr.AudioEndpointVolume.Mute) allMuted = false;
+                                        }
+                                        catch (ArgumentException)
+                                        {
+                                            _outputDeviceMap.Remove(target.Name.ToLowerInvariant());
+                                        }
+                                    }
+                                }
                                 else if (string.Equals(target.Name, "system", StringComparison.OrdinalIgnoreCase))
                                 {
                                     float peak = _cachedAudioDevice.AudioMeterInformation.MasterPeakValue;
@@ -2872,12 +2957,12 @@ namespace DeejNG
                                 {
                                     var mappedApps = GetAllMappedApplications();
                                     mappedApps.Remove("unmapped"); // Don't exclude unmapped from itself
-                                   
+
                                     float unmappedPeak = GetUnmappedApplicationsPeakLevelOptimized(mappedApps, sessions);
-                                    if (unmappedPeak > highestPeak) 
+                                    if (unmappedPeak > highestPeak)
                                     {
                                         highestPeak = unmappedPeak;
-                                       
+
                                     }
                                     if (!ctrl.IsMuted) allMuted = false;
                                 }
@@ -2891,10 +2976,10 @@ namespace DeejNG
                                         try
                                         {
                                             float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
-                                            if (peak > highestPeak) 
+                                            if (peak > highestPeak)
                                             {
                                                 highestPeak = peak;
-                                              
+
                                             }
                                             if (!matchingSession.SimpleAudioVolume.Mute) allMuted = false;
                                         }

@@ -26,25 +26,17 @@ namespace DeejNG.Dialogs
 
             LoadSessions(selectedNames);
             LoadInputDevices(selectedNames);
+            LoadOutputDevices(selectedNames);
 
             AvailableSessionsListBox.ItemsSource = AvailableSessions;
             InputDevicesListBox.ItemsSource = InputDevices;
+            OutputDevicesListBox.ItemsSource = OutputDevices;
 
             // Set up event handlers for checkbox changes
-            foreach (var session in AvailableSessions)
+            var allItems = AvailableSessions.Concat(InputDevices).Concat(OutputDevices);
+            foreach (var item in allItems)
             {
-                session.PropertyChanged += (s, e) =>
-                {
-                    if (e.PropertyName == nameof(SelectableSession.IsSelected))
-                    {
-                        UpdateSelectionStates();
-                    }
-                };
-            }
-
-            foreach (var device in InputDevices)
-            {
-                device.PropertyChanged += (s, e) =>
+                item.PropertyChanged += (s, e) =>
                 {
                     if (e.PropertyName == nameof(SelectableSession.IsSelected))
                     {
@@ -65,6 +57,8 @@ namespace DeejNG.Dialogs
 
         public ObservableCollection<SelectableSession> InputDevices { get; } = new();
 
+        public ObservableCollection<SelectableSession> OutputDevices { get; } = new();
+
         public List<AudioTarget> SelectedTargets { get; private set; } = new();
 
         #endregion Public Properties
@@ -75,6 +69,43 @@ namespace DeejNG.Dialogs
         {
             DialogResult = false;
             Close();
+        }
+
+        private void LoadOutputDevices(HashSet<string> selectedNames)
+        {
+            try
+            {
+                var devices = new MMDeviceEnumerator()
+                    .EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
+
+                foreach (var device in devices)
+                {
+                    string name = device.FriendlyName;
+                    var newDevice = new SelectableSession
+                    {
+                        Id = name,
+                        FriendlyName = name,
+                        IsSelected = selectedNames.Contains(name.ToLowerInvariant()),
+                        IsInputDevice = false,
+                        IsOutputDevice = true
+                    };
+
+                    OutputDevices.Add(newDevice);
+                }
+
+                // Sort output devices alphabetically
+                var sortedDevices = OutputDevices.OrderBy(d => d.FriendlyName).ToList();
+                OutputDevices.Clear();
+                foreach (var device in sortedDevices)
+                {
+                    OutputDevices.Add(device);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show($"Error loading output devices: {ex.Message}", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void LoadInputDevices(HashSet<string> selectedNames)
@@ -92,7 +123,8 @@ namespace DeejNG.Dialogs
                         Id = name,
                         FriendlyName = name,
                         IsSelected = selectedNames.Contains(name.ToLowerInvariant()),
-                        IsInputDevice = true
+                        IsInputDevice = true,
+                        IsOutputDevice = false
                     };
 
                     InputDevices.Add(newDevice);
@@ -121,7 +153,8 @@ namespace DeejNG.Dialogs
                 Id = "system",
                 FriendlyName = "System",
                 IsSelected = selectedNames.Contains("system"),
-                IsInputDevice = false
+                IsInputDevice = false,
+                IsOutputDevice = false
             };
             AvailableSessions.Add(systemSession);
 
@@ -131,7 +164,8 @@ namespace DeejNG.Dialogs
                 Id = "unmapped",
                 FriendlyName = "Unmapped Applications",
                 IsSelected = selectedNames.Contains("unmapped"),
-                IsInputDevice = false
+                IsInputDevice = false,
+                IsOutputDevice = false
             };
             AvailableSessions.Add(unmappedSession);
 
@@ -231,7 +265,8 @@ namespace DeejNG.Dialogs
                 SelectedTargets.Add(new AudioTarget
                 {
                     Name = session.Id,
-                    IsInputDevice = false
+                    IsInputDevice = false,
+                    IsOutputDevice = false
                 });
             }
 
@@ -240,7 +275,17 @@ namespace DeejNG.Dialogs
                 SelectedTargets.Add(new AudioTarget
                 {
                     Name = device.Id,
-                    IsInputDevice = true
+                    IsInputDevice = true,
+                    IsOutputDevice = false
+                });
+            }
+            foreach (var device in OutputDevices.Where(d => d.IsSelected))
+            {
+                SelectedTargets.Add(new AudioTarget
+                {
+                    Name = device.Id,
+                    IsInputDevice = false,
+                    IsOutputDevice = true
                 });
             }
 
@@ -250,23 +295,30 @@ namespace DeejNG.Dialogs
 
         private void UpdateSelectionStates()
         {
-            // Check if any output apps are selected
-            bool hasOutputSelected = AvailableSessions.Any(s => s.IsSelected);
-
-            // Check if any input devices are selected
+            // Check if any item in each category is selected
+            bool hasAppSelected = AvailableSessions.Any(s => s.IsSelected);
             bool hasInputSelected = InputDevices.Any(d => d.IsSelected);
+            bool hasOutputSelected = OutputDevices.Any(d => d.IsSelected);
 
-            // Apply the rules:
-            // 1. If any output is selected, disable all inputs
-            // 2. If any input is selected, disable all outputs
-            foreach (var device in InputDevices)
-            {
-                device.IsEnabled = !hasOutputSelected;
-            }
+            // A slider can control apps, OR input devices, OR output devices, but not a mix.
+            // Determine if each list should be enabled or disabled based on selections in other lists.
+            bool appsEnabled = !hasInputSelected && !hasOutputSelected;
+            bool inputsEnabled = !hasAppSelected && !hasOutputSelected;
+            bool outputsEnabled = !hasAppSelected && !hasInputSelected;
 
             foreach (var session in AvailableSessions)
             {
-                session.IsEnabled = !hasInputSelected;
+                session.IsEnabled = appsEnabled;
+            }
+
+            foreach (var device in InputDevices)
+            {
+                device.IsEnabled = inputsEnabled;
+            }
+
+            foreach (var device in OutputDevices)
+            {
+                device.IsEnabled = outputsEnabled;
             }
         }
 
@@ -307,6 +359,7 @@ namespace DeejNG.Dialogs
             }
 
             public bool IsInputDevice { get; set; }
+            public bool IsOutputDevice { get; set; }
 
             public bool IsSelected
             {
