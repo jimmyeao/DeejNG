@@ -191,7 +191,7 @@ namespace DeejNG.Dialogs
         public void HandleSessionDisconnected()
         {
             // If we were controlling this session exclusively
-            if (_audioTargets.Count == 1 && !_audioTargets[0].IsInputDevice)
+            if (_audioTargets.Count == 1 && !_audioTargets[0].IsInputDevice && !_audioTargets[0].IsOutputDevice)
             {
                 string target = _audioTargets[0].Name;
                 Debug.WriteLine($"[Session] Session disconnected for {target}");
@@ -215,7 +215,7 @@ namespace DeejNG.Dialogs
         public void HandleSessionExpired()
         {
             // Similar to disconnected, but may want different visual treatment
-            if (_audioTargets.Count == 1 && !_audioTargets[0].IsInputDevice)
+            if (_audioTargets.Count == 1 && !_audioTargets[0].IsInputDevice && !_audioTargets[0].IsOutputDevice)
             {
                 string target = _audioTargets[0].Name;
                 Debug.WriteLine($"[Session] Session expired for {target}");
@@ -585,7 +585,7 @@ namespace DeejNG.Dialogs
 
                 // Set tooltip to show all targets
                 TargetTextBox.ToolTip = string.Join("\n", _audioTargets.Select(t =>
-                    $"{t.Name} {(t.IsInputDevice ? "(Input)" : "")}"));
+                    $"{t.Name} {(t.IsInputDevice ? "(Input)" : (t.IsOutputDevice ? "(Output)" : ""))}"));
             }
 
             // Reset foreground color (in case it was previously set to indicate disconnection)

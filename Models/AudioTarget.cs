@@ -10,6 +10,7 @@ namespace DeejNG.Models
     {
         public string Name { get; set; } = "";
         public bool IsInputDevice { get; set; } = false;
+        public bool IsOutputDevice { get; set; } = false;
 
         public override string ToString() => Name;
 
@@ -17,13 +18,14 @@ namespace DeejNG.Models
         {
             if (obj is AudioTarget other)
                 return string.Equals(Name, other.Name, StringComparison.OrdinalIgnoreCase) &&
-                       IsInputDevice == other.IsInputDevice;
+                       IsInputDevice == other.IsInputDevice &&
+                       IsOutputDevice == other.IsOutputDevice;
             return false;
         }
 
         public override int GetHashCode()
         {
-            return (Name?.ToLowerInvariant()?.GetHashCode() ?? 0) ^ IsInputDevice.GetHashCode();
+            return (Name?.ToLowerInvariant()?.GetHashCode() ?? 0) ^ IsInputDevice.GetHashCode() ^ IsOutputDevice.GetHashCode();
         }
     }
 }
