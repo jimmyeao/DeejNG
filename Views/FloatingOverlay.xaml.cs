@@ -567,7 +567,6 @@ namespace DeejNG.Views
             }
         }
 
-        // Fixed method - no longer tries to access private _appSettings
       
         private SKColor GetVolumeColor(float volume)
         {
