@@ -54,10 +54,14 @@ namespace DeejNG.Views
         }
         public void ShowVolumes(List<float> volumes)
         {
-            // TODO: update UI visuals here...
+            // THIS WAS MISSING - store the volume data!
+            _volumes = new List<float>(volumes);
+
+            // Force redraw of the canvas
+            OverlayCanvas.InvalidateVisual();
 
             this.Show();
-            this.Activate(); // optional, if needed to bring forward
+            this.Activate();
 
             if (_autoCloseTimer != null)
             {

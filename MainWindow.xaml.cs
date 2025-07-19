@@ -883,6 +883,11 @@ namespace DeejNG
                 SetMeterVisibilityForAll(_appSettings.VuMeters);
                 DisableSmoothingCheckBox.IsChecked = _appSettings.DisableSmoothing;
 
+                Debug.WriteLine($"[Settings] Applying overlay settings - Enabled: {_appSettings.OverlayEnabled}");
+                if (_appSettings.OverlayEnabled)
+                {
+                    Debug.WriteLine("[Settings] Overlay is enabled, will show on first volume change");
+                }
                 // Handle startup settings
                 StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
                 StartOnBootCheckBox.Unchecked -= StartOnBootCheckBox_Unchecked;
@@ -1948,13 +1953,29 @@ namespace DeejNG
                 if (File.Exists(SettingsPath))
                 {
                     var json = File.ReadAllText(SettingsPath);
+                    Debug.WriteLine($"[Settings] Loading from: {SettingsPath}");
+                    Debug.WriteLine($"[Settings] JSON content: {json}");
+
                     _appSettings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
-                    return _appSettings; // ✅ return the same reference
+
+                    Debug.WriteLine($"[Settings] Loaded - OverlayEnabled: {_appSettings.OverlayEnabled}");
+                    Debug.WriteLine($"[Settings] Loaded - OverlayOpacity: {_appSettings.OverlayOpacity}");
+                    Debug.WriteLine($"[Settings] Loaded - OverlayTimeoutSeconds: {_appSettings.OverlayTimeoutSeconds}");
+
+                    return _appSettings;
+                }
+                else
+                {
+                    Debug.WriteLine($"[Settings] Settings file does not exist: {SettingsPath}");
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Settings] Error loading settings: {ex.Message}");
+            }
 
             _appSettings = new AppSettings();
+            Debug.WriteLine("[Settings] Using default AppSettings");
             return _appSettings;
         }
 
@@ -2045,20 +2066,17 @@ namespace DeejNG
                 Debug.WriteLine("[Settings] Skipping save during initialization");
                 return;
             }
-
             if (!_hasLoadedInitialSettings)
             {
                 Debug.WriteLine("[Settings] Skipping save - initial settings not loaded yet");
                 return;
             }
-
             // Prevent too frequent saves
             if ((DateTime.Now - _lastSettingsSave).TotalMilliseconds < 500)
             {
                 Debug.WriteLine("[Settings] Skipping save - too frequent");
                 return;
             }
-
             lock (_settingsLock)
             {
                 try
@@ -2080,7 +2098,14 @@ namespace DeejNG
                         StartOnBoot = StartOnBootCheckBox.IsChecked ?? false,
                         StartMinimized = StartMinimizedCheckBox.IsChecked ?? false,
                         InputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList(),
-                        DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false
+                        DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false,
+
+                        // ✅ PRESERVE OVERLAY SETTINGS FROM _appSettings
+                        OverlayEnabled = _appSettings.OverlayEnabled,
+                        OverlayOpacity = _appSettings.OverlayOpacity,
+                        OverlayTimeoutSeconds = _appSettings.OverlayTimeoutSeconds,
+                        OverlayX = _appSettings.OverlayX,
+                        OverlayY = _appSettings.OverlayY
                     };
 
                     // Additional validation
@@ -2105,13 +2130,23 @@ namespace DeejNG
                     File.WriteAllText(SettingsPath, json);
                     _lastSettingsSave = DateTime.Now;
 
-                    Debug.WriteLine($"[Settings] Saved successfully with {settings.SliderTargets.Count} slider configurations");
+                    Debug.WriteLine($"[Settings] Saved successfully with {settings.SliderTargets.Count} slider configurations and overlay settings");
                 }
                 catch (Exception ex)
                 {
                     Debug.WriteLine($"[ERROR] Failed to save settings: {ex.Message}");
                 }
             }
+        }
+        public void UpdateOverlaySettings(AppSettings newSettings)
+        {
+            _appSettings.OverlayEnabled = newSettings.OverlayEnabled;
+            _appSettings.OverlayOpacity = newSettings.OverlayOpacity;
+            _appSettings.OverlayTimeoutSeconds = newSettings.OverlayTimeoutSeconds;
+            _appSettings.OverlayX = newSettings.OverlayX;
+            _appSettings.OverlayY = newSettings.OverlayY;
+
+            Debug.WriteLine($"[Settings] Updated overlay settings in MainWindow - Enabled: {_appSettings.OverlayEnabled}");
         }
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {

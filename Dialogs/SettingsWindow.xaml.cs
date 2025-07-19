@@ -45,7 +45,6 @@ namespace DeejNG.Dialogs
         {
             _settings.OverlayEnabled = OverlayEnabledCheckBox.IsChecked == true;
             _settings.OverlayOpacity = OpacitySlider.Value;
-
             _settings.OverlayTimeoutSeconds = AutoCloseCheckBox.IsChecked == true ? (int)TimeoutSlider.Value : 0;
 
             try
@@ -53,6 +52,12 @@ namespace DeejNG.Dialogs
                 string json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
                 Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
                 File.WriteAllText(_settingsPath, json);
+
+                // ✅ UPDATE MainWindow's _appSettings so SaveSettings() preserves these values
+                if (Application.Current.MainWindow is MainWindow mainWindow)
+                {
+                    mainWindow.UpdateOverlaySettings(_settings);
+                }
             }
             catch
             {
