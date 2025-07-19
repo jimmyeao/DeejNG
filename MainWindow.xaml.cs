@@ -25,6 +25,7 @@ using DeejNG.Models;
 using static System.Windows.Forms.Design.AxImporter;
 using System.Runtime.InteropServices;
 using System.Windows.Media;
+using DeejNG.Views;
 
 namespace DeejNG
 {
@@ -56,7 +57,7 @@ namespace DeejNG
         private DateTime _lastUnmappedMeterUpdate = DateTime.MinValue;
         private readonly object _unmappedLock = new object();
         private DispatcherTimer _forceCleanupTimer;
-        
+        private FloatingOverlay _overlay = new FloatingOverlay();
         // Cache unmapped peak calculations
         private DateTime _lastUnmappedPeakCalculation = DateTime.MinValue;
         private float _cachedUnmappedPeak = 0;
@@ -122,6 +123,16 @@ namespace DeejNG
 
         #region Public Constructors
 
+        public void ShowVolumeOverlay()
+        {
+            if (_overlay == null || !_overlay.IsVisible)
+            {
+                _overlay = new FloatingOverlay();
+            }
+
+            var volumes = _channelControls.Select(c => c.CurrentVolume).ToList();
+            _overlay.ShowVolumes(volumes);
+        }
         public MainWindow()
         {
             _isInitializing = true;
@@ -1472,6 +1483,7 @@ namespace DeejNG
                 {
                     if (!_allowVolumeApplication) return;
                     ApplyVolumeToTargets(control, targets, vol);
+                 
                 };
 
                 control.SessionDisconnected += (sender, target) =>
@@ -1635,6 +1647,7 @@ namespace DeejNG
                             if (_allowVolumeApplication)
                             {
                                 ApplyVolumeToTargets(ctrl, targets, level);
+                                ShowVolumeOverlay();
                             }
                         }
 
@@ -3158,7 +3171,9 @@ namespace DeejNG
                 {
                     var control = _mainWindow.FindControlForTarget(_targetName);
                     control?.SetMuted(mute);
+                 
                 });
+               
             }
 
             public void OnDisplayNameChanged(string displayName) { }
