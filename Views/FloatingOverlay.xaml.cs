@@ -295,6 +295,10 @@ namespace DeejNG.Views
             int color = GetPixel(desk, x, y);
             ReleaseDC(IntPtr.Zero, desk);
 
+            if (color == -1) // CLR_INVALID
+            {
+                return System.Drawing.Color.Empty; // Indicate failure
+            }
             return System.Drawing.Color.FromArgb(
                 (color >> 0) & 0xFF,  // Blue
                 (color >> 8) & 0xFF,  // Green
