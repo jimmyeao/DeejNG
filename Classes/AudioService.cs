@@ -176,40 +176,9 @@ namespace DeejNG.Services
 
             // Normalize the executable name
             string cleanedExecutable = Path.GetFileNameWithoutExtension(executable).ToLowerInvariant();
+            bool sessionFound = false;
 
-            // See if we need to refresh the cache
-            if ((DateTime.Now - _lastRefresh).TotalSeconds > CACHE_REFRESH_SECONDS)
-            {
-                RefreshSessionCache();
-            }
-
-            // Try to find the session in our cache
-            lock (_cacheLock)
-            {
-                if (_sessionCache.TryGetValue(cleanedExecutable, out var sessionInfo))
-                {
-                    try
-                    {
-                        sessionInfo.Session.SimpleAudioVolume.Mute = isMuted;
-
-                        if (!isMuted)
-                        {
-                            sessionInfo.Session.SimpleAudioVolume.Volume = level;
-                        }
-
-                        _sessionAccessTimes[cleanedExecutable] = DateTime.Now;
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        // If we can't access the session, it may have been closed
-                        Debug.WriteLine($"[AudioService] Failed to set volume for {cleanedExecutable}: {ex.Message}");
-                        _sessionCache.Remove(cleanedExecutable);
-                    }
-                }
-            }
-
-            // If we didn't find it in the cache or had an error, try direct approach
+            // Iterate through all active sessions to find every match
             try
             {
                 var sessions = _deviceEnumerator
@@ -223,10 +192,10 @@ namespace DeejNG.Services
                     {
                         int processId = (int)session.GetProcessID;
                         string procName = AudioUtilities.GetProcessNameSafely(processId);
-                        
+
                         if (string.IsNullOrEmpty(procName))
                         {
-                            continue; // Skip if we can't get the process name
+                            continue;
                         }
 
                         string cleanedProcName = Path.GetFileNameWithoutExtension(procName).ToLowerInvariant();
@@ -239,21 +208,7 @@ namespace DeejNG.Services
                             {
                                 session.SimpleAudioVolume.Volume = level;
                             }
-
-                            // Add to cache
-                            lock (_cacheLock)
-                            {
-                                _sessionCache[cleanedExecutable] = new SessionInfo
-                                {
-                                    Session = session,
-                                    ProcessName = cleanedProcName,
-                                    ProcessId = processId,
-                                    LastSeen = DateTime.Now
-                                };
-                                _sessionAccessTimes[cleanedExecutable] = DateTime.Now;
-                            }
-
-                            return;
+                            sessionFound = true;
                         }
                     }
                     catch (Exception ex)
@@ -262,15 +217,16 @@ namespace DeejNG.Services
                     }
                 }
 
-                // If we get here, we didn't find the session - log it
-                Debug.WriteLine($"[AudioService] Could not find session for {cleanedExecutable}");
+                if (!sessionFound)
+                {
+                    Debug.WriteLine($"[AudioService] Could not find any session for {cleanedExecutable}");
+                }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[AudioService] Failed to apply volume: {ex.Message}");
             }
         }
-        // Add this method to your AudioService class
         public void ApplyVolumeToUnmappedApplications(float level, bool isMuted, HashSet<string> mappedApplications)
         {
             level = Math.Clamp(level, 0.0f, 1.0f);
