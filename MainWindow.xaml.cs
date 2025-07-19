@@ -25,6 +25,7 @@ using DeejNG.Models;
 using static System.Windows.Forms.Design.AxImporter;
 using System.Runtime.InteropServices;
 using System.Windows.Media;
+using DeejNG.Views;
 
 namespace DeejNG
 {
@@ -42,6 +43,7 @@ namespace DeejNG
 
         #region Private Fields
         private SessionCollection _cachedSessionsForMeters;
+        private DispatcherTimer _positionSaveTimer;
         private DateTime _lastMeterSessionRefresh = DateTime.MinValue;
         private bool _isCalibrating = false;
         private DateTime _calibrationStartTime = DateTime.MinValue;
@@ -56,7 +58,8 @@ namespace DeejNG
         private DateTime _lastUnmappedMeterUpdate = DateTime.MinValue;
         private readonly object _unmappedLock = new object();
         private DispatcherTimer _forceCleanupTimer;
-        
+        public FloatingOverlay _overlay;
+
         // Cache unmapped peak calculations
         private DateTime _lastUnmappedPeakCalculation = DateTime.MinValue;
         private float _cachedUnmappedPeak = 0;
@@ -121,6 +124,207 @@ namespace DeejNG
         #endregion Private Fields
 
         #region Public Constructors
+
+        // Update this method in MainWindow.xaml.cs
+        public void ShowVolumeOverlay()
+        {
+            Debug.WriteLine("[Overlay] ShowVolumeOverlay triggered");
+
+            if (_appSettings is null || !_appSettings.OverlayEnabled)
+            {
+                Debug.WriteLine("[Overlay] Disabled in settings");
+                return;
+            }
+
+            if (_overlay == null)
+            {
+                Debug.WriteLine("[Overlay] Creating new overlay");
+                Debug.WriteLine($"[Overlay] Loaded position from settings: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+
+                // Validate position against virtual screen bounds (multi-monitor)
+                if (!IsPositionValid(_appSettings.OverlayX, _appSettings.OverlayY))
+                {
+                    Debug.WriteLine($"[Overlay] Loaded position ({_appSettings.OverlayX}, {_appSettings.OverlayY}) is invalid, using default");
+                    _appSettings.OverlayX = 100;
+                    _appSettings.OverlayY = 100;
+                }
+
+                _overlay = new FloatingOverlay(_appSettings, this);
+                Debug.WriteLine($"[Overlay] Created at validated position ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+            }
+
+            var volumes = _channelControls.Select(c => c.CurrentVolume).ToList();
+            var labels = _channelControls.Select(c => GetChannelLabel(c)).ToList();
+
+            Debug.WriteLine($"[Overlay] Showing {volumes.Count} channels");
+
+            _overlay.ShowVolumes(volumes, labels);
+        }
+
+        // Update LoadSettingsFromDisk to add debugging
+        private AppSettings LoadSettingsFromDisk()
+        {
+            try
+            {
+                if (File.Exists(SettingsPath))
+                {
+                    var json = File.ReadAllText(SettingsPath);
+                    Debug.WriteLine($"[Settings] Loading from: {SettingsPath}");
+
+                    _appSettings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayEnabled: {_appSettings.OverlayEnabled}");
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayPosition: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayOpacity: {_appSettings.OverlayOpacity}");
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayTimeoutSeconds: {_appSettings.OverlayTimeoutSeconds}");
+
+                    return _appSettings;
+                }
+                else
+                {
+                    Debug.WriteLine($"[Settings] Settings file does not exist: {SettingsPath}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Settings] Error loading settings: {ex.Message}");
+            }
+
+            _appSettings = new AppSettings();
+            Debug.WriteLine("[Settings] Using default AppSettings");
+            return _appSettings;
+        }
+        // Add this helper method to MainWindow.xaml.cs
+        public string GetChannelLabel(ChannelControl control)
+        {
+            if (control.AudioTargets != null && control.AudioTargets.Count > 0)
+            {
+                var primaryTarget = control.AudioTargets.FirstOrDefault();
+                if (primaryTarget != null && !string.IsNullOrEmpty(primaryTarget.Name))
+                {
+                    string name = primaryTarget.Name;
+
+                    // Handle special cases
+                    if (name.Equals("system", StringComparison.OrdinalIgnoreCase))
+                        return "System";
+                    if (name.Equals("unmapped", StringComparison.OrdinalIgnoreCase))
+                        return "Unmapped";
+
+                    // For regular app names, return the full name (wrapping will handle display)
+                    return char.ToUpper(name[0]) + name.Substring(1).ToLower();
+                }
+            }
+
+            // Fallback to channel number
+            int channelIndex = _channelControls.IndexOf(control);
+            return $"Channel {channelIndex + 1}";
+        }
+        public void UpdateOverlayPosition(double x, double y)
+        {
+            if (_appSettings != null)
+            {
+                // Store precise position with higher precision
+                _appSettings.OverlayX = Math.Round(x, 1);
+                _appSettings.OverlayY = Math.Round(y, 1);
+
+                Debug.WriteLine($"[Overlay] Position updated: X={_appSettings.OverlayX}, Y={_appSettings.OverlayY}");
+
+                // Debounce saves - only save 500ms after last position change
+                if (_positionSaveTimer == null)
+                {
+                    _positionSaveTimer = new DispatcherTimer
+                    {
+                        Interval = TimeSpan.FromMilliseconds(500)
+                    };
+                    _positionSaveTimer.Tick += PositionSaveTimer_Tick;
+                }
+
+                // Reset the timer - this cancels any pending save and starts a new 500ms countdown
+                _positionSaveTimer.Stop();
+                _positionSaveTimer.Start();
+            }
+        }
+        private void PositionSaveTimer_Tick(object sender, EventArgs e)
+        {
+            _positionSaveTimer.Stop();
+
+            // Save to disk on background thread
+            Task.Run(() => {
+                try
+                {
+                    var json = JsonSerializer.Serialize(_appSettings, new JsonSerializerOptions { WriteIndented = true });
+                    var dir = Path.GetDirectoryName(SettingsPath);
+                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+                    File.WriteAllText(SettingsPath, json);
+                    Debug.WriteLine("[Overlay] Position saved to disk (debounced)");
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ERROR] Failed to save overlay position: {ex.Message}");
+                }
+            });
+        }
+        private bool IsPositionValid(double x, double y)
+        {
+            // Use virtual screen bounds to support multi-monitor setups
+            var virtualLeft = SystemParameters.VirtualScreenLeft;
+            var virtualTop = SystemParameters.VirtualScreenTop;
+            var virtualWidth = SystemParameters.VirtualScreenWidth;
+            var virtualHeight = SystemParameters.VirtualScreenHeight;
+
+            var virtualRight = virtualLeft + virtualWidth;
+            var virtualBottom = virtualTop + virtualHeight;
+
+            // Allow position anywhere within virtual screen bounds (with small margin)
+            bool isValid = x >= virtualLeft - 100 &&
+                           x <= virtualRight - 100 &&
+                           y >= virtualTop - 50 &&
+                           y <= virtualBottom - 50;
+
+            Debug.WriteLine($"[Position] Checking position ({x}, {y}) against virtual bounds ({virtualLeft}, {virtualTop}) to ({virtualRight}, {virtualBottom}) - Valid: {isValid}");
+
+            return isValid;
+        }
+
+
+        // Also update the ApplyOverlaySettings method to handle opacity changes
+        public void ApplyOverlaySettings(AppSettings settings)
+        {
+            _appSettings.OverlayEnabled = settings.OverlayEnabled;
+            _appSettings.OverlayOpacity = settings.OverlayOpacity;
+            _appSettings.OverlayTimeoutSeconds = settings.OverlayTimeoutSeconds;
+            _appSettings.OverlayX = settings.OverlayX;
+            _appSettings.OverlayY = settings.OverlayY;
+
+            // If overlay exists, update its settings
+            if (_overlay != null)
+            {
+                _overlay.OverlayOpacity = settings.OverlayOpacity;
+                _overlay.Left = settings.OverlayX;
+                _overlay.Top = settings.OverlayY;
+
+                // Recreate the auto-close timer with new timeout
+                _overlay.ResetAutoCloseTimer(settings.OverlayTimeoutSeconds);
+
+                // Force a redraw to apply new opacity
+                _overlay.OverlayCanvas?.InvalidateVisual();
+            }
+
+            Debug.WriteLine($"[Overlay] Settings applied - Enabled: {settings.OverlayEnabled}, Opacity: {settings.OverlayOpacity}");
+        }
+
+
+
+
+        private void SettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            var settingsWindow = new SettingsWindow();
+            settingsWindow.Owner = this;
+            settingsWindow.Show();  // Show as non-modal window (or ShowDialog() if you prefer modal)
+        }
 
         public MainWindow()
         {
@@ -308,7 +512,13 @@ namespace DeejNG
             _forceCleanupTimer?.Stop();
             _serialWatchdogTimer?.Stop();
             _serialReconnectTimer?.Stop();
-
+            // we need to close all windows before we clean up the serial port and COM objects
+            // Close the overlay if it exists
+            if (_overlay != null)
+            {
+                _overlay.Close();
+                _overlay = null;
+            }
             // Clean up all registered event handlers
             foreach (var target in _registeredHandlers.Keys.ToList())
             {
@@ -841,16 +1051,36 @@ namespace DeejNG
             try
             {
                 var settings = LoadSettingsFromDisk();
+                _appSettings = settings ?? new AppSettings();
 
                 // Apply UI settings
-                ApplyTheme(settings?.IsDarkTheme == true ? "Dark" : "Light");
-                InvertSliderCheckBox.IsChecked = settings?.IsSliderInverted ?? false;
-                ShowSlidersCheckBox.IsChecked = settings?.VuMeters ?? true;
+                ApplyTheme(_appSettings.IsDarkTheme ? "Dark" : "Light");
+                InvertSliderCheckBox.IsChecked = _appSettings.IsSliderInverted;
+                ShowSlidersCheckBox.IsChecked = _appSettings.VuMeters;
 
-                bool showMeters = settings?.VuMeters ?? true;
-                ShowSlidersCheckBox.IsChecked = showMeters;
-                SetMeterVisibilityForAll(showMeters);
-                DisableSmoothingCheckBox.IsChecked = settings?.DisableSmoothing ?? false;
+                SetMeterVisibilityForAll(_appSettings.VuMeters);
+                DisableSmoothingCheckBox.IsChecked = _appSettings.DisableSmoothing;
+
+                // Validate overlay position using virtual screen bounds (multi-monitor support)
+                Debug.WriteLine($"[Settings] Initial overlay position from file: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+
+                if (!IsPositionValid(_appSettings.OverlayX, _appSettings.OverlayY))
+                {
+                    Debug.WriteLine($"[Settings] Position ({_appSettings.OverlayX}, {_appSettings.OverlayY}) is outside virtual screen bounds, resetting to default");
+                    _appSettings.OverlayX = 100;
+                    _appSettings.OverlayY = 100;
+                }
+                else
+                {
+                    Debug.WriteLine($"[Settings] Position ({_appSettings.OverlayX}, {_appSettings.OverlayY}) is valid for multi-monitor setup");
+                }
+
+                if (_appSettings.OverlayOpacity <= 0 || _appSettings.OverlayOpacity > 1)
+                {
+                    _appSettings.OverlayOpacity = 0.85;
+                }
+
+                Debug.WriteLine($"[Settings] Final overlay settings - Enabled: {_appSettings.OverlayEnabled}, Position: ({_appSettings.OverlayX}, {_appSettings.OverlayY}), Opacity: {_appSettings.OverlayOpacity}, Timeout: {_appSettings.OverlayTimeoutSeconds}");
 
                 // Handle startup settings
                 StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
@@ -863,18 +1093,17 @@ namespace DeejNG
                 StartOnBootCheckBox.Checked += StartOnBootCheckBox_Checked;
                 StartOnBootCheckBox.Unchecked += StartOnBootCheckBox_Unchecked;
 
-                StartMinimizedCheckBox.IsChecked = settings?.StartMinimized ?? false;
+                StartMinimizedCheckBox.IsChecked = _appSettings.StartMinimized;
                 StartMinimizedCheckBox.Checked += StartMinimizedCheckBox_Checked;
 
-                // CRITICAL: Generate sliders from saved settings
-                if (settings?.SliderTargets != null && settings.SliderTargets.Count > 0)
+                // Generate sliders from saved settings
+                if (_appSettings.SliderTargets != null && _appSettings.SliderTargets.Count > 0)
                 {
-                    _expectedSliderCount = settings.SliderTargets.Count;
-                    GenerateSliders(settings.SliderTargets.Count);
+                    _expectedSliderCount = _appSettings.SliderTargets.Count;
+                    GenerateSliders(_appSettings.SliderTargets.Count);
                 }
                 else
                 {
-                    // Default to 4 sliders if no settings exist
                     _expectedSliderCount = 4;
                     GenerateSliders(4);
                 }
@@ -882,18 +1111,31 @@ namespace DeejNG
                 _hasLoadedInitialSettings = true;
 
                 foreach (var ctrl in _channelControls)
-                    ctrl.SetMeterVisibility(showMeters);
+                    ctrl.SetMeterVisibility(_appSettings.VuMeters);
+
+                // If overlay is enabled and autohide is disabled, show it immediately after startup
+                if (_appSettings.OverlayEnabled && _appSettings.OverlayTimeoutSeconds == AppSettings.OverlayNoTimeout)
+                {
+                    // Delay slightly to ensure everything is loaded
+                    var startupTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
+                    startupTimer.Tick += (s, e) =>
+                    {
+                        startupTimer.Stop();
+                        ShowVolumeOverlay();
+                        Debug.WriteLine("[Startup] Overlay shown automatically (autohide disabled)");
+                    };
+                    startupTimer.Start();
+                }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[ERROR] Failed to load settings without serial: {ex.Message}");
-                // Fallback: generate default sliders
                 _expectedSliderCount = 4;
                 GenerateSliders(4);
                 _hasLoadedInitialSettings = true;
             }
         }
-       
+
         private static void SetDisplayIcon()
         {
             //only run in Release
@@ -1472,6 +1714,7 @@ namespace DeejNG
                 {
                     if (!_allowVolumeApplication) return;
                     ApplyVolumeToTargets(control, targets, vol);
+                 
                 };
 
                 control.SessionDisconnected += (sender, target) =>
@@ -1635,6 +1878,7 @@ namespace DeejNG
                             if (_allowVolumeApplication)
                             {
                                 ApplyVolumeToTargets(ctrl, targets, level);
+                                ShowVolumeOverlay();
                             }
                         }
 
@@ -1908,22 +2152,7 @@ namespace DeejNG
                 ctrl.SetMeterVisibility(showMeters);
         }
 
-        private AppSettings LoadSettingsFromDisk()
-        {
-            try
-            {
-                if (File.Exists(SettingsPath))
-                {
-                    var json = File.ReadAllText(SettingsPath);
-                    _appSettings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
-                    return _appSettings; // ✅ return the same reference
-                }
-            }
-            catch { }
-
-            _appSettings = new AppSettings();
-            return _appSettings;
-        }
+      
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
@@ -2012,20 +2241,17 @@ namespace DeejNG
                 Debug.WriteLine("[Settings] Skipping save during initialization");
                 return;
             }
-
             if (!_hasLoadedInitialSettings)
             {
                 Debug.WriteLine("[Settings] Skipping save - initial settings not loaded yet");
                 return;
             }
-
             // Prevent too frequent saves
             if ((DateTime.Now - _lastSettingsSave).TotalMilliseconds < 500)
             {
                 Debug.WriteLine("[Settings] Skipping save - too frequent");
                 return;
             }
-
             lock (_settingsLock)
             {
                 try
@@ -2047,7 +2273,14 @@ namespace DeejNG
                         StartOnBoot = StartOnBootCheckBox.IsChecked ?? false,
                         StartMinimized = StartMinimizedCheckBox.IsChecked ?? false,
                         InputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList(),
-                        DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false
+                        DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false,
+
+                        // ✅ PRESERVE OVERLAY SETTINGS FROM _appSettings
+                        OverlayEnabled = _appSettings.OverlayEnabled,
+                        OverlayOpacity = _appSettings.OverlayOpacity,
+                        OverlayTimeoutSeconds = _appSettings.OverlayTimeoutSeconds,
+                        OverlayX = _appSettings.OverlayX,
+                        OverlayY = _appSettings.OverlayY
                     };
 
                     // Additional validation
@@ -2072,7 +2305,7 @@ namespace DeejNG
                     File.WriteAllText(SettingsPath, json);
                     _lastSettingsSave = DateTime.Now;
 
-                    Debug.WriteLine($"[Settings] Saved successfully with {settings.SliderTargets.Count} slider configurations");
+                    Debug.WriteLine($"[Settings] Saved successfully with {settings.SliderTargets.Count} slider configurations and overlay settings");
                 }
                 catch (Exception ex)
                 {
@@ -2080,6 +2313,44 @@ namespace DeejNG
                 }
             }
         }
+        public void UpdateOverlaySettings(AppSettings newSettings)
+        {
+            Debug.WriteLine($"[Overlay] UpdateOverlaySettings called with position: ({newSettings.OverlayX}, {newSettings.OverlayY})");
+
+            // Preserve current position if overlay exists and is visible
+            if (_overlay != null && _overlay.IsVisible)
+            {
+                var currentX = Math.Round(_overlay.Left, 1);
+                var currentY = Math.Round(_overlay.Top, 1);
+
+                Debug.WriteLine($"[Overlay] Preserving current visible position: ({currentX}, {currentY})");
+
+                _appSettings.OverlayX = currentX;
+                _appSettings.OverlayY = currentY;
+            }
+            else if (IsPositionValid(newSettings.OverlayX, newSettings.OverlayY))
+            {
+                // Use provided position if valid for multi-monitor setup
+                _appSettings.OverlayX = newSettings.OverlayX;
+                _appSettings.OverlayY = newSettings.OverlayY;
+                Debug.WriteLine($"[Overlay] Using provided valid position: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+            }
+            else
+            {
+                // Default position on primary screen if invalid
+                _appSettings.OverlayX = 100;
+                _appSettings.OverlayY = 100;
+                Debug.WriteLine($"[Overlay] Position invalid, using default: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+            }
+
+            // Update other settings
+            _appSettings.OverlayEnabled = newSettings.OverlayEnabled;
+            _appSettings.OverlayOpacity = newSettings.OverlayOpacity;
+            _appSettings.OverlayTimeoutSeconds = newSettings.OverlayTimeoutSeconds;
+
+            Debug.WriteLine($"[Overlay] Final settings - Enabled: {_appSettings.OverlayEnabled}, Opacity: {_appSettings.OverlayOpacity}, Timeout: {_appSettings.OverlayTimeoutSeconds}, Position: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+        }
+
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
             if (_serialPort == null || !_serialPort.IsOpen)
@@ -3158,7 +3429,9 @@ namespace DeejNG
                 {
                     var control = _mainWindow.FindControlForTarget(_targetName);
                     control?.SetMuted(mute);
+                 
                 });
+               
             }
 
             public void OnDisplayNameChanged(string displayName) { }
@@ -3187,23 +3460,7 @@ namespace DeejNG
                 });
             }
         }
-        private class AppSettings
-        {
-            #region Public Properties
-
-            public bool DisableSmoothing { get; set; }
-            public List<bool> InputModes { get; set; } = new();
-            public bool IsDarkTheme { get; set; }
-            public bool IsSliderInverted { get; set; }
-            public List<bool> MuteStates { get; set; } = new();
-            public string? PortName { get; set; }
-            public List<List<AudioTarget>> SliderTargets { get; set; } = new();
-            public bool StartMinimized { get; set; } = false;
-            public bool StartOnBoot { get; set; }
-            public bool VuMeters { get; set; } = true;
-
-            #endregion Public Properties
-        }
+       
 
         #endregion Private Classes
     }
