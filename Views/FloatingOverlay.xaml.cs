@@ -30,7 +30,7 @@ namespace DeejNG.Views
         private DispatcherTimer _backgroundAnalysisTimer;
         private bool _isWhiteTextOptimal = true; // Cache for auto-detected color
         // Store text color setting directly in overlay
-        private bool _useWhiteText = true;
+       
         [DllImport("user32.dll")]
         private static extern IntPtr GetDC(IntPtr hWnd);
 
@@ -295,10 +295,6 @@ namespace DeejNG.Views
             int color = GetPixel(desk, x, y);
             ReleaseDC(IntPtr.Zero, desk);
 
-            if (color == -1) // CLR_INVALID
-            {
-                return System.Drawing.Color.Empty; // Indicate failure
-            }
             return System.Drawing.Color.FromArgb(
                 (color >> 0) & 0xFF,  // Blue
                 (color >> 8) & 0xFF,  // Green
@@ -567,6 +563,7 @@ namespace DeejNG.Views
             }
         }
 
+        // Fixed method - no longer tries to access private _appSettings
       
         private SKColor GetVolumeColor(float volume)
         {
