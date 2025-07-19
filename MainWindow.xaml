@@ -15,22 +15,43 @@
         TextElement.FontSize="12"
         FontFamily="{materialDesign:MaterialDesignFont}"
         TextOptions.TextFormattingMode="Ideal">
-<DockPanel>
-   
-    <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10">
-        <TextBlock Text="COM Port:" VerticalAlignment="Center" Style="{DynamicResource MaterialDesignBody2}" />
+    <DockPanel>
+
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10">
+            <TextBlock Text="COM Port:" VerticalAlignment="Center" Style="{DynamicResource MaterialDesignBody2}" />
             <ComboBox x:Name="ComPortSelector" Width="100" Margin="5,0" 
           Style="{StaticResource MaterialDesignComboBox}" 
           DropDownOpened="ComPortSelector_DropDownOpened"
           SelectionChanged="ComPortSelector_SelectionChanged"/>
             <Button x:Name="ConnectButton" Content="Connect" Click="Connect_Click" Style="{StaticResource MaterialDesignFlatButton}" />
-        <TextBlock x:Name="ConnectionStatus" Text="Disconnected" Margin="10,0,0,0" VerticalAlignment="Center" Style="{DynamicResource MaterialDesignBody2}" />
-        <Button Content="Toggle Theme" Click="ToggleTheme_Click" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10" Style="{DynamicResource MaterialDesignFlatButton}"/>
-    </StackPanel>
 
-    <!-- Settings row -->
-    <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10,0,10,5">
-        <CheckBox x:Name="InvertSliderCheckBox"
+
+
+
+
+            <TextBlock x:Name="ConnectionStatus" Text="Disconnected" Margin="10,0,0,0" VerticalAlignment="Center" Style="{DynamicResource MaterialDesignBody2}" />
+            <Button Content="Toggle Theme" Click="ToggleTheme_Click" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10" Style="{DynamicResource MaterialDesignFlatButton}"/>
+
+
+            <Button Click="SettingsButton_Click"
+        Width="26" Height="25"
+        Padding="0"
+        ToolTip="Settings"
+        Background="Transparent"
+        BorderBrush="Transparent">
+                <Viewbox Stretch="Uniform">
+                    <materialDesign:PackIcon Kind="Settings"
+                                 Foreground="Black" RenderTransformOrigin="0.781,0.781" />
+                </Viewbox>
+            </Button>
+
+
+
+        </StackPanel>
+
+        <!-- Settings row -->
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10,0,10,5">
+            <CheckBox x:Name="InvertSliderCheckBox"
                   Content="Invert Sliders"
                   Checked="InvertSlider_Checked"
                   Unchecked="InvertSlider_Unchecked"
@@ -38,20 +59,20 @@
                   VerticalAlignment="Center"
                   HorizontalAlignment="Left" />
 
-        <CheckBox x:Name="ShowSlidersCheckBox"
+            <CheckBox x:Name="ShowSlidersCheckBox"
                   Content="Show Meters"
                   IsChecked="True"
                   Checked="ShowSlidersCheckBox_Checked"
                   Unchecked="ShowSlidersCheckBox_Unchecked"
                   VerticalAlignment="Center"
                   HorizontalAlignment="Left" />
-        <CheckBox x:Name="StartOnBootCheckBox"
+            <CheckBox x:Name="StartOnBootCheckBox"
                   Content="Start on boot"
                   Margin="10"
                   
                   Checked="StartOnBootCheckBox_Checked"
                   Unchecked="StartOnBootCheckBox_Unchecked"/>
-        <CheckBox x:Name="StartMinimizedCheckBox"
+            <CheckBox x:Name="StartMinimizedCheckBox"
                     Content="Start minimized"
                     Margin="10"
                     Checked="StartMinimizedCheckBox_Checked"
@@ -64,23 +85,24 @@
 
         </StackPanel>
 
-    <!-- Main content area -->
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
+        <!-- Main content area -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
 
-        <ScrollViewer Grid.Row="0"
+            <ScrollViewer Grid.Row="0"
                       HorizontalScrollBarVisibility="Auto"
                       VerticalScrollBarVisibility="Auto"
                       x:Name="SliderScrollViewer">
-            <StackPanel x:Name="SliderPanel" Orientation="Horizontal" Margin="10">
-                <!-- Dynamically added user controls (ChannelControl) go here -->
-            </StackPanel>
-        </ScrollViewer>
-    </Grid>
+                <StackPanel x:Name="SliderPanel" Orientation="Horizontal" Margin="10">
+                    <!-- Dynamically added user controls (ChannelControl) go here -->
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
 
-    <tb:TaskbarIcon x:Name="MyNotifyIcon" TrayMouseDoubleClick="MyNotifyIcon_Click" ToolTipText="DeejNG" Visibility="Visible"/>
+        <tb:TaskbarIcon x:Name="MyNotifyIcon" TrayMouseDoubleClick="MyNotifyIcon_Click" ToolTipText="DeejNG" Visibility="Visible"/>
+
     </DockPanel>
 
 

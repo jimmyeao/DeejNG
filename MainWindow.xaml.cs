@@ -133,6 +133,13 @@ namespace DeejNG
             var volumes = _channelControls.Select(c => c.CurrentVolume).ToList();
             _overlay.ShowVolumes(volumes);
         }
+        private void SettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            var settingsWindow = new SettingsWindow();
+            settingsWindow.Owner = this;
+            settingsWindow.Show();  // Show as non-modal window (or ShowDialog() if you prefer modal)
+        }
+
         public MainWindow()
         {
             _isInitializing = true;

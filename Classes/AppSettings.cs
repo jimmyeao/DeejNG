@@ -21,7 +21,13 @@ namespace DeejNG.Classes
         public bool StartMinimized { get; set; } = false;
         public bool StartOnBoot { get; set; }
         public bool VuMeters { get; set; } = true;
+        public bool OverlayEnabled { get; set; } = false;
+      
+        public int OverlayTimeoutSeconds { get; set; } = 5;  // default 5 seconds
+        public double OverlayX { get; set; }
+        public double OverlayY { get; set; }
         public static double OverlayOpacity { get; set; } = 0.85;
+
         #endregion Public Properties
     }
 }
