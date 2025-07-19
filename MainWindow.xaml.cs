@@ -57,7 +57,7 @@ namespace DeejNG
         private DateTime _lastUnmappedMeterUpdate = DateTime.MinValue;
         private readonly object _unmappedLock = new object();
         private DispatcherTimer _forceCleanupTimer;
-        private FloatingOverlay _overlay;
+        public FloatingOverlay _overlay;
 
         // Cache unmapped peak calculations
         private DateTime _lastUnmappedPeakCalculation = DateTime.MinValue;
@@ -124,6 +124,7 @@ namespace DeejNG
 
         #region Public Constructors
 
+        // Update this method in MainWindow.xaml.cs
         public void ShowVolumeOverlay()
         {
             Debug.WriteLine("[Overlay] ShowVolumeOverlay triggered");
@@ -137,11 +138,129 @@ namespace DeejNG
             if (_overlay == null)
             {
                 Debug.WriteLine("[Overlay] Creating new overlay");
-                _overlay = new FloatingOverlay(_appSettings);
+
+                // Ensure we have valid position values
+                if (_appSettings.OverlayX <= 0) _appSettings.OverlayX = 100;
+                if (_appSettings.OverlayY <= 0) _appSettings.OverlayY = 100;
+
+                _overlay = new FloatingOverlay(_appSettings, this);
+                Debug.WriteLine($"[Overlay] Created at position ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
             }
 
             var volumes = _channelControls.Select(c => c.CurrentVolume).ToList();
-            _overlay.ShowVolumes(volumes);
+            var labels = _channelControls.Select(c => GetChannelLabel(c)).ToList();
+
+            Debug.WriteLine($"[Overlay] Showing {volumes.Count} channels");
+
+            _overlay.ShowVolumes(volumes, labels);
+        }
+
+        // Add this helper method to MainWindow.xaml.cs
+        private string GetChannelLabel(ChannelControl control)
+        {
+            if (control.AudioTargets != null && control.AudioTargets.Count > 0)
+            {
+                var primaryTarget = control.AudioTargets.FirstOrDefault();
+                if (primaryTarget != null && !string.IsNullOrEmpty(primaryTarget.Name))
+                {
+                    string name = primaryTarget.Name;
+
+                    // Handle special cases
+                    if (name.Equals("system", StringComparison.OrdinalIgnoreCase))
+                        return "System";
+                    if (name.Equals("unmapped", StringComparison.OrdinalIgnoreCase))
+                        return "Unmapped";
+
+                    // For regular app names, return the full name (wrapping will handle display)
+                    return char.ToUpper(name[0]) + name.Substring(1).ToLower();
+                }
+            }
+
+            // Fallback to channel number
+            int channelIndex = _channelControls.IndexOf(control);
+            return $"Channel {channelIndex + 1}";
+        }
+        public void UpdateOverlayPosition(double x, double y)
+        {
+            if (_appSettings != null)
+            {
+                _appSettings.OverlayX = x;
+                _appSettings.OverlayY = y;
+                Debug.WriteLine($"[Overlay] Position updated and saved: X={x}, Y={y}");
+
+                // Save position immediately to prevent loss
+                Task.Run(() => {
+                    try
+                    {
+                        var json = JsonSerializer.Serialize(_appSettings, new JsonSerializerOptions { WriteIndented = true });
+                        var dir = Path.GetDirectoryName(SettingsPath);
+                        if (!Directory.Exists(dir) && dir != null)
+                        {
+                            Directory.CreateDirectory(dir);
+                        }
+                        File.WriteAllText(SettingsPath, json);
+                        Debug.WriteLine("[Overlay] Position saved to disk");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[ERROR] Failed to save overlay position: {ex.Message}");
+                    }
+                });
+            }
+        }
+        public void SaveOverlayPosition(double x, double y)
+        {
+            _appSettings.OverlayX = x;
+            _appSettings.OverlayY = y;
+
+            // Only save if not during initialization to avoid performance issues
+            if (!_isInitializing && _hasLoadedInitialSettings)
+            {
+                Task.Run(() => {
+                    try
+                    {
+                        var json = JsonSerializer.Serialize(_appSettings, new JsonSerializerOptions { WriteIndented = true });
+                        var dir = Path.GetDirectoryName(SettingsPath);
+                        if (!Directory.Exists(dir) && dir != null)
+                        {
+                            Directory.CreateDirectory(dir);
+                        }
+                        File.WriteAllText(SettingsPath, json);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[ERROR] Failed to save overlay position: {ex.Message}");
+                    }
+                });
+            }
+        }
+   
+
+     
+        // Also update the ApplyOverlaySettings method to handle opacity changes
+        public void ApplyOverlaySettings(AppSettings settings)
+        {
+            _appSettings.OverlayEnabled = settings.OverlayEnabled;
+            _appSettings.OverlayOpacity = settings.OverlayOpacity;
+            _appSettings.OverlayTimeoutSeconds = settings.OverlayTimeoutSeconds;
+            _appSettings.OverlayX = settings.OverlayX;
+            _appSettings.OverlayY = settings.OverlayY;
+
+            // If overlay exists, update its settings
+            if (_overlay != null)
+            {
+                _overlay.OverlayOpacity = settings.OverlayOpacity;
+                _overlay.Left = settings.OverlayX;
+                _overlay.Top = settings.OverlayY;
+
+                // Recreate the auto-close timer with new timeout
+                _overlay.ResetAutoCloseTimer(settings.OverlayTimeoutSeconds);
+
+                // Force a redraw to apply new opacity
+                _overlay.OverlayCanvas?.InvalidateVisual();
+            }
+
+            Debug.WriteLine($"[Overlay] Settings applied - Enabled: {settings.OverlayEnabled}, Opacity: {settings.OverlayOpacity}");
         }
 
 
@@ -340,7 +459,13 @@ namespace DeejNG
             _forceCleanupTimer?.Stop();
             _serialWatchdogTimer?.Stop();
             _serialReconnectTimer?.Stop();
-
+            // we need to close all windows before we clean up the serial port and COM objects
+            // Close the overlay if it exists
+            if (_overlay != null)
+            {
+                _overlay.Close();
+                _overlay = null;
+            }
             // Clean up all registered event handlers
             foreach (var target in _registeredHandlers.Keys.ToList())
             {
@@ -873,7 +998,7 @@ namespace DeejNG
             try
             {
                 var settings = LoadSettingsFromDisk();
-                _appSettings = settings ?? new AppSettings(); // ✅ FIX: properly assign instance-wide
+                _appSettings = settings ?? new AppSettings();
 
                 // Apply UI settings
                 ApplyTheme(_appSettings.IsDarkTheme ? "Dark" : "Light");
@@ -883,11 +1008,13 @@ namespace DeejNG
                 SetMeterVisibilityForAll(_appSettings.VuMeters);
                 DisableSmoothingCheckBox.IsChecked = _appSettings.DisableSmoothing;
 
-                Debug.WriteLine($"[Settings] Applying overlay settings - Enabled: {_appSettings.OverlayEnabled}");
-                if (_appSettings.OverlayEnabled)
-                {
-                    Debug.WriteLine("[Settings] Overlay is enabled, will show on first volume change");
-                }
+                // Ensure overlay position defaults are set
+                if (_appSettings.OverlayX <= 0) _appSettings.OverlayX = 100;
+                if (_appSettings.OverlayY <= 0) _appSettings.OverlayY = 100;
+                if (_appSettings.OverlayOpacity <= 0) _appSettings.OverlayOpacity = 0.85;
+
+                Debug.WriteLine($"[Settings] Loaded overlay settings - Enabled: {_appSettings.OverlayEnabled}, Position: ({_appSettings.OverlayX}, {_appSettings.OverlayY}), Opacity: {_appSettings.OverlayOpacity}, Timeout: {_appSettings.OverlayTimeoutSeconds}");
+
                 // Handle startup settings
                 StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
                 StartOnBootCheckBox.Unchecked -= StartOnBootCheckBox_Unchecked;
@@ -902,7 +1029,7 @@ namespace DeejNG
                 StartMinimizedCheckBox.IsChecked = _appSettings.StartMinimized;
                 StartMinimizedCheckBox.Checked += StartMinimizedCheckBox_Checked;
 
-                // CRITICAL: Generate sliders from saved settings
+                // Generate sliders from saved settings
                 if (_appSettings.SliderTargets != null && _appSettings.SliderTargets.Count > 0)
                 {
                     _expectedSliderCount = _appSettings.SliderTargets.Count;
@@ -2140,13 +2267,28 @@ namespace DeejNG
         }
         public void UpdateOverlaySettings(AppSettings newSettings)
         {
+            // Update the main app settings but preserve current position if overlay exists
+            double currentX = _overlay?.Left ?? newSettings.OverlayX;
+            double currentY = _overlay?.Top ?? newSettings.OverlayY;
+
             _appSettings.OverlayEnabled = newSettings.OverlayEnabled;
             _appSettings.OverlayOpacity = newSettings.OverlayOpacity;
             _appSettings.OverlayTimeoutSeconds = newSettings.OverlayTimeoutSeconds;
-            _appSettings.OverlayX = newSettings.OverlayX;
-            _appSettings.OverlayY = newSettings.OverlayY;
 
-            Debug.WriteLine($"[Settings] Updated overlay settings in MainWindow - Enabled: {_appSettings.OverlayEnabled}");
+            // Only update position if overlay doesn't exist or if position is default
+            if (_overlay == null || (_appSettings.OverlayX <= 0 && _appSettings.OverlayY <= 0))
+            {
+                _appSettings.OverlayX = newSettings.OverlayX > 0 ? newSettings.OverlayX : 100;
+                _appSettings.OverlayY = newSettings.OverlayY > 0 ? newSettings.OverlayY : 100;
+            }
+            else
+            {
+                // Keep current position
+                _appSettings.OverlayX = currentX;
+                _appSettings.OverlayY = currentY;
+            }
+
+            Debug.WriteLine($"[Overlay] Settings updated - Enabled: {_appSettings.OverlayEnabled}, Opacity: {_appSettings.OverlayOpacity}, Timeout: {_appSettings.OverlayTimeoutSeconds}, Position: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
         }
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
