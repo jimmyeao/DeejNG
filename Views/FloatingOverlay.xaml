@@ -9,7 +9,8 @@
         ResizeMode="NoResize"
         Topmost="True"
         ShowInTaskbar="False"
-        Width="800" Height="120">
+        Width="800" Height="120"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown">
 
     <Grid>
         <skia:SKElement x:Name="OverlayCanvas" PaintSurface="OverlayCanvas_PaintSurface" />

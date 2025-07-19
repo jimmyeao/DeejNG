@@ -3202,23 +3202,7 @@ namespace DeejNG
                 });
             }
         }
-        private class AppSettings
-        {
-            #region Public Properties
-
-            public bool DisableSmoothing { get; set; }
-            public List<bool> InputModes { get; set; } = new();
-            public bool IsDarkTheme { get; set; }
-            public bool IsSliderInverted { get; set; }
-            public List<bool> MuteStates { get; set; } = new();
-            public string? PortName { get; set; }
-            public List<List<AudioTarget>> SliderTargets { get; set; } = new();
-            public bool StartMinimized { get; set; } = false;
-            public bool StartOnBoot { get; set; }
-            public bool VuMeters { get; set; } = true;
-
-            #endregion Public Properties
-        }
+       
 
         #endregion Private Classes
     }

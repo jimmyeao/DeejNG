@@ -5,7 +5,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
+using DeejNG.Classes;
 
 namespace DeejNG.Views
 {
@@ -47,10 +49,18 @@ namespace DeejNG.Views
             Left = SystemParameters.WorkArea.Left + 20;
             Top = SystemParameters.WorkArea.Top + 20;
 
-            Opacity = OverlayOpacity;
+            Opacity = AppSettings.OverlayOpacity;
+
             ResetAutoHideTimer(); // ✅ instead of Show + Start
         }
 
+        private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == MouseButton.Left)
+            {
+                try { DragMove(); } catch { /* ignore drag exceptions */ }
+            }
+        }
 
         private void OverlayCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)
         {
