@@ -210,9 +210,9 @@ namespace DeejNG.Views
                     _isDragging = true;
                     this.DragMove();
                 }
-                catch
+                catch (Exception ex)
                 {
-                    /* ignore drag exceptions */
+                    Debug.WriteLine($"[Overlay] Drag operation failed: {ex.Message}");
                 }
                 finally
                 {
@@ -256,46 +256,45 @@ namespace DeejNG.Views
             const float padding = 25f;
             const float labelOffset = 65f;
 
-            // Draw background with ONLY background opacity
-            var backgroundPaint = new SKPaint
+            // Use using statements for proper resource management
+            using (var backgroundPaint = new SKPaint
             {
                 Color = SKColors.Gray.WithAlpha((byte)(OverlayOpacity * 255 * 0.75)),
                 Style = SKPaintStyle.Fill,
                 IsAntialias = true
-            };
-
-            var backgroundRect = new SKRect(5, 5, e.Info.Width - 5, e.Info.Height - 5);
-            canvas.DrawRoundRect(backgroundRect, 12, 12, backgroundPaint);
-
-            var borderPaint = new SKPaint
+            })
             {
-                Color = SKColors.White.WithAlpha((byte)(OverlayOpacity * 255 * 0.4)),
-                Style = SKPaintStyle.Stroke,
-                StrokeWidth = 1.5f,
-                IsAntialias = true
-            };
-            canvas.DrawRoundRect(backgroundRect, 12, 12, borderPaint);
+                var backgroundRect = new SKRect(5, 5, e.Info.Width - 5, e.Info.Height - 5);
+                canvas.DrawRoundRect(backgroundRect, 12, 12, backgroundPaint);
 
-            int channelsPerRow = Math.Min(_volumes.Count, 6);
+                using (var borderPaint = new SKPaint
+                {
+                    Color = SKColors.White.WithAlpha((byte)(OverlayOpacity * 255 * 0.4)),
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = 1.5f,
+                    IsAntialias = true
+                })
+                {
+                    canvas.DrawRoundRect(backgroundRect, 12, 12, borderPaint);
 
-            for (int i = 0; i < _volumes.Count; i++)
-            {
-                int row = i / channelsPerRow;
-                int col = i % channelsPerRow;
+                    int channelsPerRow = Math.Min(_volumes.Count, 6);
 
-                float x = padding + (col * horizontalSpacing) + (meterSize / 2);
-                float y = padding + (row * verticalSpacing) + (meterSize / 2);
+                    for (int i = 0; i < _volumes.Count; i++)
+                    {
+                        int row = i / channelsPerRow;
+                        int col = i % channelsPerRow;
 
-                float volume = _volumes[i];
-                string label = i < _channelLabels.Count ? _channelLabels[i] : $"Ch {i + 1}";
+                        float x = padding + (col * horizontalSpacing) + (meterSize / 2);
+                        float y = padding + (row * verticalSpacing) + (meterSize / 2);
 
-                DrawCircularMeter(canvas, new SKPoint(x, y), meterSize, volume, label, labelOffset);
+                        float volume = _volumes[i];
+                        string label = i < _channelLabels.Count ? _channelLabels[i] : $"Ch {i + 1}";
+
+                        DrawCircularMeter(canvas, new SKPoint(x, y), meterSize, volume, label, labelOffset);
+                    }
+                }
             }
-
-            backgroundPaint.Dispose();
-            borderPaint.Dispose();
         }
-
         private void DrawCircularMeter(SKCanvas canvas, SKPoint center, float diameter, float value, string label, float labelOffset)
         {
             var radius = diameter / 2f;

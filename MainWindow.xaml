@@ -33,18 +33,17 @@
             <Button Content="Toggle Theme" Click="ToggleTheme_Click" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10" Style="{DynamicResource MaterialDesignFlatButton}"/>
 
 
-            <Button Click="SettingsButton_Click"
-        Width="26" Height="25"
-        Padding="0"
-        ToolTip="Settings"
-        Background="Transparent"
-        BorderBrush="Transparent">
+            <Button x:Name="SettingsButton" 
+                Width="30" Height="30" 
+                Style="{StaticResource MaterialDesignIconButton}"
+                Click="SettingsButton_Click"
+                BorderBrush="Transparent">
                 <Viewbox Stretch="Uniform">
-                    <materialDesign:PackIcon Kind="Settings"
-                                 Foreground="Black" RenderTransformOrigin="0.781,0.781" />
+                    <materialDesign:PackIcon Kind="Settings" 
+                                Foreground="{DynamicResource MaterialDesign.Brush.Foreground}" 
+                                RenderTransformOrigin="0.781,0.781" />
                 </Viewbox>
             </Button>
-
 
 
         </StackPanel>

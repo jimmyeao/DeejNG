@@ -160,10 +160,17 @@ namespace DeejNG.Dialogs
                     return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Failed to load settings: {ex.Message}");
+                // Optionally show user-friendly message
+                MessageBox.Show("Settings could not be loaded. Using default settings.", "Settings Error",
+                               MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
 
             return new AppSettings();
         }
+
 
         private void Save_Click(object sender, RoutedEventArgs e)
         {
@@ -171,12 +178,18 @@ namespace DeejNG.Dialogs
 
             _settings.OverlayEnabled = OverlayEnabledCheckBox.IsChecked == true;
             _settings.OverlayOpacity = OpacitySlider.Value;
-            _settings.OverlayTimeoutSeconds = AutoCloseCheckBox.IsChecked == true ? (int)TimeoutSlider.Value : 0;
+            _settings.OverlayTimeoutSeconds = AutoCloseCheckBox.IsChecked == true ? (int)TimeoutSlider.Value : AppSettings.OverlayNoTimeout;
 
             try
             {
                 string json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
-                Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
+
+                var directoryPath = Path.GetDirectoryName(_settingsPath);
+                if (!string.IsNullOrEmpty(directoryPath))
+                {
+                    Directory.CreateDirectory(directoryPath);
+                }
+
                 File.WriteAllText(_settingsPath, json);
 
                 Debug.WriteLine($"[Settings] Final save - Position: ({_settings.OverlayX}, {_settings.OverlayY}), Opacity: {_settings.OverlayOpacity}");
@@ -186,8 +199,9 @@ namespace DeejNG.Dialogs
                     _mainWindow.UpdateOverlaySettings(_settings);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Debug.WriteLine($"[ERROR] Failed to save settings: {ex.Message}");
                 MessageBox.Show("Failed to save settings.");
             }
 

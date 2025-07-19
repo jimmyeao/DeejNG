@@ -43,6 +43,7 @@ namespace DeejNG
 
         #region Private Fields
         private SessionCollection _cachedSessionsForMeters;
+        private DispatcherTimer _positionSaveTimer;
         private DateTime _lastMeterSessionRefresh = DateTime.MinValue;
         private bool _isCalibrating = false;
         private DateTime _calibrationStartTime = DateTime.MinValue;
@@ -226,28 +227,45 @@ namespace DeejNG
                 _appSettings.OverlayX = Math.Round(x, 1);
                 _appSettings.OverlayY = Math.Round(y, 1);
 
-                Debug.WriteLine($"[Overlay] Precise position updated: X={_appSettings.OverlayX}, Y={_appSettings.OverlayY}");
-                Debug.WriteLine($"[Overlay] Virtual screen bounds: ({SystemParameters.VirtualScreenLeft}, {SystemParameters.VirtualScreenTop}) to ({SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth}, {SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight})");
+                Debug.WriteLine($"[Overlay] Position updated: X={_appSettings.OverlayX}, Y={_appSettings.OverlayY}");
 
-                // Save position immediately to prevent loss
-                Task.Run(() => {
-                    try
+                // Debounce saves - only save 500ms after last position change
+                if (_positionSaveTimer == null)
+                {
+                    _positionSaveTimer = new DispatcherTimer
                     {
-                        var json = JsonSerializer.Serialize(_appSettings, new JsonSerializerOptions { WriteIndented = true });
-                        var dir = Path.GetDirectoryName(SettingsPath);
-                        if (!Directory.Exists(dir) && dir != null)
-                        {
-                            Directory.CreateDirectory(dir);
-                        }
-                        File.WriteAllText(SettingsPath, json);
-                        Debug.WriteLine("[Overlay] Precise position saved to disk");
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[ERROR] Failed to save overlay position: {ex.Message}");
-                    }
-                });
+                        Interval = TimeSpan.FromMilliseconds(500)
+                    };
+                    _positionSaveTimer.Tick += PositionSaveTimer_Tick;
+                }
+
+                // Reset the timer - this cancels any pending save and starts a new 500ms countdown
+                _positionSaveTimer.Stop();
+                _positionSaveTimer.Start();
             }
+        }
+        private void PositionSaveTimer_Tick(object sender, EventArgs e)
+        {
+            _positionSaveTimer.Stop();
+
+            // Save to disk on background thread
+            Task.Run(() => {
+                try
+                {
+                    var json = JsonSerializer.Serialize(_appSettings, new JsonSerializerOptions { WriteIndented = true });
+                    var dir = Path.GetDirectoryName(SettingsPath);
+                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+                    File.WriteAllText(SettingsPath, json);
+                    Debug.WriteLine("[Overlay] Position saved to disk (debounced)");
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ERROR] Failed to save overlay position: {ex.Message}");
+                }
+            });
         }
         private bool IsPositionValid(double x, double y)
         {
@@ -1096,7 +1114,7 @@ namespace DeejNG
                     ctrl.SetMeterVisibility(_appSettings.VuMeters);
 
                 // If overlay is enabled and autohide is disabled, show it immediately after startup
-                if (_appSettings.OverlayEnabled && _appSettings.OverlayTimeoutSeconds == 0)
+                if (_appSettings.OverlayEnabled && _appSettings.OverlayTimeoutSeconds == AppSettings.OverlayNoTimeout)
                 {
                     // Delay slightly to ensure everything is loaded
                     var startupTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };

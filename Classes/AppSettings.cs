@@ -9,8 +9,12 @@ namespace DeejNG.Classes
 {
     public class AppSettings
     {
-        #region Public Properties
+        #region Constants
+        private const int DefaultOverlayTimeoutSeconds = 5;
+        public const int OverlayNoTimeout = 0;
+        #endregion
 
+        #region Public Properties
         public bool DisableSmoothing { get; set; }
         public List<bool> InputModes { get; set; } = new();
         public bool IsDarkTheme { get; set; }
@@ -22,13 +26,12 @@ namespace DeejNG.Classes
         public bool StartOnBoot { get; set; }
         public bool VuMeters { get; set; } = true;
         public bool OverlayEnabled { get; set; } = false;
-      
-        public int OverlayTimeoutSeconds { get; set; } = 5;  // default 5 seconds
+
+        public int OverlayTimeoutSeconds { get; set; } = DefaultOverlayTimeoutSeconds;
         public double OverlayX { get; set; }
         public double OverlayY { get; set; }
         public double OverlayOpacity { get; set; } = 0.85;
-
-
         #endregion Public Properties
     }
+
 }
