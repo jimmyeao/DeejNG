@@ -291,30 +291,30 @@ namespace DeejNG
 
 
         // Also update the ApplyOverlaySettings method to handle opacity changes
-        public void ApplyOverlaySettings(AppSettings settings)
-        {
-            _appSettings.OverlayEnabled = settings.OverlayEnabled;
-            _appSettings.OverlayOpacity = settings.OverlayOpacity;
-            _appSettings.OverlayTimeoutSeconds = settings.OverlayTimeoutSeconds;
-            _appSettings.OverlayX = settings.OverlayX;
-            _appSettings.OverlayY = settings.OverlayY;
+        //public void ApplyOverlaySettings(AppSettings settings)
+        //{
+        //    _appSettings.OverlayEnabled = settings.OverlayEnabled;
+        //    _appSettings.OverlayOpacity = settings.OverlayOpacity;
+        //    _appSettings.OverlayTimeoutSeconds = settings.OverlayTimeoutSeconds;
+        //    _appSettings.OverlayX = settings.OverlayX;
+        //    _appSettings.OverlayY = settings.OverlayY;
 
-            // If overlay exists, update its settings
-            if (_overlay != null)
-            {
-                _overlay.OverlayOpacity = settings.OverlayOpacity;
-                _overlay.Left = settings.OverlayX;
-                _overlay.Top = settings.OverlayY;
+        //    // If overlay exists, update its settings
+        //    if (_overlay != null)
+        //    {
+        //        _overlay.OverlayOpacity = settings.OverlayOpacity;
+        //        _overlay.Left = settings.OverlayX;
+        //        _overlay.Top = settings.OverlayY;
 
-                // Recreate the auto-close timer with new timeout
-                _overlay.ResetAutoCloseTimer(settings.OverlayTimeoutSeconds);
+        //        // Recreate the auto-close timer with new timeout
+        //        _overlay.ResetAutoCloseTimer(settings.OverlayTimeoutSeconds);
 
-                // Force a redraw to apply new opacity
-                _overlay.OverlayCanvas?.InvalidateVisual();
-            }
+        //        // Force a redraw to apply new opacity
+        //        _overlay.OverlayCanvas?.InvalidateVisual();
+        //    }
 
-            Debug.WriteLine($"[Overlay] Settings applied - Enabled: {settings.OverlayEnabled}, Opacity: {settings.OverlayOpacity}");
-        }
+        //    Debug.WriteLine($"[Overlay] Settings applied - Enabled: {settings.OverlayEnabled}, Opacity: {settings.OverlayOpacity}");
+        //}
 
 
 
@@ -2315,40 +2315,33 @@ namespace DeejNG
         }
         public void UpdateOverlaySettings(AppSettings newSettings)
         {
-            Debug.WriteLine($"[Overlay] UpdateOverlaySettings called with position: ({newSettings.OverlayX}, {newSettings.OverlayY})");
-
             // Preserve current position if overlay exists and is visible
             if (_overlay != null && _overlay.IsVisible)
             {
                 var currentX = Math.Round(_overlay.Left, 1);
                 var currentY = Math.Round(_overlay.Top, 1);
 
-                Debug.WriteLine($"[Overlay] Preserving current visible position: ({currentX}, {currentY})");
-
                 _appSettings.OverlayX = currentX;
                 _appSettings.OverlayY = currentY;
             }
-            else if (IsPositionValid(newSettings.OverlayX, newSettings.OverlayY))
+            else if (newSettings.OverlayX > 0 && newSettings.OverlayY > 0)
             {
-                // Use provided position if valid for multi-monitor setup
                 _appSettings.OverlayX = newSettings.OverlayX;
                 _appSettings.OverlayY = newSettings.OverlayY;
-                Debug.WriteLine($"[Overlay] Using provided valid position: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
             }
             else
             {
-                // Default position on primary screen if invalid
                 _appSettings.OverlayX = 100;
                 _appSettings.OverlayY = 100;
-                Debug.WriteLine($"[Overlay] Position invalid, using default: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
             }
 
-            // Update other settings
+            // Update all settings including text color
             _appSettings.OverlayEnabled = newSettings.OverlayEnabled;
             _appSettings.OverlayOpacity = newSettings.OverlayOpacity;
             _appSettings.OverlayTimeoutSeconds = newSettings.OverlayTimeoutSeconds;
+            _appSettings.OverlayTextColor = newSettings.OverlayTextColor; // Updated property name
 
-            Debug.WriteLine($"[Overlay] Final settings - Enabled: {_appSettings.OverlayEnabled}, Opacity: {_appSettings.OverlayOpacity}, Timeout: {_appSettings.OverlayTimeoutSeconds}, Position: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+            Debug.WriteLine($"[Overlay] Settings updated - Text Color: {_appSettings.OverlayTextColor}");
         }
 
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)

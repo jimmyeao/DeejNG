@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
-        Title="Overlay Settings" Height="250" Width="400"
+        Title="Overlay Settings" Height="292" Width="400"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
          TextElement.Foreground="{DynamicResource MaterialDesign.Brush.Foreground}"
@@ -16,7 +16,7 @@
         <CheckBox x:Name="OverlayEnabledCheckBox" Content="Enable Overlay" Margin="0,0,0,10"/>
 
         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-            <TextBlock Text="Opacity:" VerticalAlignment="Center" Width="60"/>
+            <TextBlock Text="Opacity:" VerticalAlignment="Center" Width="80"/>
             <Slider x:Name="OpacitySlider" Minimum="0.0" Maximum="1.0" Width="200" TickFrequency="0.05" IsSnapToTickEnabled="True" />
             <TextBlock Text="{Binding ElementName=OpacitySlider, Path=Value, StringFormat={}{0:P0}}" Margin="10,0,0,0" VerticalAlignment="Center"/>
         </StackPanel>
@@ -28,7 +28,14 @@
             <Slider x:Name="TimeoutSlider" Minimum="1" Maximum="15" Width="200" TickFrequency="1" IsSnapToTickEnabled="True"/>
             <TextBlock Text="{Binding ElementName=TimeoutSlider, Path=Value}" Margin="10,0,0,0" VerticalAlignment="Center"/>
         </StackPanel>
-
+        <ComboBox x:Name="TextColorComboBox" 
+          Margin="0,10,0,0"
+          ToolTip="Choose text color: Auto detects background, White/Black forces specific color" Width="153">
+            <ComboBoxItem Content="Auto (Smart Contrast)" />
+            <ComboBoxItem Content="White Text" />
+            <ComboBoxItem Content="Black Text" />
+        </ComboBox>
+       
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="Save" Click="Save_Click" Margin="0,10,10,0"/>
             <Button Content="Cancel" Click="Cancel_Click" Margin="0,10,0,0"/>

@@ -26,11 +26,13 @@ namespace DeejNG.Classes
         public bool StartOnBoot { get; set; }
         public bool VuMeters { get; set; } = true;
         public bool OverlayEnabled { get; set; } = false;
-
         public int OverlayTimeoutSeconds { get; set; } = DefaultOverlayTimeoutSeconds;
         public double OverlayX { get; set; }
         public double OverlayY { get; set; }
         public double OverlayOpacity { get; set; } = 0.85;
+
+        // Changed from bool to enum-like string for three options
+        public string OverlayTextColor { get; set; } = "Auto"; // "Auto", "White", "Black"
         #endregion Public Properties
     }
 
