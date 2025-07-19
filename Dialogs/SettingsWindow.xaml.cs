@@ -1,4 +1,4 @@
-﻿// Updated SettingsWindow.xaml.cs with position preservation
+﻿// Updated SettingsWindow.xaml.cs with immediate visibility control
 using DeejNG.Classes;
 using System.Diagnostics;
 using System.IO;
@@ -45,15 +45,24 @@ namespace DeejNG.Dialogs
 
             _settings.OverlayEnabled = OverlayEnabledCheckBox.IsChecked == true;
             ApplySettingsToOverlay();
+
+            // If overlay is enabled, show it immediately
+            if (_settings.OverlayEnabled)
+            {
+                ShowOverlayImmediately();
+            }
+            else
+            {
+                // Hide overlay if disabled
+                HideOverlayImmediately();
+            }
         }
 
         private void OpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_settings == null) return;
 
-            // Preserve current overlay position before applying opacity
             PreserveOverlayPosition();
-
             _settings.OverlayOpacity = e.NewValue;
             ApplySettingsToOverlay();
         }
@@ -65,6 +74,12 @@ namespace DeejNG.Dialogs
             bool isEnabled = AutoCloseCheckBox.IsChecked == true;
             _settings.OverlayTimeoutSeconds = isEnabled ? (int)TimeoutSlider.Value : 0;
             ApplySettingsToOverlay();
+
+            // If autohide is disabled and overlay is enabled, show it immediately and keep it visible
+            if (!isEnabled && _settings.OverlayEnabled)
+            {
+                ShowOverlayImmediately();
+            }
         }
 
         private void TimeoutSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -78,14 +93,46 @@ namespace DeejNG.Dialogs
             }
         }
 
-        private void PreserveOverlayPosition()
+        private void ShowOverlayImmediately()
         {
-            // Get current overlay position if it exists
+            if (_mainWindow != null && _settings.OverlayEnabled)
+            {
+                Debug.WriteLine("[Settings] Showing overlay immediately");
+
+                // Force show the overlay with current channel data
+                _mainWindow.ShowVolumeOverlay();
+
+                // If no channels have data yet, show with dummy data to make overlay visible
+                if (_mainWindow._overlay != null && _mainWindow._channelControls?.Count > 0)
+                {
+                    var volumes = _mainWindow._channelControls.Select(c => c.CurrentVolume).ToList();
+                    var labels = _mainWindow._channelControls.Select(c => _mainWindow.GetChannelLabel(c)).ToList();
+
+                    // Ensure overlay is visible even with zero volumes
+                    _mainWindow._overlay.ShowVolumes(volumes, labels);
+
+                    Debug.WriteLine($"[Settings] Overlay shown with {volumes.Count} channels");
+                }
+            }
+        }
+
+        private void HideOverlayImmediately()
+        {
             if (_mainWindow?._overlay != null)
             {
-                _settings.OverlayX = _mainWindow._overlay.Left;
-                _settings.OverlayY = _mainWindow._overlay.Top;
-                Debug.WriteLine($"[Settings] Preserved overlay position: ({_settings.OverlayX}, {_settings.OverlayY})");
+                Debug.WriteLine("[Settings] Hiding overlay immediately");
+                _mainWindow._overlay.Hide();
+            }
+        }
+
+        private void PreserveOverlayPosition()
+        {
+            if (_mainWindow?._overlay != null)
+            {
+                // Use Math.Round to ensure precise position storage
+                _settings.OverlayX = Math.Round(_mainWindow._overlay.Left, 1);
+                _settings.OverlayY = Math.Round(_mainWindow._overlay.Top, 1);
+                Debug.WriteLine($"[Settings] Preserved precise overlay position: ({_settings.OverlayX}, {_settings.OverlayY})");
             }
         }
 
@@ -93,13 +140,9 @@ namespace DeejNG.Dialogs
         {
             if (_mainWindow != null)
             {
-                // Preserve position before updating
                 PreserveOverlayPosition();
-
-                // Update main window settings
                 _mainWindow.UpdateOverlaySettings(_settings);
 
-                // If overlay exists, update it directly with preserved position
                 if (_mainWindow._overlay != null)
                 {
                     _mainWindow._overlay.UpdateSettings(_settings);
@@ -124,10 +167,8 @@ namespace DeejNG.Dialogs
 
         private void Save_Click(object sender, RoutedEventArgs e)
         {
-            // Preserve current position before final save
             PreserveOverlayPosition();
 
-            // Update final settings
             _settings.OverlayEnabled = OverlayEnabledCheckBox.IsChecked == true;
             _settings.OverlayOpacity = OpacitySlider.Value;
             _settings.OverlayTimeoutSeconds = AutoCloseCheckBox.IsChecked == true ? (int)TimeoutSlider.Value : 0;
@@ -140,7 +181,6 @@ namespace DeejNG.Dialogs
 
                 Debug.WriteLine($"[Settings] Final save - Position: ({_settings.OverlayX}, {_settings.OverlayY}), Opacity: {_settings.OverlayOpacity}");
 
-                // Update MainWindow's _appSettings for future saves
                 if (_mainWindow != null)
                 {
                     _mainWindow.UpdateOverlaySettings(_settings);
@@ -156,7 +196,6 @@ namespace DeejNG.Dialogs
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
         {
-            // Reload original settings to undo any real-time changes
             var originalSettings = LoadSettings();
             if (_mainWindow != null)
             {

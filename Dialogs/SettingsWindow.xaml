@@ -17,7 +17,7 @@
 
         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
             <TextBlock Text="Opacity:" VerticalAlignment="Center" Width="60"/>
-            <Slider x:Name="OpacitySlider" Minimum="0.2" Maximum="1.0" Width="200" TickFrequency="0.05" IsSnapToTickEnabled="True" />
+            <Slider x:Name="OpacitySlider" Minimum="0.0" Maximum="1.0" Width="200" TickFrequency="0.05" IsSnapToTickEnabled="True" />
             <TextBlock Text="{Binding ElementName=OpacitySlider, Path=Value, StringFormat={}{0:P0}}" Margin="10,0,0,0" VerticalAlignment="Center"/>
         </StackPanel>
 
