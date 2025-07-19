@@ -23,6 +23,7 @@ namespace DeejNG.Views
         private DispatcherTimer? _autoCloseTimer;
         private MainWindow _parentWindow;
         public double OverlayOpacity { get; set; } = 0.9;
+        private DateTime _lastVolumeUpdate = DateTime.MinValue;
         public int AutoHideSeconds { get; set; } = 2;
         private bool _isUpdatingSettings = false;
         private bool _isDragging = false;
@@ -86,10 +87,10 @@ namespace DeejNG.Views
 
         private void SetupBackgroundAnalysisTimer()
         {
-            // Timer to periodically check background color when in Auto mode
+            // ✅ OPTIMIZED: Much less frequent background analysis to reduce performance impact
             _backgroundAnalysisTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromSeconds(2) // Check every 2 seconds
+                Interval = TimeSpan.FromSeconds(2) // Increased from 2 seconds to 10 seconds
             };
             _backgroundAnalysisTimer.Tick += BackgroundAnalysisTimer_Tick;
         }
@@ -188,6 +189,13 @@ namespace DeejNG.Views
 
         public void ShowVolumes(List<float> volumes, List<string> channelLabels = null)
         {
+            // ✅ THROTTLE: Prevent excessive volume updates
+            if (DateTime.Now.Subtract(_lastVolumeUpdate).TotalMilliseconds < 50) // Minimum 50ms between updates
+            {
+                return;
+            }
+            _lastVolumeUpdate = DateTime.Now;
+
             _volumes = new List<float>(volumes);
 
             if (channelLabels != null && channelLabels.Count == volumes.Count)
@@ -201,16 +209,28 @@ namespace DeejNG.Views
 
             UpdateWindowSizeToContent();
 
-            // Start background analysis if in Auto mode
-            if (_textColorMode == "Auto")
+            // ✅ OPTIMIZED: Only start background analysis if in Auto mode and not already running
+            if (_textColorMode == "Auto" && !_backgroundAnalysisTimer.IsEnabled)
             {
-                _backgroundAnalysisTimer?.Start();
-                AnalyzeBackgroundAndUpdateTextColor();
+                _backgroundAnalysisTimer.Start();
+                // Do immediate analysis on background thread
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        AnalyzeBackgroundAndUpdateTextColor();
+                    }
+                    catch { /* Ignore errors during startup analysis */ }
+                });
             }
 
             OverlayCanvas.InvalidateVisual();
-            this.Show();
-            this.Activate();
+
+            if (!this.IsVisible)
+            {
+                this.Show();
+                this.Activate();
+            }
 
             if (_autoCloseTimer != null)
             {
