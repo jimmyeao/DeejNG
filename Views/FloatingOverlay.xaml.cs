@@ -11,6 +11,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using DeejNG.Classes;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace DeejNG.Views
 {
@@ -25,10 +26,34 @@ namespace DeejNG.Views
         public int AutoHideSeconds { get; set; } = 2;
         private bool _isUpdatingSettings = false;
         private bool _isDragging = false;
-
+        private string _textColorMode = "Auto"; // "Auto", "White", "Black"
+        private DispatcherTimer _backgroundAnalysisTimer;
+        private bool _isWhiteTextOptimal = true; // Cache for auto-detected color
         // Store text color setting directly in overlay
         private bool _useWhiteText = true;
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetDC(IntPtr hWnd);
 
+        [DllImport("user32.dll")]
+        private static extern bool ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr CreateCompatibleDC(IntPtr hDC);
+
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr CreateCompatibleBitmap(IntPtr hDC, int nWidth, int nHeight);
+
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr SelectObject(IntPtr hDC, IntPtr hGDIObj);
+
+        [DllImport("gdi32.dll")]
+        private static extern bool BitBlt(IntPtr hDestDC, int x, int y, int nWidth, int nHeight, IntPtr hSrcDC, int xSrc, int ySrc, int dwRop);
+
+        [DllImport("gdi32.dll")]
+        private static extern bool DeleteObject(IntPtr hObject);
+
+        [DllImport("gdi32.dll")]
+        private static extern bool DeleteDC(IntPtr hDC);
         // Layout constants
         private const float MeterSize = 90f;
         private const float HorizontalSpacing = 130f;
@@ -46,7 +71,7 @@ namespace DeejNG.Views
 
             SetPrecisePosition(settings.OverlayX, settings.OverlayY);
             OverlayOpacity = settings.OverlayOpacity;
-            _useWhiteText = settings.OverlayUseWhiteText; // Store text color setting
+            _textColorMode = settings.OverlayTextColor ?? "Auto";
 
             this.AllowsTransparency = true;
             this.WindowStyle = WindowStyle.None;
@@ -54,8 +79,27 @@ namespace DeejNG.Views
             this.Topmost = true;
 
             SetupAutoCloseTimer(settings.OverlayTimeoutSeconds);
+            SetupBackgroundAnalysisTimer();
 
-            Debug.WriteLine($"[Overlay] Created with text color: {(_useWhiteText ? "White" : "Black")}");
+            Debug.WriteLine($"[Overlay] Created with text color mode: {_textColorMode}");
+        }
+
+        private void SetupBackgroundAnalysisTimer()
+        {
+            // Timer to periodically check background color when in Auto mode
+            _backgroundAnalysisTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(2) // Check every 2 seconds
+            };
+            _backgroundAnalysisTimer.Tick += BackgroundAnalysisTimer_Tick;
+        }
+
+        private void BackgroundAnalysisTimer_Tick(object sender, EventArgs e)
+        {
+            if (_textColorMode == "Auto" && this.IsVisible)
+            {
+                AnalyzeBackgroundAndUpdateTextColor();
+            }
         }
 
         private void SetPrecisePosition(double x, double y)
@@ -106,7 +150,7 @@ namespace DeejNG.Views
             _isUpdatingSettings = true;
 
             OverlayOpacity = settings.OverlayOpacity;
-            _useWhiteText = settings.OverlayUseWhiteText; // Update text color setting
+            _textColorMode = settings.OverlayTextColor ?? "Auto";
 
             if (!_isDragging && settings.OverlayX != 0 && settings.OverlayY != 0)
             {
@@ -114,11 +158,22 @@ namespace DeejNG.Views
             }
 
             SetupAutoCloseTimer(settings.OverlayTimeoutSeconds);
+
+            // Start/stop background analysis based on mode
+            if (_textColorMode == "Auto")
+            {
+                _backgroundAnalysisTimer?.Start();
+                AnalyzeBackgroundAndUpdateTextColor(); // Immediate analysis
+            }
+            else
+            {
+                _backgroundAnalysisTimer?.Stop();
+            }
             OverlayCanvas?.InvalidateVisual();
 
             _isUpdatingSettings = false;
 
-            Debug.WriteLine($"[Overlay] Settings updated - Text color: {(_useWhiteText ? "White" : "Black")}");
+            Debug.WriteLine($"[Overlay] Settings updated - Text color mode: {_textColorMode}");
         }
 
         public void ResetAutoHideTimer()
@@ -145,8 +200,15 @@ namespace DeejNG.Views
             }
 
             UpdateWindowSizeToContent();
-            OverlayCanvas.InvalidateVisual();
 
+            // Start background analysis if in Auto mode
+            if (_textColorMode == "Auto")
+            {
+                _backgroundAnalysisTimer?.Start();
+                AnalyzeBackgroundAndUpdateTextColor();
+            }
+
+            OverlayCanvas.InvalidateVisual();
             this.Show();
             this.Activate();
 
@@ -155,6 +217,114 @@ namespace DeejNG.Views
                 _autoCloseTimer.Stop();
                 _autoCloseTimer.Start();
             }
+        }
+
+        private void AnalyzeBackgroundAndUpdateTextColor()
+        {
+            try
+            {
+                var averageColor = CaptureBackgroundColor();
+                var luminance = CalculateLuminance(averageColor);
+
+                // If luminance > 128, background is light, use black text
+                // If luminance <= 128, background is dark, use white text
+                bool shouldUseWhiteText = luminance <= 128;
+
+                if (_isWhiteTextOptimal != shouldUseWhiteText)
+                {
+                    _isWhiteTextOptimal = shouldUseWhiteText;
+                    OverlayCanvas?.InvalidateVisual(); // Redraw with new text color
+
+                    Debug.WriteLine($"[Overlay] Auto-detected text color: {(shouldUseWhiteText ? "White" : "Black")} (luminance: {luminance:F1})");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Overlay] Error analyzing background: {ex.Message}");
+                _isWhiteTextOptimal = true; // Fallback to white
+            }
+        }
+        private System.Drawing.Color CaptureBackgroundColor()
+        {
+            int width = (int)this.ActualWidth;
+            int height = (int)this.ActualHeight;
+            int x = (int)this.Left;
+            int y = (int)this.Top;
+
+            // Sample multiple points across the overlay area
+            var samplePoints = new List<System.Drawing.Point>
+            {
+                new System.Drawing.Point(x + width / 4, y + height / 4),
+                new System.Drawing.Point(x + 3 * width / 4, y + height / 4),
+                new System.Drawing.Point(x + width / 2, y + height / 2),
+                new System.Drawing.Point(x + width / 4, y + 3 * height / 4),
+                new System.Drawing.Point(x + 3 * width / 4, y + 3 * height / 4)
+            };
+
+            var colors = new List<System.Drawing.Color>();
+
+            foreach (var point in samplePoints)
+            {
+                try
+                {
+                    var color = GetPixelColor(point.X, point.Y);
+                    colors.Add(color);
+                }
+                catch
+                {
+                    // Skip failed samples
+                }
+            }
+
+            if (colors.Count == 0)
+            {
+                return System.Drawing.Color.Gray; // Fallback
+            }
+
+            // Calculate average color
+            int avgR = (int)colors.Average(c => c.R);
+            int avgG = (int)colors.Average(c => c.G);
+            int avgB = (int)colors.Average(c => c.B);
+
+            return System.Drawing.Color.FromArgb(avgR, avgG, avgB);
+        }
+
+        private System.Drawing.Color GetPixelColor(int x, int y)
+        {
+            IntPtr desk = GetDC(IntPtr.Zero);
+            int color = GetPixel(desk, x, y);
+            ReleaseDC(IntPtr.Zero, desk);
+
+            return System.Drawing.Color.FromArgb(
+                (color >> 0) & 0xFF,  // Blue
+                (color >> 8) & 0xFF,  // Green
+                (color >> 16) & 0xFF  // Red
+            );
+        }
+
+        [DllImport("gdi32.dll")]
+        private static extern int GetPixel(IntPtr hDC, int x, int y);
+
+        private double CalculateLuminance(System.Drawing.Color color)
+        {
+            // Standard luminance calculation
+            return 0.299 * color.R + 0.587 * color.G + 0.114 * color.B;
+        }
+
+        private SKColor GetTextColor()
+        {
+            return _textColorMode switch
+            {
+                "White" => SKColors.White.WithAlpha(255),
+                "Black" => SKColors.Black.WithAlpha(255),
+                "Auto" => _isWhiteTextOptimal ? SKColors.White.WithAlpha(255) : SKColors.Black.WithAlpha(255),
+                _ => SKColors.White.WithAlpha(255)
+            };
+        }
+        protected override void OnClosed(EventArgs e)
+        {
+            _backgroundAnalysisTimer?.Stop();
+            base.OnClosed(e);
         }
 
         private void UpdateWindowSizeToContent()
@@ -394,11 +564,7 @@ namespace DeejNG.Views
         }
 
         // Fixed method - no longer tries to access private _appSettings
-        private SKColor GetTextColor()
-        {
-            return _useWhiteText ? SKColors.White.WithAlpha(255) : SKColors.Black.WithAlpha(255);
-        }
-
+      
         private SKColor GetVolumeColor(float volume)
         {
             if (volume < 0.01f)

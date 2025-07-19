@@ -2321,8 +2321,6 @@ namespace DeejNG
                 var currentX = Math.Round(_overlay.Left, 1);
                 var currentY = Math.Round(_overlay.Top, 1);
 
-                Debug.WriteLine($"[Overlay] Preserving current position: ({currentX}, {currentY})");
-
                 _appSettings.OverlayX = currentX;
                 _appSettings.OverlayY = currentY;
             }
@@ -2341,9 +2339,9 @@ namespace DeejNG
             _appSettings.OverlayEnabled = newSettings.OverlayEnabled;
             _appSettings.OverlayOpacity = newSettings.OverlayOpacity;
             _appSettings.OverlayTimeoutSeconds = newSettings.OverlayTimeoutSeconds;
-            _appSettings.OverlayUseWhiteText = newSettings.OverlayUseWhiteText; // New setting
+            _appSettings.OverlayTextColor = newSettings.OverlayTextColor; // Updated property name
 
-            Debug.WriteLine($"[Overlay] Settings updated - Enabled: {_appSettings.OverlayEnabled}, Opacity: {_appSettings.OverlayOpacity}, Timeout: {_appSettings.OverlayTimeoutSeconds}, White Text: {_appSettings.OverlayUseWhiteText}, Position: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+            Debug.WriteLine($"[Overlay] Settings updated - Text Color: {_appSettings.OverlayTextColor}");
         }
 
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)

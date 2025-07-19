@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace DeejNG.Dialogs
 {
@@ -28,7 +29,9 @@ namespace DeejNG.Dialogs
             OpacitySlider.Value = _settings.OverlayOpacity;
             AutoCloseCheckBox.IsChecked = _settings.OverlayTimeoutSeconds > 0;
             TimeoutSlider.Value = _settings.OverlayTimeoutSeconds;
-            WhiteTextCheckBox.IsChecked = _settings.OverlayUseWhiteText; // New control
+
+            // Set text color ComboBox selection
+            SetTextColorSelection(_settings.OverlayTextColor);
 
             // Wire up real-time events
             OpacitySlider.ValueChanged += OpacitySlider_ValueChanged;
@@ -37,10 +40,47 @@ namespace DeejNG.Dialogs
             TimeoutSlider.ValueChanged += TimeoutSlider_ValueChanged;
             OverlayEnabledCheckBox.Checked += OverlayEnabledCheckBox_Changed;
             OverlayEnabledCheckBox.Unchecked += OverlayEnabledCheckBox_Changed;
-            WhiteTextCheckBox.Checked += WhiteTextCheckBox_Changed; // New event
-            WhiteTextCheckBox.Unchecked += WhiteTextCheckBox_Changed; // New event
+            TextColorComboBox.SelectionChanged += TextColorComboBox_SelectionChanged;
+        }
+        private void SetTextColorSelection(string textColor)
+        {
+            switch (textColor?.ToLower())
+            {
+                case "auto":
+                    TextColorComboBox.SelectedIndex = 0;
+                    break;
+                case "white":
+                    TextColorComboBox.SelectedIndex = 1;
+                    break;
+                case "black":
+                    TextColorComboBox.SelectedIndex = 2;
+                    break;
+                default:
+                    TextColorComboBox.SelectedIndex = 0; // Default to Auto
+                    break;
+            }
         }
 
+        private string GetTextColorFromSelection()
+        {
+            return TextColorComboBox.SelectedIndex switch
+            {
+                0 => "Auto",
+                1 => "White",
+                2 => "Black",
+                _ => "Auto"
+            };
+        }
+
+        private void TextColorComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_settings == null) return;
+
+            _settings.OverlayTextColor = GetTextColorFromSelection();
+            ApplySettingsToOverlay();
+
+            Debug.WriteLine($"[Settings] Text color changed to: {_settings.OverlayTextColor}");
+        }
         private void OverlayEnabledCheckBox_Changed(object sender, RoutedEventArgs e)
         {
             if (_settings == null) return;
@@ -93,15 +133,7 @@ namespace DeejNG.Dialogs
         }
 
         // New method for text color changes
-        private void WhiteTextCheckBox_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_settings == null) return;
 
-            _settings.OverlayUseWhiteText = WhiteTextCheckBox.IsChecked == true;
-            ApplySettingsToOverlay();
-
-            Debug.WriteLine($"[Settings] Text color changed to: {(_settings.OverlayUseWhiteText ? "White" : "Black")}");
-        }
 
         private void ShowOverlayImmediately()
         {
@@ -181,7 +213,7 @@ namespace DeejNG.Dialogs
             _settings.OverlayEnabled = OverlayEnabledCheckBox.IsChecked == true;
             _settings.OverlayOpacity = OpacitySlider.Value;
             _settings.OverlayTimeoutSeconds = AutoCloseCheckBox.IsChecked == true ? (int)TimeoutSlider.Value : AppSettings.OverlayNoTimeout;
-            _settings.OverlayUseWhiteText = WhiteTextCheckBox.IsChecked == true; // Save text color setting
+            _settings.OverlayTextColor = GetTextColorFromSelection(); // Save text color setting
 
             try
             {
@@ -195,7 +227,7 @@ namespace DeejNG.Dialogs
 
                 File.WriteAllText(_settingsPath, json);
 
-                Debug.WriteLine($"[Settings] Final save - Position: ({_settings.OverlayX}, {_settings.OverlayY}), Opacity: {_settings.OverlayOpacity}, White Text: {_settings.OverlayUseWhiteText}");
+                Debug.WriteLine($"[Settings] Final save - Text Color: {_settings.OverlayTextColor}");
 
                 if (_mainWindow != null)
                 {
