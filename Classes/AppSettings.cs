@@ -31,6 +31,7 @@ namespace DeejNG.Classes
         public double OverlayX { get; set; }
         public double OverlayY { get; set; }
         public double OverlayOpacity { get; set; } = 0.85;
+        public bool OverlayUseWhiteText { get; set; } = true; // New setting - defaults to white text
         #endregion Public Properties
     }
 

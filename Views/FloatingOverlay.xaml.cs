@@ -1,4 +1,4 @@
-﻿// Updated FloatingOverlay.xaml.cs with automatic content-based resizing
+﻿// Updated FloatingOverlay.xaml.cs with proper text color handling
 
 using SkiaSharp;
 using SkiaSharp.Views.Desktop;
@@ -26,7 +26,10 @@ namespace DeejNG.Views
         private bool _isUpdatingSettings = false;
         private bool _isDragging = false;
 
-        // Layout constants - keep these consistent between sizing and painting
+        // Store text color setting directly in overlay
+        private bool _useWhiteText = true;
+
+        // Layout constants
         private const float MeterSize = 90f;
         private const float HorizontalSpacing = 130f;
         private const float VerticalSpacing = 125f;
@@ -43,6 +46,7 @@ namespace DeejNG.Views
 
             SetPrecisePosition(settings.OverlayX, settings.OverlayY);
             OverlayOpacity = settings.OverlayOpacity;
+            _useWhiteText = settings.OverlayUseWhiteText; // Store text color setting
 
             this.AllowsTransparency = true;
             this.WindowStyle = WindowStyle.None;
@@ -51,7 +55,7 @@ namespace DeejNG.Views
 
             SetupAutoCloseTimer(settings.OverlayTimeoutSeconds);
 
-            Debug.WriteLine($"[Overlay] Created at precise position ({this.Left}, {this.Top}) with opacity {OverlayOpacity} and timeout {settings.OverlayTimeoutSeconds}s");
+            Debug.WriteLine($"[Overlay] Created with text color: {(_useWhiteText ? "White" : "Black")}");
         }
 
         private void SetPrecisePosition(double x, double y)
@@ -64,33 +68,24 @@ namespace DeejNG.Views
             var virtualRight = virtualLeft + virtualWidth;
             var virtualBottom = virtualTop + virtualHeight;
 
-            Debug.WriteLine($"[Overlay] Virtual screen bounds: ({virtualLeft}, {virtualTop}) to ({virtualRight}, {virtualBottom})");
-            Debug.WriteLine($"[Overlay] Requested position: ({x}, {y})");
-
             if (x < virtualLeft - 200 || x > virtualRight - 50)
             {
-                Debug.WriteLine($"[Overlay] X position {x} is outside virtual bounds, clamping");
                 x = Math.Max(virtualLeft, Math.Min(x, virtualRight - 200));
             }
 
             if (y < virtualTop - 100 || y > virtualBottom - 50)
             {
-                Debug.WriteLine($"[Overlay] Y position {y} is outside virtual bounds, clamping");
                 y = Math.Max(virtualTop, Math.Min(y, virtualBottom - 100));
             }
 
             this.Left = Math.Round(x, 1);
             this.Top = Math.Round(y, 1);
-
-            Debug.WriteLine($"[Overlay] Final precise position set: ({this.Left}, {this.Top})");
         }
 
         private void SetupAutoCloseTimer(int timeoutSeconds)
         {
             _autoCloseTimer?.Stop();
             _autoCloseTimer = null;
-
-            Debug.WriteLine($"[Overlay] Setting up auto-close timer: {timeoutSeconds} seconds");
 
             if (timeoutSeconds > 0)
             {
@@ -100,15 +95,9 @@ namespace DeejNG.Views
                 };
                 _autoCloseTimer.Tick += (s, e) =>
                 {
-                    Debug.WriteLine("[Overlay] Auto-close timer triggered - hiding overlay");
                     _autoCloseTimer.Stop();
                     this.Hide();
                 };
-                Debug.WriteLine($"[Overlay] Auto-close timer created with {timeoutSeconds}s interval");
-            }
-            else
-            {
-                Debug.WriteLine("[Overlay] Auto-close disabled (timeout = 0)");
             }
         }
 
@@ -116,18 +105,12 @@ namespace DeejNG.Views
         {
             _isUpdatingSettings = true;
 
-            Debug.WriteLine($"[Overlay] UpdateSettings called with position: ({settings.OverlayX}, {settings.OverlayY})");
-
             OverlayOpacity = settings.OverlayOpacity;
+            _useWhiteText = settings.OverlayUseWhiteText; // Update text color setting
 
             if (!_isDragging && settings.OverlayX != 0 && settings.OverlayY != 0)
             {
-                Debug.WriteLine($"[Overlay] Updating to new position: ({settings.OverlayX}, {settings.OverlayY})");
                 SetPrecisePosition(settings.OverlayX, settings.OverlayY);
-            }
-            else if (!_isDragging)
-            {
-                Debug.WriteLine("[Overlay] Settings position was 0,0 - keeping current position");
             }
 
             SetupAutoCloseTimer(settings.OverlayTimeoutSeconds);
@@ -135,7 +118,7 @@ namespace DeejNG.Views
 
             _isUpdatingSettings = false;
 
-            Debug.WriteLine($"[Overlay] Settings update complete - Opacity: {OverlayOpacity}, Final Position: ({this.Left}, {this.Top}), Timeout: {settings.OverlayTimeoutSeconds}s");
+            Debug.WriteLine($"[Overlay] Settings updated - Text color: {(_useWhiteText ? "White" : "Black")}");
         }
 
         public void ResetAutoHideTimer()
@@ -161,9 +144,7 @@ namespace DeejNG.Views
                 _channelLabels = volumes.Select((_, i) => $"Ch {i + 1}").ToList();
             }
 
-            // Update window size based on actual content
             UpdateWindowSizeToContent();
-
             OverlayCanvas.InvalidateVisual();
 
             this.Show();
@@ -171,7 +152,6 @@ namespace DeejNG.Views
 
             if (_autoCloseTimer != null)
             {
-                Debug.WriteLine("[Overlay] Restarting auto-close timer");
                 _autoCloseTimer.Stop();
                 _autoCloseTimer.Start();
             }
@@ -186,31 +166,22 @@ namespace DeejNG.Views
                 return;
             }
 
-            // Calculate exact content bounds
             int channelsPerRow = Math.Min(_volumes.Count, MaxChannelsPerRow);
             int rows = (int)Math.Ceiling((double)_volumes.Count / channelsPerRow);
 
-            // Calculate actual content width
             float contentWidth = (channelsPerRow * HorizontalSpacing) - (HorizontalSpacing - MeterSize);
             float totalWidth = contentWidth + (Padding * 2);
 
-            // Calculate actual content height more precisely
             float meterRadius = MeterSize / 2f;
-
-            // For each row: meter center + radius + label extension
             float rowHeight = VerticalSpacing;
             float totalContentHeight = (rows * rowHeight) - (rowHeight - MeterSize);
 
-            // Add space for labels extending below the last row
             float lastRowCenterY = Padding + meterRadius + ((rows - 1) * VerticalSpacing);
-            float labelBottomY = lastRowCenterY + LabelOffset + 15f; // 15f for text height
+            float labelBottomY = lastRowCenterY + LabelOffset + 15f;
             float totalHeight = labelBottomY + Padding;
 
-            // Apply calculated size
             this.Width = Math.Max(Math.Ceiling(totalWidth), 200);
             this.Height = Math.Max(Math.Ceiling(totalHeight), 100);
-
-            Debug.WriteLine($"[Overlay] Resized to content: {this.Width}x{this.Height} for {_volumes.Count} channels in {rows} rows");
         }
 
         public void ResetAutoCloseTimer(int timeoutSeconds)
@@ -246,8 +217,6 @@ namespace DeejNG.Views
                 var preciseY = Math.Round(this.Top, 1);
 
                 mainWindow.UpdateOverlayPosition(preciseX, preciseY);
-
-                Debug.WriteLine($"[Overlay] Position changed and saved: ({preciseX}, {preciseY})");
             }
         }
 
@@ -265,7 +234,6 @@ namespace DeejNG.Views
 
             if (_volumes.Count == 0) return;
 
-            // Use consistent constants
             using (var backgroundPaint = new SKPaint
             {
                 Color = SKColors.Gray.WithAlpha((byte)(OverlayOpacity * 255 * 0.75)),
@@ -345,10 +313,13 @@ namespace DeejNG.Views
                 canvas.DrawPath(path, fgPaint);
             }
 
+            // Get text color based on setting
+            SKColor textColor = GetTextColor();
+
             // Volume percentage in center
             using var volumeTextPaint = new SKPaint
             {
-                Color = SKColors.White.WithAlpha(255),
+                Color = textColor,
                 TextSize = 16,
                 IsAntialias = true,
                 TextAlign = SKTextAlign.Center,
@@ -363,9 +334,11 @@ namespace DeejNG.Views
 
         private void DrawWrappedLabel(SKCanvas canvas, string text, float centerX, float startY)
         {
+            SKColor textColor = GetTextColor();
+
             using var labelPaint = new SKPaint
             {
-                Color = SKColors.White.WithAlpha(220),
+                Color = textColor,
                 TextSize = 11,
                 IsAntialias = true,
                 TextAlign = SKTextAlign.Center,
@@ -418,6 +391,12 @@ namespace DeejNG.Views
                 canvas.DrawText(line, centerX, currentY, labelPaint);
                 currentY += lineHeight;
             }
+        }
+
+        // Fixed method - no longer tries to access private _appSettings
+        private SKColor GetTextColor()
+        {
+            return _useWhiteText ? SKColors.White.WithAlpha(255) : SKColors.Black.WithAlpha(255);
         }
 
         private SKColor GetVolumeColor(float volume)
