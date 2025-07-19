@@ -23,7 +23,8 @@ namespace DeejNG.Dialogs
         private SKRect[] _segmentRects = Array.Empty<SKRect>();
         private int _cachedWidth = 0;
         private int _cachedHeight = 0;
-        private FloatingOverlay _overlay = new FloatingOverlay();
+        private FloatingOverlay _overlay;
+
         private float _previousMeterLevel = 0f;
         private float _peakFade = 1f;
 

@@ -26,7 +26,8 @@ namespace DeejNG.Classes
         public int OverlayTimeoutSeconds { get; set; } = 5;  // default 5 seconds
         public double OverlayX { get; set; }
         public double OverlayY { get; set; }
-        public static double OverlayOpacity { get; set; } = 0.85;
+        public double OverlayOpacity { get; set; } = 0.85;
+
 
         #endregion Public Properties
     }

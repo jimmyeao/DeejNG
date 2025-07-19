@@ -57,7 +57,8 @@ namespace DeejNG
         private DateTime _lastUnmappedMeterUpdate = DateTime.MinValue;
         private readonly object _unmappedLock = new object();
         private DispatcherTimer _forceCleanupTimer;
-        private FloatingOverlay _overlay = new FloatingOverlay();
+        private FloatingOverlay _overlay;
+
         // Cache unmapped peak calculations
         private DateTime _lastUnmappedPeakCalculation = DateTime.MinValue;
         private float _cachedUnmappedPeak = 0;
@@ -125,14 +126,27 @@ namespace DeejNG
 
         public void ShowVolumeOverlay()
         {
-            if (_overlay == null || !_overlay.IsVisible)
+            Debug.WriteLine("[Overlay] ShowVolumeOverlay triggered");
+
+            if (_appSettings is null || !_appSettings.OverlayEnabled)
             {
-                _overlay = new FloatingOverlay();
+                Debug.WriteLine("[Overlay] Disabled in settings");
+                return;
+            }
+
+            if (_overlay == null)
+            {
+                Debug.WriteLine("[Overlay] Creating new overlay");
+                _overlay = new FloatingOverlay(_appSettings);
             }
 
             var volumes = _channelControls.Select(c => c.CurrentVolume).ToList();
             _overlay.ShowVolumes(volumes);
         }
+
+
+
+
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
             var settingsWindow = new SettingsWindow();
@@ -859,16 +873,15 @@ namespace DeejNG
             try
             {
                 var settings = LoadSettingsFromDisk();
+                _appSettings = settings ?? new AppSettings(); // ✅ FIX: properly assign instance-wide
 
                 // Apply UI settings
-                ApplyTheme(settings?.IsDarkTheme == true ? "Dark" : "Light");
-                InvertSliderCheckBox.IsChecked = settings?.IsSliderInverted ?? false;
-                ShowSlidersCheckBox.IsChecked = settings?.VuMeters ?? true;
+                ApplyTheme(_appSettings.IsDarkTheme ? "Dark" : "Light");
+                InvertSliderCheckBox.IsChecked = _appSettings.IsSliderInverted;
+                ShowSlidersCheckBox.IsChecked = _appSettings.VuMeters;
 
-                bool showMeters = settings?.VuMeters ?? true;
-                ShowSlidersCheckBox.IsChecked = showMeters;
-                SetMeterVisibilityForAll(showMeters);
-                DisableSmoothingCheckBox.IsChecked = settings?.DisableSmoothing ?? false;
+                SetMeterVisibilityForAll(_appSettings.VuMeters);
+                DisableSmoothingCheckBox.IsChecked = _appSettings.DisableSmoothing;
 
                 // Handle startup settings
                 StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
@@ -881,18 +894,17 @@ namespace DeejNG
                 StartOnBootCheckBox.Checked += StartOnBootCheckBox_Checked;
                 StartOnBootCheckBox.Unchecked += StartOnBootCheckBox_Unchecked;
 
-                StartMinimizedCheckBox.IsChecked = settings?.StartMinimized ?? false;
+                StartMinimizedCheckBox.IsChecked = _appSettings.StartMinimized;
                 StartMinimizedCheckBox.Checked += StartMinimizedCheckBox_Checked;
 
                 // CRITICAL: Generate sliders from saved settings
-                if (settings?.SliderTargets != null && settings.SliderTargets.Count > 0)
+                if (_appSettings.SliderTargets != null && _appSettings.SliderTargets.Count > 0)
                 {
-                    _expectedSliderCount = settings.SliderTargets.Count;
-                    GenerateSliders(settings.SliderTargets.Count);
+                    _expectedSliderCount = _appSettings.SliderTargets.Count;
+                    GenerateSliders(_appSettings.SliderTargets.Count);
                 }
                 else
                 {
-                    // Default to 4 sliders if no settings exist
                     _expectedSliderCount = 4;
                     GenerateSliders(4);
                 }
@@ -900,18 +912,19 @@ namespace DeejNG
                 _hasLoadedInitialSettings = true;
 
                 foreach (var ctrl in _channelControls)
-                    ctrl.SetMeterVisibility(showMeters);
+                    ctrl.SetMeterVisibility(_appSettings.VuMeters);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[ERROR] Failed to load settings without serial: {ex.Message}");
-                // Fallback: generate default sliders
                 _expectedSliderCount = 4;
                 GenerateSliders(4);
                 _hasLoadedInitialSettings = true;
             }
         }
-       
+
+
+
         private static void SetDisplayIcon()
         {
             //only run in Release

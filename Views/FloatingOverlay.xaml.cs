@@ -15,21 +15,33 @@ namespace DeejNG.Views
     {
         private readonly DispatcherTimer _hideTimer = new();
         private List<float> _volumes = new();
-
+        private DispatcherTimer? _autoCloseTimer;
         public double OverlayOpacity { get; set; } = 0.9;
         public int AutoHideSeconds { get; set; } = 2;
 
-        public FloatingOverlay()
+        public FloatingOverlay(AppSettings settings)
         {
             InitializeComponent();
-            Opacity = OverlayOpacity;
 
-            _hideTimer = new DispatcherTimer();
-            _hideTimer.Tick += (s, e) =>
+            this.Opacity = settings.OverlayOpacity;
+
+      
+
+            if (settings.OverlayTimeoutSeconds > 0)
             {
-                Hide();
-            };
+                _autoCloseTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(settings.OverlayTimeoutSeconds)
+                };
+                _autoCloseTimer.Tick += (s, e) =>
+                {
+                    _autoCloseTimer.Stop();
+                    this.Hide();
+                };
+            }
         }
+
+
 
         public void ResetAutoHideTimer()
         {
@@ -42,17 +54,18 @@ namespace DeejNG.Views
         }
         public void ShowVolumes(List<float> volumes)
         {
-            _volumes = volumes.ToList();
-            OverlayCanvas.InvalidateVisual();
+            // TODO: update UI visuals here...
 
-            // Position top-left (or from settings)
-            Left = SystemParameters.WorkArea.Left + 20;
-            Top = SystemParameters.WorkArea.Top + 20;
+            this.Show();
+            this.Activate(); // optional, if needed to bring forward
 
-            Opacity = AppSettings.OverlayOpacity;
-
-            ResetAutoHideTimer(); // ✅ instead of Show + Start
+            if (_autoCloseTimer != null)
+            {
+                _autoCloseTimer.Stop();
+                _autoCloseTimer.Start();
+            }
         }
+
 
         private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
