@@ -9,6 +9,7 @@ using System.Windows.Threading;
 using SkiaSharp;
 using SkiaSharp.Views.Desktop;
 using SkiaSharp.Views.WPF;
+using DeejNG.Views;
 
 
 namespace DeejNG.Dialogs
@@ -22,6 +23,7 @@ namespace DeejNG.Dialogs
         private SKRect[] _segmentRects = Array.Empty<SKRect>();
         private int _cachedWidth = 0;
         private int _cachedHeight = 0;
+      //  private FloatingOverlay _overlay;
 
         private float _previousMeterLevel = 0f;
         private float _peakFade = 1f;
@@ -283,6 +285,8 @@ namespace DeejNG.Dialogs
             _audioTargets = targets ?? new List<AudioTarget>();
             UpdateTargetsDisplay();
             UpdateMuteButtonEnabled();
+        
+
         }
 
         public void SetVolume(float level)
