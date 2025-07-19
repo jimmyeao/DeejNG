@@ -42,22 +42,22 @@ namespace DeejNG.Dialogs
             OverlayEnabledCheckBox.Unchecked += OverlayEnabledCheckBox_Changed;
             TextColorComboBox.SelectionChanged += TextColorComboBox_SelectionChanged;
         }
+        public enum TextColorOption
+        {
+            Auto,
+            White,
+            Black
+        }
         private void SetTextColorSelection(string textColor)
         {
-            switch (textColor?.ToLower())
+           
+            if (Enum.TryParse<TextColorOption>(textColor, true, out var colorOption))
             {
-                case "auto":
-                    TextColorComboBox.SelectedIndex = 0;
-                    break;
-                case "white":
-                    TextColorComboBox.SelectedIndex = 1;
-                    break;
-                case "black":
-                    TextColorComboBox.SelectedIndex = 2;
-                    break;
-                default:
-                    TextColorComboBox.SelectedIndex = 0; // Default to Auto
-                    break;
+                TextColorComboBox.SelectedIndex = (int)colorOption;
+            }
+            else
+            {
+                TextColorComboBox.SelectedIndex = 0; // Default to Auto
             }
         }
 

@@ -2324,7 +2324,12 @@ namespace DeejNG
                 _appSettings.OverlayX = currentX;
                 _appSettings.OverlayY = currentY;
             }
-            else if (newSettings.OverlayX > 0 && newSettings.OverlayY > 0)
+            //else if (newSettings.OverlayX > 0 && newSettings.OverlayY > 0)
+            //{
+            //    _appSettings.OverlayX = newSettings.OverlayX;
+            //    _appSettings.OverlayY = newSettings.OverlayY;
+            //}
+            else if (IsPositionValid(newSettings.OverlayX, newSettings.OverlayY))
             {
                 _appSettings.OverlayX = newSettings.OverlayX;
                 _appSettings.OverlayY = newSettings.OverlayY;
