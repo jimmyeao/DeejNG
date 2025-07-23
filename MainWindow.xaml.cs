@@ -156,8 +156,7 @@ namespace DeejNG
             var volumes = _channelControls.Select(c => c.CurrentVolume).ToList();
             var labels = _channelControls.Select(c => GetChannelLabel(c)).ToList();
 
-            Debug.WriteLine($"[Overlay] Showing {volumes.Count} channels");
-
+     
             _overlay.ShowVolumes(volumes, labels);
         }
 
@@ -474,6 +473,7 @@ namespace DeejNG
             
             return null;
         }
+  
 
         /// <summary>
         /// Handles session disconnection events from the decoupled handlers
@@ -2158,6 +2158,7 @@ namespace DeejNG
         {
             SliderScrollViewer.Visibility = Visibility.Visible;
             StartOnBootCheckBox.IsChecked = _appSettings.StartOnBoot;
+            DebugAudioSessions(); // Add this line
         }
 
         private void MainWindow_StateChanged(object sender, EventArgs e)
@@ -3126,7 +3127,74 @@ namespace DeejNG
 
             Debug.WriteLine($"[TIMERS] Active: {string.Join(", ", timers)} (Total: {timers.Count})");
         }
+      
+        private void DebugAudioSessions()
+        {
+            try
+            {
+                var enumerator = new MMDeviceEnumerator();
+                var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                var sessions = device.AudioSessionManager.Sessions;
 
+                Debug.WriteLine($"=== AUDIO SESSIONS DEBUG ({DateTime.Now:HH:mm:ss}) ===");
+                Debug.WriteLine($"Total sessions found: {sessions.Count}");
+
+                var sessionsByApp = new Dictionary<string, List<string>>();
+
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        if (session == null) continue;
+
+                        int processId = (int)session.GetProcessID;
+                        string processName = AudioUtilities.GetProcessNameSafely(processId);
+
+                        if (string.IsNullOrEmpty(processName))
+                        {
+                            processName = $"unknown_{processId}";
+                        }
+
+                        string sessionId = session.GetSessionIdentifier ?? "no-id";
+                        float volume = session.SimpleAudioVolume.Volume;
+                        bool muted = session.SimpleAudioVolume.Mute;
+                        float peak = session.AudioMeterInformation.MasterPeakValue;
+
+                        if (!sessionsByApp.ContainsKey(processName))
+                        {
+                            sessionsByApp[processName] = new List<string>();
+                        }
+
+                        sessionsByApp[processName].Add($"Vol:{volume:F2} Muted:{muted} Peak:{peak:F3} ID:{sessionId.Substring(0, Math.Min(20, sessionId.Length))}");
+
+                        Debug.WriteLine($"  [{i}] {processName} (PID:{processId}) - Vol:{volume:F2} Muted:{muted} Peak:{peak:F3}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"  [{i}] ERROR: {ex.Message}");
+                    }
+                }
+
+                Debug.WriteLine("\n=== SESSIONS BY APP ===");
+                foreach (var kvp in sessionsByApp.OrderBy(x => x.Key))
+                {
+                    Debug.WriteLine($"{kvp.Key}: {kvp.Value.Count} sessions");
+                    foreach (var session in kvp.Value)
+                    {
+                        Debug.WriteLine($"  - {session}");
+                    }
+                }
+                Debug.WriteLine("=== END DEBUG ===\n");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"DebugAudioSessions failed: {ex.Message}");
+            }
+        }
+
+        // Call this method after connecting to serial port to see current sessions
+        // You can also add a button in your UI to call this for live debugging
         private void UpdateMeters(object? sender, EventArgs e)
         {
             if (!_metersEnabled || _isClosing) return;
