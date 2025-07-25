@@ -73,7 +73,9 @@ namespace DeejNG.Dialogs
                         {
                             sessionList.Add(new SessionInfo
                             {
-                                Id = session.GetSessionIdentifier ?? $"pid_{processId}",
+                                Id = session.GetSessionIdentifier ??
+                                 session.GetSessionInstanceIdentifier ??
+                                 $"session_{processId}_{i}",
                                 FriendlyName = friendlyName
                             });
                             seenFriendlyNames.Add(friendlyName);

@@ -2158,7 +2158,7 @@ namespace DeejNG
         {
             SliderScrollViewer.Visibility = Visibility.Visible;
             StartOnBootCheckBox.IsChecked = _appSettings.StartOnBoot;
-            DebugAudioSessions(); // Add this line
+          //  DebugAudioSessions(); // Add this line
         }
 
         private void MainWindow_StateChanged(object sender, EventArgs e)
