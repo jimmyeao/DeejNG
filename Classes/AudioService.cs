@@ -10,121 +10,43 @@ namespace DeejNG.Services
 {
     public class AudioService
     {
-        private readonly MMDeviceEnumerator _deviceEnumerator = new();
-        private readonly object _cacheLock = new object();
-        private readonly Dictionary<string, DateTime> _sessionAccessTimes = new Dictionary<string, DateTime>();
+        #region Private Fields
 
-        // 🔥 KEY CHANGE: Cache multiple sessions per app instead of single session
-        private readonly Dictionary<string, List<SessionInfo>> _sessionCache = new Dictionary<string, List<SessionInfo>>(StringComparer.OrdinalIgnoreCase);
-
-        private DateTime _lastRefresh = DateTime.MinValue;
         private const int CACHE_REFRESH_SECONDS = 5;
-        private DateTime _lastUnmappedVolumeCall = DateTime.MinValue;
-        private float _lastUnmappedVolume = -1f;
-        private bool _lastUnmappedMuted = false;
-        private HashSet<string> _lastMappedApps = new();
-        private readonly HashSet<int> _systemProcessIds = new HashSet<int> { 0, 4, 8 };
         private const int MAX_SESSION_CACHE_SIZE = 15;
+        private readonly object _cacheLock = new object();
+        private readonly MMDeviceEnumerator _deviceEnumerator = new();
+        private readonly Dictionary<string, DateTime> _sessionAccessTimes = new Dictionary<string, DateTime>();
+        private readonly Dictionary<string, List<SessionInfo>> _sessionCache = new Dictionary<string, List<SessionInfo>>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<int> _systemProcessIds = new HashSet<int> { 0, 4, 8 };
+        private HashSet<string> _lastMappedApps = new();
+        private DateTime _lastRefresh = DateTime.MinValue;
+        private bool _lastUnmappedMuted = false;
+        private float _lastUnmappedVolume = -1f;
+        private DateTime _lastUnmappedVolumeCall = DateTime.MinValue;
 
-        private class SessionInfo
-        {
-            public AudioSessionControl Session { get; set; }
-            public string ProcessName { get; set; }
-            public int ProcessId { get; set; }
-            public DateTime LastSeen { get; set; }
-        }
+        #endregion Private Fields
+
+        #region Public Constructors
 
         public AudioService()
         {
             RefreshSessionCache();
         }
 
-        public void ApplyVolumeToTarget(string executable, float level, bool isMuted = false)
+        #endregion Public Constructors
+
+        #region Public Methods
+
+        public void ApplyMuteStateToMultipleTargets(List<string> targets, bool isMuted)
         {
-            level = Math.Clamp(level, 0.0f, 1.0f);
-
-            if (string.IsNullOrWhiteSpace(executable) ||
-                executable.Trim().Equals("system", StringComparison.OrdinalIgnoreCase))
+            if (targets == null || !targets.Any()) return;
+            foreach (var target in targets)
             {
-                try
-                {
-                    var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                    device.AudioEndpointVolume.Mute = isMuted;
-                    if (!isMuted)
-                    {
-                        device.AudioEndpointVolume.MasterVolumeLevelScalar = level;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[AudioService] Failed to set system volume: {ex.Message}");
-                }
-                return;
-            }
-
-            string cleanedExecutable = Path.GetFileNameWithoutExtension(executable).ToLowerInvariant();
-
-            // Use cache if fresh, otherwise enumerate directly (like PR does)
-            if ((DateTime.Now - _lastRefresh).TotalSeconds > CACHE_REFRESH_SECONDS)
-            {
-                RefreshSessionCache();
-            }
-
-            // Always enumerate all sessions to find ALL matches (PR behavior)
-            // But use cached process names for performance
-            try
-            {
-                var sessions = _deviceEnumerator
-                    .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
-                    .AudioSessionManager.Sessions;
-
-                int sessionCount = 0;
-
-                for (int i = 0; i < sessions.Count; i++)
-                {
-                    try
-                    {
-                        var session = sessions[i];
-                        if (session == null) continue;
-
-                        int processId = (int)session.GetProcessID;
-                        string procName = AudioUtilities.GetProcessNameSafely(processId);
-
-                        if (string.IsNullOrEmpty(procName)) continue;
-
-                        string cleanedProcName = Path.GetFileNameWithoutExtension(procName).ToLowerInvariant();
-
-                        if (cleanedProcName.Equals(cleanedExecutable, StringComparison.OrdinalIgnoreCase))
-                        {
-                            session.SimpleAudioVolume.Mute = isMuted;
-                            if (!isMuted)
-                            {
-                                session.SimpleAudioVolume.Volume = level;
-                            }
-                            sessionCount++;
-                            // DON'T BREAK - continue to find more sessions (PR's key change)
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[AudioService] Error processing session {i}: {ex.Message}");
-                    }
-                }
-
-                if (sessionCount == 0)
-                {
-                    Debug.WriteLine($"[AudioService] Could not find any session for {cleanedExecutable}");
-                }
-                else
-                {
-                    Debug.WriteLine($"[AudioService] Applied volume to {sessionCount} sessions for {cleanedExecutable}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[AudioService] Failed to apply volume: {ex.Message}");
+                ApplyMuteStateToTarget(target, isMuted);
             }
         }
+
         public void ApplyMuteStateToTarget(string target, bool isMuted)
         {
             if (string.IsNullOrWhiteSpace(target)) return;
@@ -135,10 +57,7 @@ namespace DeejNG.Services
                 dev.AudioEndpointVolume.Mute = isMuted;
                 return;
             }
-
-            // 🚀 SAME HYBRID APPROACH for muting
             bool sessionFound = false;
-
             // Try cache first
             if ((DateTime.Now - _lastRefresh).TotalSeconds <= CACHE_REFRESH_SECONDS)
             {
@@ -235,6 +154,248 @@ namespace DeejNG.Services
             }
         }
 
+        public void ApplyMuteStateToUnmappedApplications(bool isMuted, HashSet<string> mappedApplications)
+        {
+            try
+            {
+                var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                var sessions = device.AudioSessionManager.Sessions;
+
+                int processedCount = 0;
+
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        if (session == null) continue;
+
+                        int processId = (int)session.GetProcessID;
+                        if (_systemProcessIds.Contains(processId) || processId < 100) continue;
+
+                        string processName = AudioUtilities.GetProcessNameSafely(processId);
+                        if (string.IsNullOrEmpty(processName) || mappedApplications.Contains(processName)) continue;
+
+                        session.SimpleAudioVolume.Mute = isMuted;
+                        processedCount++;
+                    }
+                    catch { }
+                }
+
+                Debug.WriteLine($"[Unmapped] Mute {isMuted} applied to {processedCount} apps");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Unmapped] Failed to mute unmapped applications: {ex.GetType().Name}");
+            }
+        }
+
+        public void ApplyVolumeToTarget(string executable, float level, bool isMuted = false)
+        {
+            level = Math.Clamp(level, 0.0f, 1.0f);
+
+            if (string.IsNullOrWhiteSpace(executable) ||
+                executable.Trim().Equals("system", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                    device.AudioEndpointVolume.Mute = isMuted;
+                    if (!isMuted)
+                    {
+                        device.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[AudioService] Failed to set system volume: {ex.Message}");
+                }
+                return;
+            }
+
+            string cleanedExecutable = Path.GetFileNameWithoutExtension(executable).ToLowerInvariant();
+
+            // Use cache if fresh, otherwise enumerate directly (like PR does)
+            if ((DateTime.Now - _lastRefresh).TotalSeconds > CACHE_REFRESH_SECONDS)
+            {
+                RefreshSessionCache();
+            }
+
+            // Always enumerate all sessions to find ALL matches (PR behavior)
+            // But use cached process names for performance
+            try
+            {
+                var sessions = _deviceEnumerator
+                    .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
+                    .AudioSessionManager.Sessions;
+
+                int sessionCount = 0;
+
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        if (session == null) continue;
+
+                        int processId = (int)session.GetProcessID;
+                        string procName = AudioUtilities.GetProcessNameSafely(processId);
+
+                        if (string.IsNullOrEmpty(procName)) continue;
+
+                        string cleanedProcName = Path.GetFileNameWithoutExtension(procName).ToLowerInvariant();
+
+                        if (cleanedProcName.Equals(cleanedExecutable, StringComparison.OrdinalIgnoreCase))
+                        {
+                            session.SimpleAudioVolume.Mute = isMuted;
+                            if (!isMuted)
+                            {
+                                session.SimpleAudioVolume.Volume = level;
+                            }
+                            sessionCount++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[AudioService] Error processing session {i}: {ex.Message}");
+                    }
+                }
+
+                if (sessionCount == 0)
+                {
+                    Debug.WriteLine($"[AudioService] Could not find any session for {cleanedExecutable}");
+                }
+                else
+                {
+                    Debug.WriteLine($"[AudioService] Applied volume to {sessionCount} sessions for {cleanedExecutable}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AudioService] Failed to apply volume: {ex.Message}");
+            }
+        }
+
+        public void ApplyVolumeToUnmappedApplications(float level, bool isMuted, HashSet<string> mappedApplications)
+        {
+            level = Math.Clamp(level, 0.0f, 1.0f);
+
+            var now = DateTime.Now;
+            var timeSinceLastCall = (now - _lastUnmappedVolumeCall).TotalMilliseconds;
+            var volumeChanged = Math.Abs(_lastUnmappedVolume - level) > 0.05f;
+            var muteChanged = _lastUnmappedMuted != isMuted;
+            var appsChanged = !_lastMappedApps.SetEquals(mappedApplications);
+
+            if (timeSinceLastCall < 100 && !volumeChanged && !muteChanged && !appsChanged)
+            {
+                return;
+            }
+
+            _lastUnmappedVolumeCall = now;
+            _lastUnmappedVolume = level;
+            _lastUnmappedMuted = isMuted;
+            _lastMappedApps = new HashSet<string>(mappedApplications);
+
+            try
+            {
+                var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                var sessions = device.AudioSessionManager.Sessions;
+
+                int processedCount = 0;
+
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        if (session == null) continue;
+
+                        int processId = (int)session.GetProcessID;
+                        if (_systemProcessIds.Contains(processId) || processId < 100) continue;
+
+                        string processName = AudioUtilities.GetProcessNameSafely(processId);
+                        if (string.IsNullOrEmpty(processName) || mappedApplications.Contains(processName)) continue;
+
+                        session.SimpleAudioVolume.Mute = isMuted;
+                        if (!isMuted)
+                        {
+                            session.SimpleAudioVolume.Volume = level;
+                        }
+                        processedCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[Unmapped] Failed to apply volume: {ex.GetType().Name}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Unmapped] Failed to apply volume: {ex.GetType().Name}");
+            }
+        }
+
+        public void ForceCleanup()
+        {
+            try
+            {
+                Debug.WriteLine("[AudioService] Force cleanup started");
+
+                lock (_cacheLock)
+                {
+                    if (_sessionCache.Count > 10)
+                    {
+                        var keysToKeep = _sessionCache
+                            .OrderByDescending(kvp => _sessionAccessTimes.TryGetValue(kvp.Key, out var time) ? time : DateTime.MinValue)
+                            .Take(5)
+                            .Select(kvp => kvp.Key)
+                            .ToList();
+
+                        var sessionsToKeep = new Dictionary<string, List<SessionInfo>>(StringComparer.OrdinalIgnoreCase);
+                        var accessTimesToKeep = new Dictionary<string, DateTime>();
+
+                        foreach (var key in keysToKeep)
+                        {
+                            if (_sessionCache.TryGetValue(key, out var sessionInfos))
+                            {
+                                sessionsToKeep[key] = sessionInfos;
+                                if (_sessionAccessTimes.TryGetValue(key, out var accessTime))
+                                {
+                                    accessTimesToKeep[key] = accessTime;
+                                }
+                            }
+                        }
+
+                        _sessionCache.Clear();
+                        _sessionAccessTimes.Clear();
+
+                        foreach (var kvp in sessionsToKeep)
+                        {
+                            _sessionCache[kvp.Key] = kvp.Value;
+                        }
+
+                        foreach (var kvp in accessTimesToKeep)
+                        {
+                            _sessionAccessTimes[kvp.Key] = kvp.Value;
+                        }
+
+                        Debug.WriteLine($"[AudioService] Session cache reduced to {_sessionCache.Count} apps");
+                    }
+                }
+
+                AudioUtilities.ForceCleanup();
+                Debug.WriteLine("[AudioService] Force cleanup completed");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AudioService] Error during force cleanup: {ex.Message}");
+            }
+        }
+
+        #endregion Public Methods
+
+        #region Private Methods
+
         private void RefreshSessionCache()
         {
             try
@@ -242,15 +403,10 @@ namespace DeejNG.Services
                 var sessions = _deviceEnumerator
                     .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
                     .AudioSessionManager.Sessions;
-
                 var currentTime = DateTime.Now;
                 var currentProcessIds = new HashSet<int>();
-
-                // 🔥 NEW: Group sessions by process name to handle multiple sessions per app
                 var sessionsByApp = new Dictionary<string, List<SessionInfo>>(StringComparer.OrdinalIgnoreCase);
-
                 int maxSessionsToProcess = Math.Min(sessions.Count, 20);
-
                 for (int i = 0; i < maxSessionsToProcess; i++)
                 {
                     try
@@ -346,166 +502,22 @@ namespace DeejNG.Services
             }
         }
 
-        // Keep all other methods unchanged...
-        public void ApplyMuteStateToMultipleTargets(List<string> targets, bool isMuted)
+        #endregion Private Methods
+
+        #region Private Classes
+
+        private class SessionInfo
         {
-            if (targets == null || !targets.Any()) return;
-            foreach (var target in targets)
-            {
-                ApplyMuteStateToTarget(target, isMuted);
-            }
+            #region Public Properties
+
+            public DateTime LastSeen { get; set; }
+            public int ProcessId { get; set; }
+            public string ProcessName { get; set; }
+            public AudioSessionControl Session { get; set; }
+
+            #endregion Public Properties
         }
 
-        public void ApplyVolumeToUnmappedApplications(float level, bool isMuted, HashSet<string> mappedApplications)
-        {
-            level = Math.Clamp(level, 0.0f, 1.0f);
-
-            var now = DateTime.Now;
-            var timeSinceLastCall = (now - _lastUnmappedVolumeCall).TotalMilliseconds;
-            var volumeChanged = Math.Abs(_lastUnmappedVolume - level) > 0.05f;
-            var muteChanged = _lastUnmappedMuted != isMuted;
-            var appsChanged = !_lastMappedApps.SetEquals(mappedApplications);
-
-            if (timeSinceLastCall < 100 && !volumeChanged && !muteChanged && !appsChanged)
-            {
-                return;
-            }
-
-            _lastUnmappedVolumeCall = now;
-            _lastUnmappedVolume = level;
-            _lastUnmappedMuted = isMuted;
-            _lastMappedApps = new HashSet<string>(mappedApplications);
-
-            try
-            {
-                var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                var sessions = device.AudioSessionManager.Sessions;
-
-                int processedCount = 0;
-
-                for (int i = 0; i < sessions.Count; i++)
-                {
-                    try
-                    {
-                        var session = sessions[i];
-                        if (session == null) continue;
-
-                        int processId = (int)session.GetProcessID;
-                        if (_systemProcessIds.Contains(processId) || processId < 100) continue;
-
-                        string processName = AudioUtilities.GetProcessNameSafely(processId);
-                        if (string.IsNullOrEmpty(processName) || mappedApplications.Contains(processName)) continue;
-
-                        session.SimpleAudioVolume.Mute = isMuted;
-                        if (!isMuted)
-                        {
-                            session.SimpleAudioVolume.Volume = level;
-                        }
-                        processedCount++;
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[Unmapped] Failed to apply volume: {ex.GetType().Name}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Unmapped] Failed to apply volume: {ex.GetType().Name}");
-            }
-        }
-
-        public void ApplyMuteStateToUnmappedApplications(bool isMuted, HashSet<string> mappedApplications)
-        {
-            try
-            {
-                var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                var sessions = device.AudioSessionManager.Sessions;
-
-                int processedCount = 0;
-
-                for (int i = 0; i < sessions.Count; i++)
-                {
-                    try
-                    {
-                        var session = sessions[i];
-                        if (session == null) continue;
-
-                        int processId = (int)session.GetProcessID;
-                        if (_systemProcessIds.Contains(processId) || processId < 100) continue;
-
-                        string processName = AudioUtilities.GetProcessNameSafely(processId);
-                        if (string.IsNullOrEmpty(processName) || mappedApplications.Contains(processName)) continue;
-
-                        session.SimpleAudioVolume.Mute = isMuted;
-                        processedCount++;
-                    }
-                    catch { }
-                }
-
-                Debug.WriteLine($"[Unmapped] Mute {isMuted} applied to {processedCount} apps");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Unmapped] Failed to mute unmapped applications: {ex.GetType().Name}");
-            }
-        }
-
-        public void ForceCleanup()
-        {
-            try
-            {
-                Debug.WriteLine("[AudioService] Force cleanup started");
-
-                lock (_cacheLock)
-                {
-                    if (_sessionCache.Count > 10)
-                    {
-                        var keysToKeep = _sessionCache
-                            .OrderByDescending(kvp => _sessionAccessTimes.TryGetValue(kvp.Key, out var time) ? time : DateTime.MinValue)
-                            .Take(5)
-                            .Select(kvp => kvp.Key)
-                            .ToList();
-
-                        var sessionsToKeep = new Dictionary<string, List<SessionInfo>>(StringComparer.OrdinalIgnoreCase);
-                        var accessTimesToKeep = new Dictionary<string, DateTime>();
-
-                        foreach (var key in keysToKeep)
-                        {
-                            if (_sessionCache.TryGetValue(key, out var sessionInfos))
-                            {
-                                sessionsToKeep[key] = sessionInfos;
-                                if (_sessionAccessTimes.TryGetValue(key, out var accessTime))
-                                {
-                                    accessTimesToKeep[key] = accessTime;
-                                }
-                            }
-                        }
-
-                        _sessionCache.Clear();
-                        _sessionAccessTimes.Clear();
-
-                        foreach (var kvp in sessionsToKeep)
-                        {
-                            _sessionCache[kvp.Key] = kvp.Value;
-                        }
-
-                        foreach (var kvp in accessTimesToKeep)
-                        {
-                            _sessionAccessTimes[kvp.Key] = kvp.Value;
-                        }
-
-                        Debug.WriteLine($"[AudioService] Session cache reduced to {_sessionCache.Count} apps");
-                    }
-                }
-
-                AudioUtilities.ForceCleanup();
-                Debug.WriteLine("[AudioService] Force cleanup completed");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[AudioService] Error during force cleanup: {ex.Message}");
-            }
-        }
+        #endregion Private Classes
     }
 }

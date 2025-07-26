@@ -134,13 +134,6 @@
     <Border BorderThickness="1" BorderBrush="Gray" Margin="5" Padding="5" CornerRadius="4">
         <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
 
-            <CheckBox x:Name="InputModeCheckBox"
-                      Content="Mic Input"
-                      Margin="0,5,0,5"
-                      HorizontalAlignment="Center"
-                      Checked="InputModeCheckBox_Checked"
-                      Unchecked="InputModeCheckBox_Unchecked"/>
-
             <TextBox x:Name="TargetTextBox"
                      Margin="0,0,0,10"
                      Width="95"

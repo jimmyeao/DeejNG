@@ -1701,7 +1701,7 @@ namespace DeejNG
 
                 if (i < savedInputModes.Count)
                 {
-                    control.InputModeCheckBox.IsChecked = savedInputModes[i];
+                   // control.InputModeCheckBox.IsChecked = savedInputModes[i];
                 }
 
                 control.SetMuted(false);
@@ -1831,7 +1831,7 @@ namespace DeejNG
 
                             // Save current targets before regenerating
                             var currentTargets = _channelControls.Select(c => c.AudioTargets).ToList();
-                            var currentInputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList();
+                          //  var currentInputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList();
 
                             _expectedSliderCount = parts.Length;
                             GenerateSliders(parts.Length);
@@ -1840,7 +1840,7 @@ namespace DeejNG
                             for (int i = 0; i < Math.Min(currentTargets.Count, _channelControls.Count); i++)
                             {
                                 _channelControls[i].AudioTargets = currentTargets[i];
-                                _channelControls[i].InputModeCheckBox.IsChecked = currentInputModes[i];
+                             //   _channelControls[i].InputModeCheckBox.IsChecked = currentInputModes[i];
                             }
 
                             // Save the new configuration
@@ -2273,7 +2273,7 @@ namespace DeejNG
                         VuMeters = ShowSlidersCheckBox.IsChecked ?? true,
                         StartOnBoot = StartOnBootCheckBox.IsChecked ?? false,
                         StartMinimized = StartMinimizedCheckBox.IsChecked ?? false,
-                        InputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList(),
+                      //  InputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList(),
                         DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false,
 
                         // ✅ PRESERVE OVERLAY SETTINGS FROM _appSettings

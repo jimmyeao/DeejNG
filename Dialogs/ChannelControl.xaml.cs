@@ -168,17 +168,17 @@ namespace DeejNG.Dialogs
         public float CurrentVolume => (float)VolumeSlider.Value;
 
         // Add this public property to expose the InputModeCheckBox
-        public CheckBox InputModeCheckBoxControl => InputModeCheckBox;
-        public bool IsInputMode
-        {
-            get => _audioTargets.Any(t => t.IsInputDevice);
-            set
-            {
-                InputModeCheckBox.IsChecked = value;
-                // If checked and we don't have any input devices,
-                // we should present the picker dialog
-            }
-        }
+        //public CheckBox InputModeCheckBoxControl => InputModeCheckBox;
+        //public bool IsInputMode
+        //{
+        //    get => _audioTargets.Any(t => t.IsInputDevice);
+        //    set
+        //    {
+        //        InputModeCheckBox.IsChecked = value;
+        //        // If checked and we don't have any input devices,
+        //        // we should present the picker dialog
+        //    }
+        //}
         public bool IsMuted => _isMuted;
         public string TargetExecutable =>
              _audioTargets.FirstOrDefault()?.Name ?? "";
@@ -273,7 +273,7 @@ namespace DeejNG.Dialogs
             {
                 _audioTargets = new List<AudioTarget>
                 {
-                    new AudioTarget { Name = target, IsInputDevice = IsInputMode }
+                    new AudioTarget { Name = target }
                 };
             }
 

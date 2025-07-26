@@ -17,7 +17,7 @@
             </ResourceDictionary.MergedDictionaries>
 
             <!-- THEN: Converters and styles -->
-            <local:VolumeToHeightConverter x:Key="VolumeToHeightConverter" />
+            <!--<local:VolumeToHeightConverter x:Key="VolumeToHeightConverter" />-->
 
             <Style TargetType="{x:Type Button}" BasedOn="{StaticResource MaterialDesignRaisedButton}">
                 <Setter Property="materialDesign:ButtonAssist.CornerRadius" Value="5" />
