@@ -7,22 +7,36 @@ using NAudio.CoreAudioApi;
 namespace DeejNG.Classes
 {
     /// <summary>
-    /// Centralized utility class for audio-related operations to prevent code duplication
+    /// Centralized utility class for audio-related operations to prevent code duplication.
+    /// Includes safe process name resolution and process cache cleanup functionality.
     /// </summary>
     public static class AudioUtilities
     {
         #region Private Fields
 
+        // Maximum number of entries allowed in the process name cache
         private const int MAX_PROCESS_CACHE_SIZE = 30;
+
+        // Lock to ensure thread-safe access to the cache
         private static readonly object _cacheCleanupLock = new object();
+
+        // Cache for mapping process IDs to their names to avoid repeated expensive lookups
         private static readonly Dictionary<int, string> _processNameCache = new();
+
+        // List of system process IDs to skip (e.g., Idle, System)
         private static readonly HashSet<int> _systemProcessIds = new HashSet<int> { 0, 4, 8 };
+
+        // Timestamp of the last time the process cache was cleaned
         private static DateTime _lastProcessCacheCleanup = DateTime.MinValue;
 
         #endregion Private Fields
 
         #region Public Methods
 
+        /// <summary>
+        /// Forces an immediate cleanup of the internal process name cache.
+        /// Can be called manually when a known large number of processes has terminated.
+        /// </summary>
         public static void ForceCleanup()
         {
             lock (_cacheCleanupLock)
@@ -32,9 +46,14 @@ namespace DeejNG.Classes
             }
         }
 
+        /// <summary>
+        /// Retrieves the process name for a given process ID safely.
+        /// Uses a cache to avoid repeated lookups and avoids access to MainModule (which can throw).
+        /// Returns an empty string on failure or for system processes.
+        /// </summary>
         public static string GetProcessNameSafely(int processId)
         {
-            // Clean cache periodically (every 60 seconds)
+            // Clean cache every 60 seconds to remove stale entries
             lock (_cacheCleanupLock)
             {
                 if ((DateTime.Now - _lastProcessCacheCleanup).TotalSeconds > 60)
@@ -44,13 +63,13 @@ namespace DeejNG.Classes
                 }
             }
 
-            // Check cache first
+            // Return from cache if available
             if (_processNameCache.TryGetValue(processId, out string cachedName))
             {
                 return cachedName;
             }
 
-            // Skip system processes that cause Win32Exception
+            // Avoid known system processes and invalid PIDs
             if (_systemProcessIds.Contains(processId) || processId < 100)
             {
                 _processNameCache[processId] = "";
@@ -61,7 +80,7 @@ namespace DeejNG.Classes
 
             try
             {
-                // Only use ProcessName property - never access MainModule to avoid Win32Exception
+                // Get the process name safely without accessing MainModule
                 using (var process = Process.GetProcessById(processId))
                 {
                     if (process != null && !process.HasExited)
@@ -72,33 +91,34 @@ namespace DeejNG.Classes
             }
             catch
             {
-                // Any exception - just return empty (includes ArgumentException, Win32Exception, etc.)
+                // Ignore any exception and treat as unknown process
                 processName = "";
             }
 
-            // Cache the result
+            // Cache the result (even empty to avoid repeated failures)
             _processNameCache[processId] = processName;
             return processName;
         }
-
 
         #endregion Public Methods
 
         #region Private Methods
 
         /// <summary>
-        /// Cleans the process name cache to prevent memory leaks
+        /// Cleans the process name cache by removing entries for terminated processes.
+        /// Also trims the cache size if it grows too large.
         /// </summary>
         private static void CleanProcessCache()
         {
             try
             {
+                // Only clean if the cache has exceeded the max size
                 if (_processNameCache.Count > MAX_PROCESS_CACHE_SIZE)
                 {
                     var keysToRemove = new List<int>();
                     var currentProcessIds = new HashSet<int>();
 
-                    // Get current running process IDs
+                    // Get list of currently running process IDs
                     try
                     {
                         var processes = Process.GetProcesses();
@@ -114,13 +134,13 @@ namespace DeejNG.Classes
                             catch { }
                             finally
                             {
-                                proc?.Dispose();
+                                proc?.Dispose(); // Always dispose to avoid leaks
                             }
                         }
                     }
-                    catch { }
+                    catch { } // Fail-safe: ignore failure in getting running processes
 
-                    // Remove entries for processes that no longer exist
+                    // Identify cache entries for processes that no longer exist
                     foreach (var kvp in _processNameCache)
                     {
                         if (!currentProcessIds.Contains(kvp.Key))
@@ -129,16 +149,18 @@ namespace DeejNG.Classes
                         }
                     }
 
+                    // Remove stale entries
                     foreach (var key in keysToRemove)
                     {
                         _processNameCache.Remove(key);
                     }
 
-                    // If still too large, remove oldest entries
+                    // If still too big, trim oldest entries arbitrarily (first N keys)
                     if (_processNameCache.Count > MAX_PROCESS_CACHE_SIZE)
                     {
                         var excess = _processNameCache.Count - (MAX_PROCESS_CACHE_SIZE / 2);
                         var keysToRemoveList = new List<int>(_processNameCache.Keys);
+
                         for (int i = 0; i < excess && i < keysToRemoveList.Count; i++)
                         {
                             _processNameCache.Remove(keysToRemoveList[i]);
@@ -150,6 +172,7 @@ namespace DeejNG.Classes
             }
             catch (Exception ex)
             {
+                // Log any unexpected cleanup errors
                 Debug.WriteLine($"[AudioUtilities] Error during cache cleanup: {ex.Message}");
             }
         }

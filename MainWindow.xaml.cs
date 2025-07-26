@@ -17,7 +17,9 @@ using System.Windows.Threading;
 using DeejNG.Dialogs;
 using DeejNG.Services;
 using Microsoft.VisualBasic.Logging;
+
 using Microsoft.Win32;
+
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 using DeejNG.Classes;
@@ -31,92 +33,101 @@ namespace DeejNG
 {
     public partial class MainWindow : Window
     {
-
         #region Public Fields
 
         // You'll also need to make _channelControls accessible to allow the ChannelControl to get its index
         // In MainWindow.xaml.cs, change the private field to:
         public List<ChannelControl> _channelControls = new();
-        private static readonly System.Text.RegularExpressions.Regex _invalidSerialCharsRegex = new System.Text.RegularExpressions.Regex(@"[^\x20-\x7E\r\n]", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        public FloatingOverlay _overlay;
 
         #endregion Public Fields
 
         #region Private Fields
-        private SessionCollection _cachedSessionsForMeters;
-        private DispatcherTimer _positionSaveTimer;
-        private DateTime _lastMeterSessionRefresh = DateTime.MinValue;
-        private bool _isCalibrating = false;
-        private DateTime _calibrationStartTime = DateTime.MinValue;
-        private const int CALIBRATION_DELAY_MS = 500; // 500ms calibration period
-        private bool _allowVolumeApplication = false;
-        private Dictionary<int, float> _initialSliderValues = new();
-        private bool _hasReceivedInitialData = false;
-        private const int METER_SESSION_CACHE_MS = 1000;
-        private int _meterSkipCounter = 0;
-        private bool _hasLoadedInitialSettings = false;
-        private bool _serialPortFullyInitialized = false;
-        private DateTime _lastUnmappedMeterUpdate = DateTime.MinValue;
-        private readonly object _unmappedLock = new object();
-        private DispatcherTimer _forceCleanupTimer;
-        public FloatingOverlay _overlay;
 
-        // Cache unmapped peak calculations
-        private DateTime _lastUnmappedPeakCalculation = DateTime.MinValue;
-        private float _cachedUnmappedPeak = 0;
-        
+        private const int CALIBRATION_DELAY_MS = 500;
+        private const int METER_SESSION_CACHE_MS = 1000;
+        private static readonly System.Text.RegularExpressions.Regex _invalidSerialCharsRegex = new System.Text.RegularExpressions.Regex(@"[^\x20-\x7E\r\n]", System.Text.RegularExpressions.RegexOptions.Compiled);
+
         // Object pools to reduce allocations
         private readonly Queue<List<AudioTarget>> _audioTargetListPool = new();
-        private readonly Queue<HashSet<string>> _stringHashSetPool = new();
-        
-        // Cached collections to avoid repeated allocations
-        private readonly List<AudioTarget> _tempTargetList = new();
-        private readonly HashSet<string> _tempStringSet = new(StringComparer.OrdinalIgnoreCase);
-        private int _sessionCacheHitCount = 0;
-        private DateTime _lastForcedCleanup = DateTime.MinValue;
-        private readonly TimeSpan UNMAPPED_THROTTLE_INTERVAL = TimeSpan.FromMilliseconds(100); // Increase throttling
+
         private readonly HashSet<string> _cachedMappedApplications = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private DateTime _lastMappedApplicationsUpdate = DateTime.MinValue;
-        private float _lastUnmappedPeak = 0;
-        private DateTime _lastUnmappedPeakUpdate = DateTime.MinValue;
-        private MMDevice _cachedAudioDevice;
-        private DateTime _lastDeviceCacheTime = DateTime.MinValue;
-        private readonly TimeSpan DEVICE_CACHE_DURATION = TimeSpan.FromSeconds(5);
-        private int _expectedSliderCount = -1; // Track expected number of sliders
-        private bool _hasReceivedInitialSerialData = false;
-        private DateTime _lastSettingsSave = DateTime.MinValue;
-        private readonly object _settingsLock = new object();
         private readonly MMDeviceEnumerator _deviceEnumerator = new();
         private readonly Dictionary<string, float> _lastInputVolume = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _settingsLock = new object();
+        private readonly Queue<HashSet<string>> _stringHashSetPool = new();
+        private readonly HashSet<string> _tempStringSet = new(StringComparer.OrdinalIgnoreCase);
+        // Cached collections to avoid repeated allocations
+        private readonly List<AudioTarget> _tempTargetList = new();
+
+        private readonly object _unmappedLock = new object();
+        private readonly TimeSpan DEVICE_CACHE_DURATION = TimeSpan.FromSeconds(5);
+        private readonly TimeSpan UNMAPPED_THROTTLE_INTERVAL = TimeSpan.FromMilliseconds(100);
+        // 500ms calibration period
+        private bool _allowVolumeApplication = false;
+
         private AppSettings _appSettings = new();
         private MMDevice _audioDevice;
         private AudioService _audioService;
+        private MMDevice _cachedAudioDevice;
+        private SessionCollection _cachedSessionsForMeters;
+        private float _cachedUnmappedPeak = 0;
+        private DateTime _calibrationStartTime = DateTime.MinValue;
         private bool _disableSmoothing = false;
+        private int _expectedSliderCount = -1;
         private bool _expectingData = false;
+        private DispatcherTimer _forceCleanupTimer;
+        private bool _hasLoadedInitialSettings = false;
+        private bool _hasReceivedInitialData = false;
+        // Track expected number of sliders
+        private bool _hasReceivedInitialSerialData = false;
+
         private bool _hasSyncedMuteStates = false;
+        private Dictionary<int, float> _initialSliderValues = new();
         private Dictionary<string, MMDevice> _inputDeviceMap = new();
-        private Dictionary<string, MMDevice> _outputDeviceMap = new();
+        private bool _isCalibrating = false;
         private bool _isClosing = false;
         private bool _isConnected = false;
         private bool _isInitializing = true;
         private string _lastConnectedPort = string.Empty;
+        private DateTime _lastDeviceCacheTime = DateTime.MinValue;
         private DateTime _lastDeviceRefresh = DateTime.MinValue;
+        private DateTime _lastForcedCleanup = DateTime.MinValue;
+        // Increase throttling
+        private DateTime _lastMappedApplicationsUpdate = DateTime.MinValue;
+
+        private DateTime _lastMeterSessionRefresh = DateTime.MinValue;
         private DateTime _lastSessionRefresh = DateTime.MinValue;
+        private DateTime _lastSettingsSave = DateTime.MinValue;
+        private DateTime _lastUnmappedMeterUpdate = DateTime.MinValue;
+        private float _lastUnmappedPeak = 0;
+        // Cache unmapped peak calculations
+        private DateTime _lastUnmappedPeakCalculation = DateTime.MinValue;
+
+        private DateTime _lastUnmappedPeakUpdate = DateTime.MinValue;
         private DateTime _lastValidDataTimestamp = DateTime.MinValue;
+        private bool _manualDisconnect = false;
         private bool _metersEnabled = true;
+        private int _meterSkipCounter = 0;
         private DispatcherTimer _meterTimer;
         private int _noDataCounter = 0;
+        private Dictionary<string, MMDevice> _outputDeviceMap = new();
+        private DispatcherTimer _positionSaveTimer;
         private Dictionary<int, string> _processNameCache = new();
         private Dictionary<string, IAudioSessionEventsHandler> _registeredHandlers = new();
         private StringBuilder _serialBuffer = new();
         private bool _serialDisconnected = false;
         private SerialPort _serialPort;
+        private bool _serialPortFullyInitialized = false;
         private DispatcherTimer _serialReconnectTimer;
         private DispatcherTimer _serialWatchdogTimer;
+        private int _sessionCacheHitCount = 0;
         private DispatcherTimer _sessionCacheTimer;
         private List<(AudioSessionControl session, string sessionId, string instanceId)> _sessionIdCache = new();
-      //  private Dictionary<string, AudioSessionControl> _sessionLookup = new();
+
+        //  private Dictionary<string, AudioSessionControl> _sessionLookup = new();
         private AudioEndpointVolume _systemVolume;
-        private bool _manualDisconnect = false;
         private string _userSelectedPort = string.Empty;
 
         private bool isDarkTheme = false;
@@ -124,206 +135,6 @@ namespace DeejNG
         #endregion Private Fields
 
         #region Public Constructors
-
-        // Update this method in MainWindow.xaml.cs
-        public void ShowVolumeOverlay()
-        {
-            Debug.WriteLine("[Overlay] ShowVolumeOverlay triggered");
-
-            if (_appSettings is null || !_appSettings.OverlayEnabled)
-            {
-                Debug.WriteLine("[Overlay] Disabled in settings");
-                return;
-            }
-
-            if (_overlay == null)
-            {
-                Debug.WriteLine("[Overlay] Creating new overlay");
-                Debug.WriteLine($"[Overlay] Loaded position from settings: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
-
-                // Validate position against virtual screen bounds (multi-monitor)
-                if (!IsPositionValid(_appSettings.OverlayX, _appSettings.OverlayY))
-                {
-                    Debug.WriteLine($"[Overlay] Loaded position ({_appSettings.OverlayX}, {_appSettings.OverlayY}) is invalid, using default");
-                    _appSettings.OverlayX = 100;
-                    _appSettings.OverlayY = 100;
-                }
-
-                _overlay = new FloatingOverlay(_appSettings, this);
-                Debug.WriteLine($"[Overlay] Created at validated position ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
-            }
-
-            var volumes = _channelControls.Select(c => c.CurrentVolume).ToList();
-            var labels = _channelControls.Select(c => GetChannelLabel(c)).ToList();
-
-     
-            _overlay.ShowVolumes(volumes, labels);
-        }
-
-        // Update LoadSettingsFromDisk to add debugging
-        private AppSettings LoadSettingsFromDisk()
-        {
-            try
-            {
-                if (File.Exists(SettingsPath))
-                {
-                    var json = File.ReadAllText(SettingsPath);
-                    Debug.WriteLine($"[Settings] Loading from: {SettingsPath}");
-
-                    _appSettings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
-
-                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayEnabled: {_appSettings.OverlayEnabled}");
-                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayPosition: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
-                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayOpacity: {_appSettings.OverlayOpacity}");
-                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayTimeoutSeconds: {_appSettings.OverlayTimeoutSeconds}");
-
-                    return _appSettings;
-                }
-                else
-                {
-                    Debug.WriteLine($"[Settings] Settings file does not exist: {SettingsPath}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Settings] Error loading settings: {ex.Message}");
-            }
-
-            _appSettings = new AppSettings();
-            Debug.WriteLine("[Settings] Using default AppSettings");
-            return _appSettings;
-        }
-        // Add this helper method to MainWindow.xaml.cs
-        public string GetChannelLabel(ChannelControl control)
-        {
-            if (control.AudioTargets != null && control.AudioTargets.Count > 0)
-            {
-                var primaryTarget = control.AudioTargets.FirstOrDefault();
-                if (primaryTarget != null && !string.IsNullOrEmpty(primaryTarget.Name))
-                {
-                    string name = primaryTarget.Name;
-
-                    // Handle special cases
-                    if (name.Equals("system", StringComparison.OrdinalIgnoreCase))
-                        return "System";
-                    if (name.Equals("unmapped", StringComparison.OrdinalIgnoreCase))
-                        return "Unmapped";
-
-                    // For regular app names, return the full name (wrapping will handle display)
-                    return char.ToUpper(name[0]) + name.Substring(1).ToLower();
-                }
-            }
-
-            // Fallback to channel number
-            int channelIndex = _channelControls.IndexOf(control);
-            return $"Channel {channelIndex + 1}";
-        }
-        public void UpdateOverlayPosition(double x, double y)
-        {
-            if (_appSettings != null)
-            {
-                // Store precise position with higher precision
-                _appSettings.OverlayX = Math.Round(x, 1);
-                _appSettings.OverlayY = Math.Round(y, 1);
-
-                Debug.WriteLine($"[Overlay] Position updated: X={_appSettings.OverlayX}, Y={_appSettings.OverlayY}");
-
-                // Debounce saves - only save 500ms after last position change
-                if (_positionSaveTimer == null)
-                {
-                    _positionSaveTimer = new DispatcherTimer
-                    {
-                        Interval = TimeSpan.FromMilliseconds(500)
-                    };
-                    _positionSaveTimer.Tick += PositionSaveTimer_Tick;
-                }
-
-                // Reset the timer - this cancels any pending save and starts a new 500ms countdown
-                _positionSaveTimer.Stop();
-                _positionSaveTimer.Start();
-            }
-        }
-        private void PositionSaveTimer_Tick(object sender, EventArgs e)
-        {
-            _positionSaveTimer.Stop();
-
-            // Save to disk on background thread
-            Task.Run(() => {
-                try
-                {
-                    var json = JsonSerializer.Serialize(_appSettings, new JsonSerializerOptions { WriteIndented = true });
-                    var dir = Path.GetDirectoryName(SettingsPath);
-                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                    {
-                        Directory.CreateDirectory(dir);
-                    }
-                    File.WriteAllText(SettingsPath, json);
-                    Debug.WriteLine("[Overlay] Position saved to disk (debounced)");
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[ERROR] Failed to save overlay position: {ex.Message}");
-                }
-            });
-        }
-        private bool IsPositionValid(double x, double y)
-        {
-            // Use virtual screen bounds to support multi-monitor setups
-            var virtualLeft = SystemParameters.VirtualScreenLeft;
-            var virtualTop = SystemParameters.VirtualScreenTop;
-            var virtualWidth = SystemParameters.VirtualScreenWidth;
-            var virtualHeight = SystemParameters.VirtualScreenHeight;
-
-            var virtualRight = virtualLeft + virtualWidth;
-            var virtualBottom = virtualTop + virtualHeight;
-
-            // Allow position anywhere within virtual screen bounds (with small margin)
-            bool isValid = x >= virtualLeft - 100 &&
-                           x <= virtualRight - 100 &&
-                           y >= virtualTop - 50 &&
-                           y <= virtualBottom - 50;
-
-            Debug.WriteLine($"[Position] Checking position ({x}, {y}) against virtual bounds ({virtualLeft}, {virtualTop}) to ({virtualRight}, {virtualBottom}) - Valid: {isValid}");
-
-            return isValid;
-        }
-
-
-        // Also update the ApplyOverlaySettings method to handle opacity changes
-        //public void ApplyOverlaySettings(AppSettings settings)
-        //{
-        //    _appSettings.OverlayEnabled = settings.OverlayEnabled;
-        //    _appSettings.OverlayOpacity = settings.OverlayOpacity;
-        //    _appSettings.OverlayTimeoutSeconds = settings.OverlayTimeoutSeconds;
-        //    _appSettings.OverlayX = settings.OverlayX;
-        //    _appSettings.OverlayY = settings.OverlayY;
-
-        //    // If overlay exists, update its settings
-        //    if (_overlay != null)
-        //    {
-        //        _overlay.OverlayOpacity = settings.OverlayOpacity;
-        //        _overlay.Left = settings.OverlayX;
-        //        _overlay.Top = settings.OverlayY;
-
-        //        // Recreate the auto-close timer with new timeout
-        //        _overlay.ResetAutoCloseTimer(settings.OverlayTimeoutSeconds);
-
-        //        // Force a redraw to apply new opacity
-        //        _overlay.OverlayCanvas?.InvalidateVisual();
-        //    }
-
-        //    Debug.WriteLine($"[Overlay] Settings applied - Enabled: {settings.OverlayEnabled}, Opacity: {settings.OverlayOpacity}");
-        //}
-
-
-
-
-        private void SettingsButton_Click(object sender, RoutedEventArgs e)
-        {
-            var settingsWindow = new SettingsWindow();
-            settingsWindow.Owner = this;
-            settingsWindow.Show();  // Show as non-modal window (or ShowDialog() if you prefer modal)
-        }
 
         public MainWindow()
         {
@@ -340,7 +151,7 @@ namespace DeejNG
 
             // Load the saved port name from settings BEFORE populating ports
             LoadSavedPortName();
-            
+
             // Load ports AFTER loading the saved port name so ComboBox can select the correct port
             LoadAvailablePorts();
 
@@ -395,6 +206,7 @@ namespace DeejNG
             // IMPROVED: Multiple attempts to connect with better timing
             SetupAutomaticSerialConnection();
         }
+
         #endregion Public Constructors
 
         #region Private Properties
@@ -404,6 +216,32 @@ namespace DeejNG
         #endregion Private Properties
 
         #region Public Methods
+
+        /// <summary>
+        /// Finds the ChannelControl that currently controls the specified target
+        /// </summary>
+        /// <param name="targetName">The target application name</param>
+        /// <returns>The control managing this target, or null if not found</returns>
+        public ChannelControl FindControlForTarget(string targetName)
+        {
+            if (string.IsNullOrWhiteSpace(targetName)) return null;
+
+            string normalizedTarget = targetName.ToLowerInvariant();
+
+            foreach (var control in _channelControls)
+            {
+                foreach (var target in control.AudioTargets)
+                {
+                    if (!target.IsInputDevice &&
+                        string.Equals(target.Name, normalizedTarget, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return control;
+                    }
+                }
+            }
+
+            return null;
+        }
 
         public Dictionary<int, List<AudioTarget>> GetAllAssignedTargets()
         {
@@ -417,20 +255,11 @@ namespace DeejNG
             return result;
         }
 
-        public List<string> GetCurrentTargets()
-        {
-            return _channelControls
-                .Select(c => c.TargetExecutable?.Trim().ToLowerInvariant())
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Distinct()
-                .ToList();
-        }
-
         public HashSet<string> GetAllMappedApplications()
         {
             // Reuse the temp set instead of creating new ones
             _tempStringSet.Clear();
-            
+
             foreach (var control in _channelControls)
             {
                 foreach (var target in control.AudioTargets)
@@ -441,39 +270,45 @@ namespace DeejNG
                     }
                 }
             }
-            
+
             // Return a copy to avoid modification issues
             return new HashSet<string>(_tempStringSet, StringComparer.OrdinalIgnoreCase);
         }
 
-        #region Decoupled Handler Support
-
-        /// <summary>
-        /// Finds the ChannelControl that currently controls the specified target
-        /// </summary>
-        /// <param name="targetName">The target application name</param>
-        /// <returns>The control managing this target, or null if not found</returns>
-        public ChannelControl FindControlForTarget(string targetName)
+        // Add this helper method to MainWindow.xaml.cs
+        public string GetChannelLabel(ChannelControl control)
         {
-            if (string.IsNullOrWhiteSpace(targetName)) return null;
-            
-            string normalizedTarget = targetName.ToLowerInvariant();
-            
-            foreach (var control in _channelControls)
+            if (control.AudioTargets != null && control.AudioTargets.Count > 0)
             {
-                foreach (var target in control.AudioTargets)
+                var primaryTarget = control.AudioTargets.FirstOrDefault();
+                if (primaryTarget != null && !string.IsNullOrEmpty(primaryTarget.Name))
                 {
-                    if (!target.IsInputDevice && 
-                        string.Equals(target.Name, normalizedTarget, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return control;
-                    }
+                    string name = primaryTarget.Name;
+
+                    // Handle special cases
+                    if (name.Equals("system", StringComparison.OrdinalIgnoreCase))
+                        return "System";
+                    if (name.Equals("unmapped", StringComparison.OrdinalIgnoreCase))
+                        return "Unmapped";
+
+                    // For regular app names, return the full name (wrapping will handle display)
+                    return char.ToUpper(name[0]) + name.Substring(1).ToLower();
                 }
             }
-            
-            return null;
+
+            // Fallback to channel number
+            int channelIndex = _channelControls.IndexOf(control);
+            return $"Channel {channelIndex + 1}";
         }
-  
+
+        public List<string> GetCurrentTargets()
+        {
+            return _channelControls
+                .Select(c => c.TargetExecutable?.Trim().ToLowerInvariant())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct()
+                .ToList();
+        }
 
         /// <summary>
         /// Handles session disconnection events from the decoupled handlers
@@ -496,7 +331,101 @@ namespace DeejNG
             }
         }
 
-        #endregion
+        // Update this method in MainWindow.xaml.cs
+        public void ShowVolumeOverlay()
+        {
+            Debug.WriteLine("[Overlay] ShowVolumeOverlay triggered");
+
+            if (_appSettings is null || !_appSettings.OverlayEnabled)
+            {
+                Debug.WriteLine("[Overlay] Disabled in settings");
+                return;
+            }
+
+            if (_overlay == null)
+            {
+                Debug.WriteLine("[Overlay] Creating new overlay");
+                Debug.WriteLine($"[Overlay] Loaded position from settings: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+
+                // Validate position against virtual screen bounds (multi-monitor)
+                if (!IsPositionValid(_appSettings.OverlayX, _appSettings.OverlayY))
+                {
+                    Debug.WriteLine($"[Overlay] Loaded position ({_appSettings.OverlayX}, {_appSettings.OverlayY}) is invalid, using default");
+                    _appSettings.OverlayX = 100;
+                    _appSettings.OverlayY = 100;
+                }
+
+                _overlay = new FloatingOverlay(_appSettings, this);
+                Debug.WriteLine($"[Overlay] Created at validated position ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+            }
+
+            var volumes = _channelControls.Select(c => c.CurrentVolume).ToList();
+            var labels = _channelControls.Select(c => GetChannelLabel(c)).ToList();
+
+            _overlay.ShowVolumes(volumes, labels);
+        }
+
+        public void UpdateOverlayPosition(double x, double y)
+        {
+            if (_appSettings != null)
+            {
+                // Store precise position with higher precision
+                _appSettings.OverlayX = Math.Round(x, 1);
+                _appSettings.OverlayY = Math.Round(y, 1);
+
+                Debug.WriteLine($"[Overlay] Position updated: X={_appSettings.OverlayX}, Y={_appSettings.OverlayY}");
+
+                // Debounce saves - only save 500ms after last position change
+                if (_positionSaveTimer == null)
+                {
+                    _positionSaveTimer = new DispatcherTimer
+                    {
+                        Interval = TimeSpan.FromMilliseconds(500)
+                    };
+                    _positionSaveTimer.Tick += PositionSaveTimer_Tick;
+                }
+
+                // Reset the timer - this cancels any pending save and starts a new 500ms countdown
+                _positionSaveTimer.Stop();
+                _positionSaveTimer.Start();
+            }
+        }
+
+        public void UpdateOverlaySettings(AppSettings newSettings)
+        {
+            // Preserve current position if overlay exists and is visible
+            if (_overlay != null && _overlay.IsVisible)
+            {
+                var currentX = Math.Round(_overlay.Left, 1);
+                var currentY = Math.Round(_overlay.Top, 1);
+
+                _appSettings.OverlayX = currentX;
+                _appSettings.OverlayY = currentY;
+            }
+            //else if (newSettings.OverlayX > 0 && newSettings.OverlayY > 0)
+            //{
+            //    _appSettings.OverlayX = newSettings.OverlayX;
+            //    _appSettings.OverlayY = newSettings.OverlayY;
+            //}
+            else if (IsPositionValid(newSettings.OverlayX, newSettings.OverlayY))
+            {
+                _appSettings.OverlayX = newSettings.OverlayX;
+                _appSettings.OverlayY = newSettings.OverlayY;
+            }
+            else
+            {
+                _appSettings.OverlayX = 100;
+                _appSettings.OverlayY = 100;
+            }
+
+            // Update all settings including text color
+            _appSettings.OverlayEnabled = newSettings.OverlayEnabled;
+            _appSettings.OverlayOpacity = newSettings.OverlayOpacity;
+            _appSettings.OverlayTimeoutSeconds = newSettings.OverlayTimeoutSeconds;
+            _appSettings.OverlayTextColor = newSettings.OverlayTextColor; // Updated property name
+
+            Debug.WriteLine($"[Overlay] Settings updated - Text Color: {_appSettings.OverlayTextColor}");
+        }
 
         #endregion Public Methods
 
@@ -532,7 +461,7 @@ namespace DeejNG
                     Debug.WriteLine($"[ERROR] Failed to unregister handler for {target} on close: {ex.Message}");
                 }
             }
-            
+
             // Session tracking is now handled by the decoupled handlers
 
             // Clean up serial port
@@ -583,15 +512,15 @@ namespace DeejNG
                 catch { }
             }
             _sessionIdCache.Clear();
-            
+
             // Clean up input device cache
             _inputDeviceMap.Clear();
-            
+
             // Force final garbage collection
             GC.Collect();
             GC.WaitForPendingFinalizers();
             GC.Collect();
-            
+
             base.OnClosed(e);
         }
 
@@ -615,526 +544,6 @@ namespace DeejNG
         #endregion Protected Methods
 
         #region Private Methods
-        // Improved automatic serial connection logic
-        // Replace these methods in your MainWindow.xaml.cs
-        //version    
-
-        // NEW: Setup automatic serial connection with retry logic
-        private void SetupAutomaticSerialConnection()
-        {
-            var connectionAttempts = 0;
-            const int maxAttempts = 5;
-            var attemptTimer = new DispatcherTimer();
-
-            attemptTimer.Tick += (s, e) =>
-            {
-                connectionAttempts++;
-                Debug.WriteLine($"[AutoConnect] Attempt #{connectionAttempts}");
-
-                if (TryConnectToSavedPort())
-                {
-                    Debug.WriteLine("[AutoConnect] Successfully connected!");
-                    attemptTimer.Stop();
-                    return;
-                }
-
-                if (connectionAttempts >= maxAttempts)
-                {
-                    Debug.WriteLine($"[AutoConnect] Failed after {maxAttempts} attempts");
-                    attemptTimer.Stop();
-                    return;
-                }
-
-                // Increase interval for subsequent attempts
-                attemptTimer.Interval = TimeSpan.FromSeconds(Math.Min(2 * connectionAttempts, 10));
-            };
-
-            // Start first attempt after 2 seconds
-            attemptTimer.Interval = TimeSpan.FromSeconds(2);
-            attemptTimer.Start();
-        }
-        private void ComPortSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (ComPortSelector.SelectedItem is string selectedPort)
-            {
-                _userSelectedPort = selectedPort;
-                Debug.WriteLine($"[UI] User selected port: {selectedPort}");
-
-                // If user manually disconnected and now selects a port, clear the manual disconnect flag
-                if (_manualDisconnect)
-                {
-                    Debug.WriteLine("[UI] User selected new port after manual disconnect - clearing manual disconnect flag");
-                    _manualDisconnect = false;
-                }
-            }
-        }
-        private void ForceCleanupTimer_Tick(object sender, EventArgs e)
-        {
-            if (_isClosing) return;
-
-            try
-            {
-                Debug.WriteLine("[ForceCleanup] Starting aggressive cleanup...");
-                _audioService?.ForceCleanup();
-                AudioUtilities.ForceCleanup();
-                
-                // More frequent and aggressive cleanup
-                CleanupSessionCacheAggressively();
-                CleanupProcessCache();
-                CleanupInputDeviceCache();
-                CleanupEventHandlers();
-
-                // IMPROVED: Reset serial communication state periodically to prevent corruption
-                if ((DateTime.Now - _lastForcedCleanup).TotalMinutes > 30) // Every 30 minutes
-                {
-                    Debug.WriteLine("[ForceCleanup] Performing periodic state reset...");
-                    PerformPeriodicStateReset();
-                }
-
-                // Force COM object cleanup
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                GC.Collect();
-
-                _lastForcedCleanup = DateTime.Now;
-                Debug.WriteLine("[ForceCleanup] Cleanup completed");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ForceCleanup] Error: {ex.Message}");
-            }
-        }
-
-        // IMPROVED: Add periodic state reset to prevent long-running issues
-        private void PerformPeriodicStateReset()
-        {
-            try
-            {
-                // Clear and reset serial buffer
-                _serialBuffer.Clear();
-         
-                
-                // Reset volume application flags to ensure responsiveness
-                if (_isConnected && !_serialDisconnected)
-                {
-                    _allowVolumeApplication = true;
-                }
-                
-                // Refresh audio device reference
-                try
-                {
-                    _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                }
-                catch { }
-                
-                // Force a complete mute state resync
-                if (_allowVolumeApplication && _channelControls.Count > 0)
-                {
-                    SyncMuteStates();
-                }
-                
-                Debug.WriteLine("[PeriodicReset] State reset completed");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[PeriodicReset] Error during state reset: {ex.Message}");
-            }
-        }
-        private void CleanupEventHandlers()
-        {
-            try
-            {
-                var handlersToRemove = new List<string>();
-
-                foreach (var kvp in _registeredHandlers)
-                {
-                    try
-                    {
-                        // Test if the handler is still valid by checking the target
-                        var currentTargets = GetCurrentTargets();
-                        if (!currentTargets.Contains(kvp.Key))
-                        {
-                            handlersToRemove.Add(kvp.Key);
-                        }
-                    }
-                    catch
-                    {
-                        handlersToRemove.Add(kvp.Key);
-                    }
-                }
-
-                foreach (var target in handlersToRemove)
-                {
-                    _registeredHandlers.Remove(target);
-                    Debug.WriteLine($"[Cleanup] Removed stale event handler for {target}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Cleanup] Error cleaning event handlers: {ex.Message}");
-            }
-        }
-        private void CleanupSessionCacheAggressively()
-        {
-            try
-            {
-                // Reduce max sessions from 25 to 15
-                const int MAX_SESSIONS = 15;
-
-                if (_sessionIdCache.Count > MAX_SESSIONS)
-                {
-                    var sessionsToRemove = _sessionIdCache.Take(_sessionIdCache.Count - MAX_SESSIONS).ToList();
-
-                    foreach (var sessionTuple in sessionsToRemove)
-                    {
-                        try
-                        {
-
-                            ReleaseComObject(sessionTuple.session);
-                            
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"[Cleanup] Failed to release COM object: {ex.Message}");
-                        }
-                    }
-
-                    _sessionIdCache = _sessionIdCache.Skip(_sessionIdCache.Count - MAX_SESSIONS).ToList();
-                    Debug.WriteLine($"[Cleanup] Reduced session cache to {_sessionIdCache.Count} items");
-                }
-
-                // Also clean up invalid sessions
-                var validSessions = new List<(AudioSessionControl session, string sessionId, string instanceId)>();
-                foreach (var sessionTuple in _sessionIdCache)
-                {
-                    try
-                    {
-                        if (sessionTuple.session != null)
-                        {
-                            // Test if session is still valid
-                            var test = sessionTuple.session.GetProcessID;
-                            validSessions.Add(sessionTuple);
-                        }
-                    }
-                    catch
-                    {
-                        // Session is invalid, release it
-                        try
-                        {
-                            if (sessionTuple.session != null)
-                                ReleaseComObject(sessionTuple.session);
-                        }
-                        catch { }
-                    }
-                }
-
-                _sessionIdCache = validSessions;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Cleanup] Error in session cache cleanup: {ex.Message}");
-            }
-        }
-        // 5. Improved process cache cleanup
-        private void CleanupProcessCache()
-        {
-            try
-            {
-                // More aggressive - keep only last 30 processes instead of 50
-                if (_processNameCache.Count > 30)
-                {
-                    var oldestKeys = _processNameCache.Keys.Take(_processNameCache.Count - 20).ToList();
-                    foreach (var key in oldestKeys)
-                    {
-                        _processNameCache.Remove(key);
-                    }
-                }
-
-                Debug.WriteLine($"[Cleanup] Process cache now has {_processNameCache.Count} entries");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Cleanup] Error in process cache cleanup: {ex.Message}");
-            }
-        }
-
-        // 6. Input device cache cleanup
-        private void CleanupInputDeviceCache()
-        {
-            try
-            {
-                // Rebuild input device cache from scratch
-                _inputDeviceMap.Clear();
-                BuildInputDeviceCache();
-                Debug.WriteLine("[Cleanup] Rebuilt input device cache");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Cleanup] Error rebuilding input device cache: {ex.Message}");
-            }
-        }
-
-        // 7. Refresh audio device reference
-        private void RefreshAudioDeviceReference()
-        {
-            try
-            {
-                // Get fresh audio device reference
-                var newDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                _audioDevice = newDevice;
-                Debug.WriteLine("[Cleanup] Refreshed audio device reference");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Cleanup] Error refreshing audio device: {ex.Message}");
-            }
-        }
-
-        // 8. Improved CleanupDeadSessions method (replace existing)
-        private void CleanupDeadSessions()
-        {
-            var processIds = new HashSet<int>();
-
-            try
-            {
-                var processes = Process.GetProcesses();
-                foreach (var proc in processes)
-                {
-                    try
-                    {
-                        if (proc?.Id > 0)
-                        {
-                            processIds.Add(proc.Id);
-                        }
-                    }
-                    catch { }
-                    finally
-                    {
-                        proc?.Dispose(); // Each Process object needs to be disposed
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Error] Failed to enumerate processes: {ex.Message}");
-                return;
-            }
-
-            // Clean process name cache
-            var deadPids = _processNameCache.Keys.Where(pid => !processIds.Contains(pid)).ToList();
-            foreach (var pid in deadPids)
-            {
-                _processNameCache.Remove(pid);
-            }
-
-            // CRITICAL FIX: Properly release COM objects when cleaning session cache
-            if (_sessionIdCache.Count > 20) // Reduce cache size more aggressively
-            {
-                var sessionsToRemove = _sessionIdCache.Take(_sessionIdCache.Count - 15).ToList();
-
-                foreach (var sessionTuple in sessionsToRemove)
-                {
-                    try
-                    {
-                        // Check if session is still valid before releasing
-                        if (sessionTuple.session != null)
-                        {
-                            try
-                            {
-                                var testPid = sessionTuple.session.GetProcessID; // Test if still valid
-                                if (!processIds.Contains((int)testPid))
-                                {
-                                    // Process is dead, safe to release
-                                    ReleaseComObject(sessionTuple.session);
-                                }
-                            }
-                            catch
-                            {
-                                // Session is invalid, release it
-                                ReleaseComObject(sessionTuple.session);
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[Error] Failed to release session COM object: {ex.Message}");
-                    }
-                }
-
-                _sessionIdCache = _sessionIdCache.Skip(_sessionIdCache.Count - 15).ToList();
-            }
-
-            Debug.WriteLine($"[Cleanup] Process cache: {_processNameCache.Count}, Session cache: {_sessionIdCache.Count}");
-        }
-        private bool TryConnectToSavedPort()
-        {
-            try
-            {
-                if (_isConnected && !_serialDisconnected)
-                {
-                    return true;
-                }
-
-                // If user manually selected a port, use that instead of saved port
-                string portToTry;
-                if (!string.IsNullOrEmpty(_userSelectedPort))
-                {
-                    portToTry = _userSelectedPort;
-                    Debug.WriteLine($"[AutoConnect] Using user-selected port: {portToTry}");
-                }
-                else
-                {
-                    var settings = LoadSettingsFromDisk();
-                    if (string.IsNullOrWhiteSpace(settings?.PortName))
-                    {
-                        Debug.WriteLine("[AutoConnect] No saved port name");
-                        return false;
-                    }
-                    portToTry = settings.PortName;
-                    Debug.WriteLine($"[AutoConnect] Using saved port: {portToTry}");
-                }
-
-                LoadAvailablePorts();
-
-                var availablePorts = SerialPort.GetPortNames();
-                if (!availablePorts.Contains(portToTry))
-                {
-                    Debug.WriteLine($"[AutoConnect] Port '{portToTry}' not available. Available: [{string.Join(", ", availablePorts)}]");
-                    return false;
-                }
-
-                // Update ComboBox to show the port we're connecting to
-                Dispatcher.Invoke(() =>
-                {
-                    ComPortSelector.SelectedItem = portToTry;
-                });
-
-                InitSerial(portToTry, 9600);
-
-                // Clear user selected port after successful connection
-                if (_isConnected && !_serialDisconnected)
-                {
-                    _userSelectedPort = string.Empty;
-                }
-
-                return _isConnected && !_serialDisconnected;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[AutoConnect] Exception: {ex.Message}");
-                return false;
-            }
-        }
-        private void LoadSavedPortName()
-        {
-            try
-            {
-                var settings = LoadSettingsFromDisk();
-                if (!string.IsNullOrWhiteSpace(settings?.PortName))
-                {
-                    _lastConnectedPort = settings.PortName;
-                    Debug.WriteLine($"[Settings] Loaded saved port name: {_lastConnectedPort}");
-                }
-                else
-                {
-                    Debug.WriteLine("[Settings] No saved port name found");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ERROR] Failed to load saved port name: {ex.Message}");
-            }
-        }
-
-        private void LoadSettingsWithoutSerialConnection()
-        {
-            try
-            {
-                var settings = LoadSettingsFromDisk();
-                _appSettings = settings ?? new AppSettings();
-
-                // Apply UI settings
-                ApplyTheme(_appSettings.IsDarkTheme ? "Dark" : "Light");
-                InvertSliderCheckBox.IsChecked = _appSettings.IsSliderInverted;
-                ShowSlidersCheckBox.IsChecked = _appSettings.VuMeters;
-
-                SetMeterVisibilityForAll(_appSettings.VuMeters);
-                DisableSmoothingCheckBox.IsChecked = _appSettings.DisableSmoothing;
-
-                // Validate overlay position using virtual screen bounds (multi-monitor support)
-                Debug.WriteLine($"[Settings] Initial overlay position from file: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
-
-                if (!IsPositionValid(_appSettings.OverlayX, _appSettings.OverlayY))
-                {
-                    Debug.WriteLine($"[Settings] Position ({_appSettings.OverlayX}, {_appSettings.OverlayY}) is outside virtual screen bounds, resetting to default");
-                    _appSettings.OverlayX = 100;
-                    _appSettings.OverlayY = 100;
-                }
-                else
-                {
-                    Debug.WriteLine($"[Settings] Position ({_appSettings.OverlayX}, {_appSettings.OverlayY}) is valid for multi-monitor setup");
-                }
-
-                if (_appSettings.OverlayOpacity <= 0 || _appSettings.OverlayOpacity > 1)
-                {
-                    _appSettings.OverlayOpacity = 0.85;
-                }
-
-                Debug.WriteLine($"[Settings] Final overlay settings - Enabled: {_appSettings.OverlayEnabled}, Position: ({_appSettings.OverlayX}, {_appSettings.OverlayY}), Opacity: {_appSettings.OverlayOpacity}, Timeout: {_appSettings.OverlayTimeoutSeconds}");
-
-                // Handle startup settings
-                StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
-                StartOnBootCheckBox.Unchecked -= StartOnBootCheckBox_Unchecked;
-
-                bool isInStartup = IsStartupEnabled();
-                _appSettings.StartOnBoot = isInStartup;
-                StartOnBootCheckBox.IsChecked = isInStartup;
-
-                StartOnBootCheckBox.Checked += StartOnBootCheckBox_Checked;
-                StartOnBootCheckBox.Unchecked += StartOnBootCheckBox_Unchecked;
-
-                StartMinimizedCheckBox.IsChecked = _appSettings.StartMinimized;
-                StartMinimizedCheckBox.Checked += StartMinimizedCheckBox_Checked;
-
-                // Generate sliders from saved settings
-                if (_appSettings.SliderTargets != null && _appSettings.SliderTargets.Count > 0)
-                {
-                    _expectedSliderCount = _appSettings.SliderTargets.Count;
-                    GenerateSliders(_appSettings.SliderTargets.Count);
-                }
-                else
-                {
-                    _expectedSliderCount = 4;
-                    GenerateSliders(4);
-                }
-
-                _hasLoadedInitialSettings = true;
-
-                foreach (var ctrl in _channelControls)
-                    ctrl.SetMeterVisibility(_appSettings.VuMeters);
-
-                // If overlay is enabled and autohide is disabled, show it immediately after startup
-                if (_appSettings.OverlayEnabled && _appSettings.OverlayTimeoutSeconds == AppSettings.OverlayNoTimeout)
-                {
-                    // Delay slightly to ensure everything is loaded
-                    var startupTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
-                    startupTimer.Tick += (s, e) =>
-                    {
-                        startupTimer.Stop();
-                        ShowVolumeOverlay();
-                        Debug.WriteLine("[Startup] Overlay shown automatically (autohide disabled)");
-                    };
-                    startupTimer.Start();
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ERROR] Failed to load settings without serial: {ex.Message}");
-                _expectedSliderCount = 4;
-                GenerateSliders(4);
-                _hasLoadedInitialSettings = true;
-            }
-        }
 
         private static void SetDisplayIcon()
         {
@@ -1149,14 +558,14 @@ namespace DeejNG
                     return;
                 }
 
-                //DisplayIcon == "dfshim.dll,2" => 
+                //DisplayIcon == "dfshim.dll,2" =>
                 var myUninstallKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall");
                 string[]? mySubKeyNames = myUninstallKey?.GetSubKeyNames();
                 for (int i = 0; i < mySubKeyNames?.Length; i++)
                 {
                     RegistryKey? myKey = myUninstallKey?.OpenSubKey(mySubKeyNames[i], true);
                     // ClickOnce(Publish)
-                    // Publish -> Settings -> Options 
+                    // Publish -> Settings -> Options
                     // Publish Options -> Description -> Product name (is your DisplayName)
                     var displayName = (string?)myKey?.GetValue("DisplayName");
                     if (displayName?.Contains("YourApp") == true)
@@ -1169,7 +578,6 @@ namespace DeejNG
                 DeejNG.Settings.Default.Save();
             }
             catch { }
-
         }
 
         private void ApplyInputDeviceVolume(string deviceName, float level, bool isMuted)
@@ -1199,6 +607,8 @@ namespace DeejNG
             }
         }
 
+      
+
         private void ApplyOutputDeviceVolume(string deviceName, float level, bool isMuted)
         {
             if (!_outputDeviceMap.TryGetValue(deviceName.ToLowerInvariant(), out var spkr))
@@ -1225,41 +635,6 @@ namespace DeejNG
                     Debug.WriteLine($"[ERROR] Setting output device volume for '{deviceName}': {ex.Message}");
                     _outputDeviceMap.Remove(deviceName.ToLowerInvariant());
                 }
-            }
-        }
-
-        // Break out the input volume handling logic to a separate method to simplify the main method
-        private void ApplyInputVolume(ChannelControl ctrl, string target, float level)
-        {
-            try
-            {
-                if (!_inputDeviceMap.TryGetValue(target, out var mic))
-                {
-                    mic = new MMDeviceEnumerator()
-                        .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-                        .FirstOrDefault(d => d.FriendlyName.Equals(target, StringComparison.OrdinalIgnoreCase));
-
-                    if (mic != null)
-                    {
-                        _inputDeviceMap[target] = mic;
-                    }
-                }
-
-                if (mic != null)
-                {
-                    float previous = _lastInputVolume.TryGetValue(target, out var lastVol) ? lastVol : -1f;
-
-                    if (Math.Abs(previous - level) > 0.01f)
-                    {
-                        mic.AudioEndpointVolume.Mute = ctrl.IsMuted || level <= 0.01f;
-                        mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
-                        _lastInputVolume[target] = level;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ERROR] Setting mic volume: {ex.Message}");
             }
         }
 
@@ -1307,7 +682,6 @@ namespace DeejNG
             }
         }
 
-
         private void ApplyThemeFallback(string theme)
         {
             isDarkTheme = theme == "Dark";
@@ -1343,8 +717,6 @@ namespace DeejNG
             }
         }
 
-
-
         private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level)
         {
             // Simple check - don't apply volumes until we're ready
@@ -1374,11 +746,11 @@ namespace DeejNG
                             var now = DateTime.Now;
                             if ((now - _lastUnmappedMeterUpdate) < UNMAPPED_THROTTLE_INTERVAL)
                             {
-                               // continue; // Skip this update entirely
-                               // removed as this makes fast movements unresponsive
+                                // continue; // Skip this update entirely
+                                // removed as this makes fast movements unresponsive
                             }
                             _lastUnmappedMeterUpdate = now;
-                            
+
                             var mappedApps = GetAllMappedApplications();
                             mappedApps.Remove("unmapped"); // Don't exclude unmapped from itself
 
@@ -1396,6 +768,7 @@ namespace DeejNG
                 }
             }
         }
+
         private void AudioEndpointVolume_OnVolumeNotification(AudioVolumeNotificationData data)
         {
             Dispatcher.Invoke(() =>
@@ -1405,12 +778,10 @@ namespace DeejNG
 
                 if (systemControl != null)
                 {
-
                     systemControl.SetMuted(data.Muted);
                 }
                 else
                 {
-
                 }
             });
         }
@@ -1465,10 +836,161 @@ namespace DeejNG
             }
         }
 
+      
+
+        private void CleanupEventHandlers()
+        {
+            try
+            {
+                var handlersToRemove = new List<string>();
+
+                foreach (var kvp in _registeredHandlers)
+                {
+                    try
+                    {
+                        // Test if the handler is still valid by checking the target
+                        var currentTargets = GetCurrentTargets();
+                        if (!currentTargets.Contains(kvp.Key))
+                        {
+                            handlersToRemove.Add(kvp.Key);
+                        }
+                    }
+                    catch
+                    {
+                        handlersToRemove.Add(kvp.Key);
+                    }
+                }
+
+                foreach (var target in handlersToRemove)
+                {
+                    _registeredHandlers.Remove(target);
+                    Debug.WriteLine($"[Cleanup] Removed stale event handler for {target}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Cleanup] Error cleaning event handlers: {ex.Message}");
+            }
+        }
+
+
+        private void CleanupInputDeviceCache()
+        {
+            try
+            {
+                // Rebuild input device cache from scratch
+                _inputDeviceMap.Clear();
+                BuildInputDeviceCache();
+                Debug.WriteLine("[Cleanup] Rebuilt input device cache");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Cleanup] Error rebuilding input device cache: {ex.Message}");
+            }
+        }
+
+        private void CleanupProcessCache()
+        {
+            try
+            {
+                // More aggressive - keep only last 30 processes instead of 50
+                if (_processNameCache.Count > 30)
+                {
+                    var oldestKeys = _processNameCache.Keys.Take(_processNameCache.Count - 20).ToList();
+                    foreach (var key in oldestKeys)
+                    {
+                        _processNameCache.Remove(key);
+                    }
+                }
+
+                Debug.WriteLine($"[Cleanup] Process cache now has {_processNameCache.Count} entries");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Cleanup] Error in process cache cleanup: {ex.Message}");
+            }
+        }
+
+        private void CleanupSessionCacheAggressively()
+        {
+            try
+            {
+                // Reduce max sessions from 25 to 15
+                const int MAX_SESSIONS = 15;
+
+                if (_sessionIdCache.Count > MAX_SESSIONS)
+                {
+                    var sessionsToRemove = _sessionIdCache.Take(_sessionIdCache.Count - MAX_SESSIONS).ToList();
+
+                    foreach (var sessionTuple in sessionsToRemove)
+                    {
+                        try
+                        {
+                            ReleaseComObject(sessionTuple.session);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[Cleanup] Failed to release COM object: {ex.Message}");
+                        }
+                    }
+
+                    _sessionIdCache = _sessionIdCache.Skip(_sessionIdCache.Count - MAX_SESSIONS).ToList();
+                    Debug.WriteLine($"[Cleanup] Reduced session cache to {_sessionIdCache.Count} items");
+                }
+
+                // Also clean up invalid sessions
+                var validSessions = new List<(AudioSessionControl session, string sessionId, string instanceId)>();
+                foreach (var sessionTuple in _sessionIdCache)
+                {
+                    try
+                    {
+                        if (sessionTuple.session != null)
+                        {
+                            // Test if session is still valid
+                            var test = sessionTuple.session.GetProcessID;
+                            validSessions.Add(sessionTuple);
+                        }
+                    }
+                    catch
+                    {
+                        // Session is invalid, release it
+                        try
+                        {
+                            if (sessionTuple.session != null)
+                                ReleaseComObject(sessionTuple.session);
+                        }
+                        catch { }
+                    }
+                }
+
+                _sessionIdCache = validSessions;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Cleanup] Error in session cache cleanup: {ex.Message}");
+            }
+        }
+
         private void ComPortSelector_DropDownOpened(object sender, EventArgs e)
         {
             Debug.WriteLine("[UI] COM port dropdown opened, refreshing ports...");
             LoadAvailablePorts();
+        }
+
+        private void ComPortSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (ComPortSelector.SelectedItem is string selectedPort)
+            {
+                _userSelectedPort = selectedPort;
+                Debug.WriteLine($"[UI] User selected port: {selectedPort}");
+
+                // If user manually disconnected and now selects a port, clear the manual disconnect flag
+                if (_manualDisconnect)
+                {
+                    Debug.WriteLine("[UI] User selected new port after manual disconnect - clearing manual disconnect flag");
+                    _manualDisconnect = false;
+                }
+            }
         }
 
         private void Connect_Click(object sender, RoutedEventArgs e)
@@ -1526,48 +1048,8 @@ namespace DeejNG
             }
         }
 
-        // Add this new method
-        private void ManualDisconnect()
-        {
-            try
-            {
-                Debug.WriteLine("[Manual] User initiated manual disconnect");
-
-                // Set flag to prevent automatic reconnection
-                _manualDisconnect = true;
-
-                // Stop the auto-reconnect timer
-                if (_serialReconnectTimer.IsEnabled)
-                {
-                    _serialReconnectTimer.Stop();
-                    Debug.WriteLine("[Manual] Stopped auto-reconnect timer");
-                }
-
-                // Close the serial port
-                if (_serialPort != null && _serialPort.IsOpen)
-                {
-                    _serialPort.Close();
-                    _serialPort.DataReceived -= SerialPort_DataReceived;
-                    _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
-                }
-
-                _isConnected = false;
-                _serialDisconnected = true;
-                _serialPortFullyInitialized = false;
-                _allowVolumeApplication = false;
-
-                UpdateConnectionStatus();
-
-                Debug.WriteLine("[Manual] Manual disconnect completed");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ERROR] Failed to disconnect manually: {ex.Message}");
-            }
-        }
         private void CreateNotifyIconContextMenu()
         {
-
             try
             {
                 ContextMenu contextMenu = new ContextMenu();
@@ -1591,9 +1073,10 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
-
             }
         }
+
+     
 
         private void DisableSmoothingCheckBox_Checked(object sender, RoutedEventArgs e)
         {
@@ -1621,7 +1104,30 @@ namespace DeejNG
             }
         }
 
-        // Replace your EnableStartup method in MainWindow.xaml.cs with this:
+        private void Disconnect_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_serialPort != null && _serialPort.IsOpen)
+                {
+                    _serialPort.Close();
+                    _serialPort.DataReceived -= SerialPort_DataReceived;
+                    _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
+                }
+
+                _isConnected = false;
+                _serialDisconnected = true;
+                _serialPortFullyInitialized = false;
+
+                UpdateConnectionStatus();
+
+                Debug.WriteLine("[Manual] User disconnected serial port");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Failed to disconnect: {ex.Message}");
+            }
+        }
 
         private void EnableStartup()
         {
@@ -1652,10 +1158,99 @@ namespace DeejNG
             }
         }
 
+     
         private async void ExitMenuItem_Click(object sender, RoutedEventArgs e)
         {
-
             Application.Current.Shutdown();
+        }
+
+        private AudioSessionControl? FindSessionOptimized(SessionCollection sessions, string targetName)
+        {
+            try
+            {
+                // Limit search to prevent hanging but check enough to find the session
+                int maxSessions = Math.Min(sessions.Count, 20); // Increased from 10
+
+                for (int i = 0; i < maxSessions; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        if (session == null) continue;
+
+                        int pid = (int)session.GetProcessID;
+                        if (pid <= 4) continue;
+
+                        if (_processNameCache.TryGetValue(pid, out string procName))
+                        {
+                            if (procName == targetName) return session;
+                        }
+                        else
+                        {
+                            try
+                            {
+                                using (var process = Process.GetProcessById(pid))
+                                {
+                                    if (process?.ProcessName?.ToLowerInvariant() == targetName)
+                                    {
+                                        _processNameCache[pid] = targetName;
+                                        return session;
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                                _processNameCache[pid] = "";
+                            }
+                        }
+                    }
+                    catch (ArgumentException) { continue; }
+                    catch { continue; }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Finding session optimized: {ex.Message}");
+            }
+
+            return null;
+        }
+
+        private void ForceCleanupTimer_Tick(object sender, EventArgs e)
+        {
+            if (_isClosing) return;
+
+            try
+            {
+                Debug.WriteLine("[ForceCleanup] Starting aggressive cleanup...");
+                _audioService?.ForceCleanup();
+                AudioUtilities.ForceCleanup();
+
+                // More frequent and aggressive cleanup
+                CleanupSessionCacheAggressively();
+                CleanupProcessCache();
+                CleanupInputDeviceCache();
+                CleanupEventHandlers();
+
+                // IMPROVED: Reset serial communication state periodically to prevent corruption
+                if ((DateTime.Now - _lastForcedCleanup).TotalMinutes > 30) // Every 30 minutes
+                {
+                    Debug.WriteLine("[ForceCleanup] Performing periodic state reset...");
+                    PerformPeriodicStateReset();
+                }
+
+                // Force COM object cleanup
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+
+                _lastForcedCleanup = DateTime.Now;
+                Debug.WriteLine("[ForceCleanup] Cleanup completed");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ForceCleanup] Error: {ex.Message}");
+            }
         }
 
         private void GenerateSliders(int count)
@@ -1701,7 +1296,7 @@ namespace DeejNG
 
                 if (i < savedInputModes.Count)
                 {
-                   // control.InputModeCheckBox.IsChecked = savedInputModes[i];
+                    // control.InputModeCheckBox.IsChecked = savedInputModes[i];
                 }
 
                 control.SetMuted(false);
@@ -1714,7 +1309,6 @@ namespace DeejNG
                 {
                     if (!_allowVolumeApplication) return;
                     ApplyVolumeToTargets(control, targets, vol);
-                 
                 };
 
                 control.SessionDisconnected += (sender, target) =>
@@ -1736,15 +1330,133 @@ namespace DeejNG
             // DON'T start meters or sync mute states until first data received
             Debug.WriteLine("[Init] Sliders generated, waiting for first hardware data before completing initialization");
         }
-        // Add a method to reset calibration state (call this when serial disconnects)
-        private void ResetCalibrationState()
+
+        //private float GetUnmappedApplicationsPeakLevel(HashSet<string> mappedApplications)
+        //{
+        //    // Minimal caching for maximum responsiveness
+        //    if ((DateTime.Now - _lastUnmappedPeakCalculation).TotalMilliseconds < 25) // Very minimal caching
+        //    {
+        //        return _cachedUnmappedPeak;
+        //    }
+
+        //    float highestPeak = 0;
+
+        //    try
+        //    {
+        //        var sessions = _cachedSessionsForMeters;
+        //        if (sessions == null) return 0;
+
+        //        // Process more sessions for better responsiveness
+        //        int maxSessions = Math.Min(sessions.Count, 15); // Process more sessions for completeness
+
+        //        for (int i = 0; i < maxSessions; i++)
+        //        {
+        //            var session = sessions[i];
+        //            try
+        //            {
+        //                if (session == null) continue;
+
+        //                int pid = (int)session.GetProcessID;
+
+        //                // Skip system sessions and low PIDs
+        //                if (pid <= 4) continue;
+
+        //                string processName = AudioUtilities.GetProcessNameSafely(pid);
+        //                _processNameCache[pid] = processName;
+
+        //                // Skip if we couldn't get a valid process name
+        //                if (string.IsNullOrEmpty(processName)) continue;
+
+        //                // Skip if this application is mapped to a slider
+        //                if (mappedApplications.Contains(processName)) continue;
+
+        //                // Get the peak level for this unmapped session
+        //                try
+        //                {
+        //                    float peak = session.AudioMeterInformation.MasterPeakValue;
+        //                    if (peak > highestPeak)
+        //                        highestPeak = peak;
+        //                }
+        //                catch
+        //                {
+        //                    // Session became invalid - ignore
+        //                }
+        //            }
+        //            catch
+        //            {
+        //                continue;
+        //            }
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        Debug.WriteLine($"[ERROR] Getting unmapped peak levels: {ex.Message}");
+        //    }
+
+        //    _cachedUnmappedPeak = highestPeak;
+        //    _lastUnmappedPeakCalculation = DateTime.Now;
+
+        //    return highestPeak;
+        //}
+
+        // Optimized unmapped peak level detection
+        private float GetUnmappedApplicationsPeakLevelOptimized(HashSet<string> mappedApplications, SessionCollection sessions)
         {
-            _isCalibrating = false;
-            _hasReceivedInitialData = false;
-            _initialSliderValues.Clear();
-            _calibrationStartTime = DateTime.MinValue;
-            Debug.WriteLine("[Calibration] Reset calibration state");
+            float highestPeak = 0;
+
+            try
+            {
+                // Check fewer sessions but still get representative data
+                int maxSessions = Math.Min(sessions.Count, 15);
+
+                for (int i = 0; i < maxSessions; i++)
+                {
+                    try
+                    {
+                        var session = sessions[i];
+                        if (session == null) continue;
+
+                        int pid = (int)session.GetProcessID;
+                        if (pid <= 4) continue;
+
+                        // Use centralized method for consistency
+                        string processName = AudioUtilities.GetProcessNameSafely(pid);
+
+                        if (string.IsNullOrEmpty(processName))
+                        {
+                            continue;
+                        }
+
+                        // Check if this process is in mapped applications
+                        if (mappedApplications.Contains(processName))
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            float peak = session.AudioMeterInformation.MasterPeakValue;
+                            if (peak > 0.01f) // Only count meaningful audio levels
+                            {
+                                if (peak > highestPeak)
+                                {
+                                    highestPeak = peak;
+                                }
+                            }
+                        }
+                        catch { continue; }
+                    }
+                    catch { continue; }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Getting unmapped peak levels optimized: {ex.Message}");
+            }
+
+            return highestPeak;
         }
+
         // Method to handle serial disconnection
         private void HandleSerialDisconnection()
         {
@@ -1800,6 +1512,7 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] Failed to cleanup serial port: {ex.Message}");
             }
         }
+
         private void HandleSliderData(string data)
         {
             if (string.IsNullOrWhiteSpace(data)) return;
@@ -1831,7 +1544,7 @@ namespace DeejNG
 
                             // Save current targets before regenerating
                             var currentTargets = _channelControls.Select(c => c.AudioTargets).ToList();
-                          //  var currentInputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList();
+                            //  var currentInputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList();
 
                             _expectedSliderCount = parts.Length;
                             GenerateSliders(parts.Length);
@@ -1840,7 +1553,7 @@ namespace DeejNG
                             for (int i = 0; i < Math.Min(currentTargets.Count, _channelControls.Count); i++)
                             {
                                 _channelControls[i].AudioTargets = currentTargets[i];
-                             //   _channelControls[i].InputModeCheckBox.IsChecked = currentInputModes[i];
+                                //   _channelControls[i].InputModeCheckBox.IsChecked = currentInputModes[i];
                             }
 
                             // Save the new configuration
@@ -1917,6 +1630,7 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] Parsing slider data: {ex.Message}");
             }
         }
+
         private void InitSerial(string portName, int baudRate)
         {
             try
@@ -1950,7 +1664,7 @@ namespace DeejNG
                     {
                         _serialPort.DataReceived -= SerialPort_DataReceived;
                         _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
-                        
+
                         if (_serialPort.IsOpen)
                         {
                             _serialPort.DiscardInBuffer();
@@ -2059,8 +1773,29 @@ namespace DeejNG
 
         private void InvertSlider_Unchecked(object sender, RoutedEventArgs e)
         {
-
             SaveInvertState();
+        }
+
+        private bool IsPositionValid(double x, double y)
+        {
+            // Use virtual screen bounds to support multi-monitor setups
+            var virtualLeft = SystemParameters.VirtualScreenLeft;
+            var virtualTop = SystemParameters.VirtualScreenTop;
+            var virtualWidth = SystemParameters.VirtualScreenWidth;
+            var virtualHeight = SystemParameters.VirtualScreenHeight;
+
+            var virtualRight = virtualLeft + virtualWidth;
+            var virtualBottom = virtualTop + virtualHeight;
+
+            // Allow position anywhere within virtual screen bounds (with small margin)
+            bool isValid = x >= virtualLeft - 100 &&
+                           x <= virtualRight - 100 &&
+                           y >= virtualTop - 50 &&
+                           y <= virtualBottom - 50;
+
+            Debug.WriteLine($"[Position] Checking position ({x}, {y}) against virtual bounds ({virtualLeft}, {virtualTop}) to ({virtualRight}, {virtualBottom}) - Valid: {isValid}");
+
+            return isValid;
         }
 
         private bool IsStartupEnabled()
@@ -2117,48 +1852,191 @@ namespace DeejNG
                 ComPortSelector.SelectedIndex = -1;
             }
         }
-        private void LoadSettings()
+
+        private void LoadSavedPortName()
         {
-            var settings = LoadSettingsFromDisk();
-            if (!string.IsNullOrWhiteSpace(settings?.PortName))
+            try
             {
-                InitSerial(settings.PortName, 9600);
+                var settings = LoadSettingsFromDisk();
+                if (!string.IsNullOrWhiteSpace(settings?.PortName))
+                {
+                    _lastConnectedPort = settings.PortName;
+                    Debug.WriteLine($"[Settings] Loaded saved port name: {_lastConnectedPort}");
+                }
+                else
+                {
+                    Debug.WriteLine("[Settings] No saved port name found");
+                }
             }
-
-            ApplyTheme(settings?.IsDarkTheme == true ? "Dark" : "Light");
-            InvertSliderCheckBox.IsChecked = settings?.IsSliderInverted ?? false;
-            ShowSlidersCheckBox.IsChecked = settings?.VuMeters ?? true;
-
-            bool showMeters = settings?.VuMeters ?? true;
-            ShowSlidersCheckBox.IsChecked = showMeters;
-            SetMeterVisibilityForAll(showMeters);
-            DisableSmoothingCheckBox.IsChecked = settings?.DisableSmoothing ?? false;
-
-            // ✅ Unsubscribe events temporarily
-            StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
-            StartOnBootCheckBox.Unchecked -= StartOnBootCheckBox_Unchecked;
-
-            bool isInStartup = IsStartupEnabled();
-            _appSettings.StartOnBoot = isInStartup;
-            StartOnBootCheckBox.IsChecked = isInStartup;
-
-            // ✅ Re-subscribe after setting the value
-            StartOnBootCheckBox.Checked += StartOnBootCheckBox_Checked;
-            StartOnBootCheckBox.Unchecked += StartOnBootCheckBox_Unchecked;
-
-            StartMinimizedCheckBox.IsChecked = settings?.StartMinimized ?? false;
-            StartMinimizedCheckBox.Checked += StartMinimizedCheckBox_Checked;
-            foreach (var ctrl in _channelControls)
-                ctrl.SetMeterVisibility(showMeters);
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Failed to load saved port name: {ex.Message}");
+            }
         }
 
-      
+        //private void LoadSettings()
+        //{
+        //    var settings = LoadSettingsFromDisk();
+        //    if (!string.IsNullOrWhiteSpace(settings?.PortName))
+        //    {
+        //        InitSerial(settings.PortName, 9600);
+        //    }
+
+        //    ApplyTheme(settings?.IsDarkTheme == true ? "Dark" : "Light");
+        //    InvertSliderCheckBox.IsChecked = settings?.IsSliderInverted ?? false;
+        //    ShowSlidersCheckBox.IsChecked = settings?.VuMeters ?? true;
+
+        //    bool showMeters = settings?.VuMeters ?? true;
+        //    ShowSlidersCheckBox.IsChecked = showMeters;
+        //    SetMeterVisibilityForAll(showMeters);
+        //    DisableSmoothingCheckBox.IsChecked = settings?.DisableSmoothing ?? false;
+
+        //    // ✅ Unsubscribe events temporarily
+        //    StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
+        //    StartOnBootCheckBox.Unchecked -= StartOnBootCheckBox_Unchecked;
+
+        //    bool isInStartup = IsStartupEnabled();
+        //    _appSettings.StartOnBoot = isInStartup;
+        //    StartOnBootCheckBox.IsChecked = isInStartup;
+
+        //    // ✅ Re-subscribe after setting the value
+        //    StartOnBootCheckBox.Checked += StartOnBootCheckBox_Checked;
+        //    StartOnBootCheckBox.Unchecked += StartOnBootCheckBox_Unchecked;
+
+        //    StartMinimizedCheckBox.IsChecked = settings?.StartMinimized ?? false;
+        //    StartMinimizedCheckBox.Checked += StartMinimizedCheckBox_Checked;
+        //    foreach (var ctrl in _channelControls)
+        //        ctrl.SetMeterVisibility(showMeters);
+        //}
+
+        // Update LoadSettingsFromDisk to add debugging
+        private AppSettings LoadSettingsFromDisk()
+        {
+            try
+            {
+                if (File.Exists(SettingsPath))
+                {
+                    var json = File.ReadAllText(SettingsPath);
+                    Debug.WriteLine($"[Settings] Loading from: {SettingsPath}");
+
+                    _appSettings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayEnabled: {_appSettings.OverlayEnabled}");
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayPosition: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayOpacity: {_appSettings.OverlayOpacity}");
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayTimeoutSeconds: {_appSettings.OverlayTimeoutSeconds}");
+
+                    return _appSettings;
+                }
+                else
+                {
+                    Debug.WriteLine($"[Settings] Settings file does not exist: {SettingsPath}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Settings] Error loading settings: {ex.Message}");
+            }
+
+            _appSettings = new AppSettings();
+            Debug.WriteLine("[Settings] Using default AppSettings");
+            return _appSettings;
+        }
+        private void LoadSettingsWithoutSerialConnection()
+        {
+            try
+            {
+                var settings = LoadSettingsFromDisk();
+                _appSettings = settings ?? new AppSettings();
+
+                // Apply UI settings
+                ApplyTheme(_appSettings.IsDarkTheme ? "Dark" : "Light");
+                InvertSliderCheckBox.IsChecked = _appSettings.IsSliderInverted;
+                ShowSlidersCheckBox.IsChecked = _appSettings.VuMeters;
+
+                SetMeterVisibilityForAll(_appSettings.VuMeters);
+                DisableSmoothingCheckBox.IsChecked = _appSettings.DisableSmoothing;
+
+                // Validate overlay position using virtual screen bounds (multi-monitor support)
+                Debug.WriteLine($"[Settings] Initial overlay position from file: ({_appSettings.OverlayX}, {_appSettings.OverlayY})");
+
+                if (!IsPositionValid(_appSettings.OverlayX, _appSettings.OverlayY))
+                {
+                    Debug.WriteLine($"[Settings] Position ({_appSettings.OverlayX}, {_appSettings.OverlayY}) is outside virtual screen bounds, resetting to default");
+                    _appSettings.OverlayX = 100;
+                    _appSettings.OverlayY = 100;
+                }
+                else
+                {
+                    Debug.WriteLine($"[Settings] Position ({_appSettings.OverlayX}, {_appSettings.OverlayY}) is valid for multi-monitor setup");
+                }
+
+                if (_appSettings.OverlayOpacity <= 0 || _appSettings.OverlayOpacity > 1)
+                {
+                    _appSettings.OverlayOpacity = 0.85;
+                }
+
+                Debug.WriteLine($"[Settings] Final overlay settings - Enabled: {_appSettings.OverlayEnabled}, Position: ({_appSettings.OverlayX}, {_appSettings.OverlayY}), Opacity: {_appSettings.OverlayOpacity}, Timeout: {_appSettings.OverlayTimeoutSeconds}");
+
+                // Handle startup settings
+                StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
+                StartOnBootCheckBox.Unchecked -= StartOnBootCheckBox_Unchecked;
+
+                bool isInStartup = IsStartupEnabled();
+                _appSettings.StartOnBoot = isInStartup;
+                StartOnBootCheckBox.IsChecked = isInStartup;
+
+                StartOnBootCheckBox.Checked += StartOnBootCheckBox_Checked;
+                StartOnBootCheckBox.Unchecked += StartOnBootCheckBox_Unchecked;
+
+                StartMinimizedCheckBox.IsChecked = _appSettings.StartMinimized;
+                StartMinimizedCheckBox.Checked += StartMinimizedCheckBox_Checked;
+
+                // Generate sliders from saved settings
+                if (_appSettings.SliderTargets != null && _appSettings.SliderTargets.Count > 0)
+                {
+                    _expectedSliderCount = _appSettings.SliderTargets.Count;
+                    GenerateSliders(_appSettings.SliderTargets.Count);
+                }
+                else
+                {
+                    _expectedSliderCount = 4;
+                    GenerateSliders(4);
+                }
+
+                _hasLoadedInitialSettings = true;
+
+                foreach (var ctrl in _channelControls)
+                    ctrl.SetMeterVisibility(_appSettings.VuMeters);
+
+                // If overlay is enabled and autohide is disabled, show it immediately after startup
+                if (_appSettings.OverlayEnabled && _appSettings.OverlayTimeoutSeconds == AppSettings.OverlayNoTimeout)
+                {
+                    // Delay slightly to ensure everything is loaded
+                    var startupTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
+                    startupTimer.Tick += (s, e) =>
+                    {
+                        startupTimer.Stop();
+                        ShowVolumeOverlay();
+                        Debug.WriteLine("[Startup] Overlay shown automatically (autohide disabled)");
+                    };
+                    startupTimer.Start();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Failed to load settings without serial: {ex.Message}");
+                _expectedSliderCount = 4;
+                GenerateSliders(4);
+                _hasLoadedInitialSettings = true;
+            }
+        }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             SliderScrollViewer.Visibility = Visibility.Visible;
             StartOnBootCheckBox.IsChecked = _appSettings.StartOnBoot;
-          //  DebugAudioSessions(); // Add this line
+            //  DebugAudioSessions(); // Add this line
         }
 
         private void MainWindow_StateChanged(object sender, EventArgs e)
@@ -2173,6 +2051,46 @@ namespace DeejNG
             {
                 // Ensure the NotifyIcon is hidden when the window is not minimized
                 MyNotifyIcon.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        // Add this new method
+        private void ManualDisconnect()
+        {
+            try
+            {
+                Debug.WriteLine("[Manual] User initiated manual disconnect");
+
+                // Set flag to prevent automatic reconnection
+                _manualDisconnect = true;
+
+                // Stop the auto-reconnect timer
+                if (_serialReconnectTimer.IsEnabled)
+                {
+                    _serialReconnectTimer.Stop();
+                    Debug.WriteLine("[Manual] Stopped auto-reconnect timer");
+                }
+
+                // Close the serial port
+                if (_serialPort != null && _serialPort.IsOpen)
+                {
+                    _serialPort.Close();
+                    _serialPort.DataReceived -= SerialPort_DataReceived;
+                    _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
+                }
+
+                _isConnected = false;
+                _serialDisconnected = true;
+                _serialPortFullyInitialized = false;
+                _allowVolumeApplication = false;
+
+                UpdateConnectionStatus();
+
+                Debug.WriteLine("[Manual] Manual disconnect completed");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Failed to disconnect manually: {ex.Message}");
             }
         }
 
@@ -2193,6 +2111,86 @@ namespace DeejNG
                 this.Hide();
             }
         }
+
+        private void PerformMaintenance()
+        {
+            // Reset connection states and sync mute states less frequently
+            foreach (var control in _channelControls)
+            {
+                control.ResetConnectionState();
+            }
+            SyncMuteStates();
+
+            // Clean up collections less frequently but more thoroughly
+            CleanupSessionCacheAggressively();
+            CleanupProcessCache();
+
+            // Force a small GC if memory pressure is high
+            if (GC.GetTotalMemory(false) > 50_000_000) // 50MB threshold
+            {
+                GC.Collect(0, GCCollectionMode.Optimized);
+            }
+        }
+
+        private void PerformPeriodicStateReset()
+        {
+            try
+            {
+                // Clear and reset serial buffer
+                _serialBuffer.Clear();
+
+                // Reset volume application flags to ensure responsiveness
+                if (_isConnected && !_serialDisconnected)
+                {
+                    _allowVolumeApplication = true;
+                }
+
+                // Refresh audio device reference
+                try
+                {
+                    _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                }
+                catch { }
+
+                // Force a complete mute state resync
+                if (_allowVolumeApplication && _channelControls.Count > 0)
+                {
+                    SyncMuteStates();
+                }
+
+                Debug.WriteLine("[PeriodicReset] State reset completed");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[PeriodicReset] Error during state reset: {ex.Message}");
+            }
+        }
+
+        private void PositionSaveTimer_Tick(object sender, EventArgs e)
+        {
+            _positionSaveTimer.Stop();
+
+            // Save to disk on background thread
+            Task.Run(() =>
+            {
+                try
+                {
+                    var json = JsonSerializer.Serialize(_appSettings, new JsonSerializerOptions { WriteIndented = true });
+                    var dir = Path.GetDirectoryName(SettingsPath);
+                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+                    File.WriteAllText(SettingsPath, json);
+                    Debug.WriteLine("[Overlay] Position saved to disk (debounced)");
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ERROR] Failed to save overlay position: {ex.Message}");
+                }
+            });
+        }
+      
 
         private void RefreshPorts_Click(object sender, RoutedEventArgs e)
         {
@@ -2219,6 +2217,27 @@ namespace DeejNG
                 }
             }
         }
+
+        private void ReleaseComObject(object comObject)
+        {
+            if (comObject != null)
+            {
+                try
+                {
+                    int refCount;
+                    do
+                    {
+                        refCount = Marshal.ReleaseComObject(comObject);
+                    } while (refCount > 0);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[COM] Error releasing COM object: {ex.Message}");
+                }
+            }
+        }
+
+      
 
         private void SaveInvertState()
         {
@@ -2273,7 +2292,7 @@ namespace DeejNG
                         VuMeters = ShowSlidersCheckBox.IsChecked ?? true,
                         StartOnBoot = StartOnBootCheckBox.IsChecked ?? false,
                         StartMinimized = StartMinimizedCheckBox.IsChecked ?? false,
-                      //  InputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList(),
+                        //  InputModes = _channelControls.Select(c => c.InputModeCheckBox.IsChecked ?? false).ToList(),
                         DisableSmoothing = DisableSmoothingCheckBox.IsChecked ?? false,
 
                         // ✅ PRESERVE OVERLAY SETTINGS FROM _appSettings
@@ -2314,41 +2333,6 @@ namespace DeejNG
                 }
             }
         }
-        public void UpdateOverlaySettings(AppSettings newSettings)
-        {
-            // Preserve current position if overlay exists and is visible
-            if (_overlay != null && _overlay.IsVisible)
-            {
-                var currentX = Math.Round(_overlay.Left, 1);
-                var currentY = Math.Round(_overlay.Top, 1);
-
-                _appSettings.OverlayX = currentX;
-                _appSettings.OverlayY = currentY;
-            }
-            //else if (newSettings.OverlayX > 0 && newSettings.OverlayY > 0)
-            //{
-            //    _appSettings.OverlayX = newSettings.OverlayX;
-            //    _appSettings.OverlayY = newSettings.OverlayY;
-            //}
-            else if (IsPositionValid(newSettings.OverlayX, newSettings.OverlayY))
-            {
-                _appSettings.OverlayX = newSettings.OverlayX;
-                _appSettings.OverlayY = newSettings.OverlayY;
-            }
-            else
-            {
-                _appSettings.OverlayX = 100;
-                _appSettings.OverlayY = 100;
-            }
-
-            // Update all settings including text color
-            _appSettings.OverlayEnabled = newSettings.OverlayEnabled;
-            _appSettings.OverlayOpacity = newSettings.OverlayOpacity;
-            _appSettings.OverlayTimeoutSeconds = newSettings.OverlayTimeoutSeconds;
-            _appSettings.OverlayTextColor = newSettings.OverlayTextColor; // Updated property name
-
-            Debug.WriteLine($"[Overlay] Settings updated - Text Color: {_appSettings.OverlayTextColor}");
-        }
 
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
@@ -2374,7 +2358,7 @@ namespace DeejNG
                     // Try to salvage partial data by finding the last newline
                     string bufferContent = _serialBuffer.ToString();
                     int lastNewline = Math.Max(bufferContent.LastIndexOf('\n'), bufferContent.LastIndexOf('\r'));
-                    
+
                     if (lastNewline > 0)
                     {
                         _serialBuffer.Clear();
@@ -2405,7 +2389,7 @@ namespace DeejNG
                     }
 
                     string line = buffer.Substring(0, newLineIndex).Trim();
-                    
+
                     // Remove the processed line including any CR/LF characters
                     int removeLength = newLineIndex + 1;
                     if (buffer.Length > newLineIndex + 1)
@@ -2415,7 +2399,7 @@ namespace DeejNG
                         else if (buffer[newLineIndex] == '\n' && buffer[newLineIndex + 1] == '\r')
                             removeLength++;
                     }
-                    
+
                     _serialBuffer.Remove(0, removeLength);
 
                     // IMPROVED: More strict validation to prevent processing corrupt data
@@ -2429,7 +2413,6 @@ namespace DeejNG
                 if (_serialBuffer.Length == 0 && DateTime.Now.Minute % 5 == 0) // Every 5 minutes
                 {
                     _serialBuffer.Clear();
-                    
                 }
             }
             catch (IOException)
@@ -2446,7 +2429,6 @@ namespace DeejNG
             {
                 Debug.WriteLine($"[ERROR] Serial read: {ex.Message}");
                 _serialBuffer.Clear(); // Clear the buffer on unexpected errors
-               
             }
         }
 
@@ -2517,6 +2499,7 @@ namespace DeejNG
                 Debug.WriteLine($"[SerialReconnect] Failed to reconnect: {ex.Message}");
             }
         }
+
         private void SerialWatchdogTimer_Tick(object sender, EventArgs e)
         {
             if (_isClosing || !_isConnected || _serialDisconnected) return;
@@ -2583,6 +2566,7 @@ namespace DeejNG
                 Debug.WriteLine($"[SerialWatchdog] Error: {ex.Message}");
             }
         }
+
         private void SetMeterVisibilityForAll(bool show)
         {
             _metersEnabled = show;
@@ -2593,7 +2577,47 @@ namespace DeejNG
             }
         }
 
-        // In MainWindow.xaml.cs, modify SerialPort_DataReceived method:
+        private void SettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            var settingsWindow = new SettingsWindow();
+            settingsWindow.Owner = this;
+            settingsWindow.Show();  // Show as non-modal window (or ShowDialog() if you prefer modal)
+        }
+
+        private void SetupAutomaticSerialConnection()
+        {
+            var connectionAttempts = 0;
+            const int maxAttempts = 5;
+            var attemptTimer = new DispatcherTimer();
+
+            attemptTimer.Tick += (s, e) =>
+            {
+                connectionAttempts++;
+                Debug.WriteLine($"[AutoConnect] Attempt #{connectionAttempts}");
+
+                if (TryConnectToSavedPort())
+                {
+                    Debug.WriteLine("[AutoConnect] Successfully connected!");
+                    attemptTimer.Stop();
+                    return;
+                }
+
+                if (connectionAttempts >= maxAttempts)
+                {
+                    Debug.WriteLine($"[AutoConnect] Failed after {maxAttempts} attempts");
+                    attemptTimer.Stop();
+                    return;
+                }
+
+                // Increase interval for subsequent attempts
+                attemptTimer.Interval = TimeSpan.FromSeconds(Math.Min(2 * connectionAttempts, 10));
+            };
+
+            // Start first attempt after 2 seconds
+            attemptTimer.Interval = TimeSpan.FromSeconds(2);
+            attemptTimer.Start();
+        }
+      
         private void ShowHideMenuItem_Click(object sender, RoutedEventArgs e)
         {
             if (this.IsVisible)
@@ -2644,6 +2668,7 @@ namespace DeejNG
             _appSettings.StartOnBoot = true;
             SaveSettings();
         }
+
         private void StartOnBootCheckBox_Unchecked(object sender, RoutedEventArgs e)
         {
             if (_isInitializing) return;
@@ -2689,95 +2714,6 @@ namespace DeejNG
             };
 
             _sessionCacheTimer.Start();
-        }
-        
-        private void UpdateSessionCache()
-        {
-            var defaultDevice = new MMDeviceEnumerator()
-                .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-
-            _audioDevice = defaultDevice;
-            
-            // Process in smaller batches to reduce GC pressure
-            var sessions = defaultDevice.AudioSessionManager.Sessions;
-            int batchSize = Math.Min(sessions.Count, 15); // Process max 15 sessions
-
-            for (int i = 0; i < batchSize; i++)
-            {
-                var session = sessions[i];
-                try
-                {
-                    if (session == null) continue;
-                    
-                    int processId = (int)session.GetProcessID;
-                    string processName = AudioUtilities.GetProcessNameSafely(processId);
-                    _processNameCache[processId] = processName;
-                    
-                    if (!string.IsNullOrEmpty(processName))
-                    {
-                        // Update cache without creating unnecessary objects
-                        UpdateSessionCacheEntry(session, processName, processId);
-                    }
-                }
-                catch (ArgumentException)
-                {
-                    continue; // Session no longer valid
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[ERROR] Processing session in cache updater: {ex.Message}");
-                    continue;
-                }
-            }
-        }
-        
-        private void PerformMaintenance()
-        {
-            // Reset connection states and sync mute states less frequently
-            foreach (var control in _channelControls)
-            {
-                control.ResetConnectionState();
-            }
-            SyncMuteStates();
-            
-            // Clean up collections less frequently but more thoroughly
-            CleanupSessionCacheAggressively();
-            CleanupProcessCache();
-            
-            // Force a small GC if memory pressure is high
-            if (GC.GetTotalMemory(false) > 50_000_000) // 50MB threshold
-            {
-                GC.Collect(0, GCCollectionMode.Optimized);
-            }
-        }
-        
-        private void UpdateSessionCacheEntry(AudioSessionControl session, string processName, int processId)
-        {
-            try
-            {
-                string sessionId = session.GetSessionIdentifier?.ToLowerInvariant() ?? "";
-                string instanceId = session.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
-
-                // Update cache only if needed
-                bool found = false;
-                for (int i = 0; i < _sessionIdCache.Count; i++)
-                {
-                    if (_sessionIdCache[i].sessionId == sessionId && _sessionIdCache[i].instanceId == instanceId)
-                    {
-                        found = true;
-                        break;
-                    }
-                }
-
-                if (!found)
-                {
-                    _sessionIdCache.Add((session, sessionId, instanceId));
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ERROR] Updating session cache entry: {ex.Message}");
-            }
         }
 
         private void SyncMuteStates()
@@ -2832,13 +2768,13 @@ namespace DeejNG
                         if (!string.IsNullOrEmpty(procName))
                         {
                             // Check for process restarts
-                            if (sessionsByProcess.TryGetValue(procName, out var existingSession) && 
-                                sessionProcessIds.TryGetValue(procName, out var existingPid) && 
+                            if (sessionsByProcess.TryGetValue(procName, out var existingSession) &&
+                                sessionProcessIds.TryGetValue(procName, out var existingPid) &&
                                 existingPid != pid)
                             {
                                 Debug.WriteLine($"[Sync] Detected {procName} restart: PID {existingPid} -> {pid}");
                             }
-                            
+
                             sessionsByProcess[procName] = s;
                             sessionProcessIds[procName] = pid;
                         }
@@ -2946,6 +2882,7 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] In SyncMuteStates: {ex.Message}");
             }
         }
+
         private void ToggleTheme_Click(object sender, RoutedEventArgs e)
         {
             isDarkTheme = !isDarkTheme;
@@ -2965,30 +2902,70 @@ namespace DeejNG
                 // Force a complete visual refresh
                 this.InvalidateVisual();
                 this.UpdateLayout();
-
             }, DispatcherPriority.Render);
 
             SaveSettings();
         }
-        private void ReleaseComObject(object comObject)
+
+        private bool TryConnectToSavedPort()
         {
-            if (comObject != null)
+            try
             {
-                try
+                if (_isConnected && !_serialDisconnected)
                 {
-                    int refCount;
-                    do
+                    return true;
+                }
+
+                // If user manually selected a port, use that instead of saved port
+                string portToTry;
+                if (!string.IsNullOrEmpty(_userSelectedPort))
+                {
+                    portToTry = _userSelectedPort;
+                    Debug.WriteLine($"[AutoConnect] Using user-selected port: {portToTry}");
+                }
+                else
+                {
+                    var settings = LoadSettingsFromDisk();
+                    if (string.IsNullOrWhiteSpace(settings?.PortName))
                     {
-                        refCount = Marshal.ReleaseComObject(comObject);
-                    } while (refCount > 0);
+                        Debug.WriteLine("[AutoConnect] No saved port name");
+                        return false;
+                    }
+                    portToTry = settings.PortName;
+                    Debug.WriteLine($"[AutoConnect] Using saved port: {portToTry}");
                 }
-                catch (Exception ex)
+
+                LoadAvailablePorts();
+
+                var availablePorts = SerialPort.GetPortNames();
+                if (!availablePorts.Contains(portToTry))
                 {
-                    Debug.WriteLine($"[COM] Error releasing COM object: {ex.Message}");
+                    Debug.WriteLine($"[AutoConnect] Port '{portToTry}' not available. Available: [{string.Join(", ", availablePorts)}]");
+                    return false;
                 }
+
+                // Update ComboBox to show the port we're connecting to
+                Dispatcher.Invoke(() =>
+                {
+                    ComPortSelector.SelectedItem = portToTry;
+                });
+
+                InitSerial(portToTry, 9600);
+
+                // Clear user selected port after successful connection
+                if (_isConnected && !_serialDisconnected)
+                {
+                    _userSelectedPort = string.Empty;
+                }
+
+                return _isConnected && !_serialDisconnected;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AutoConnect] Exception: {ex.Message}");
+                return false;
             }
         }
-
         private void UpdateConnectionStatus()
         {
             string statusText;
@@ -3021,180 +2998,7 @@ namespace DeejNG
             Debug.WriteLine($"[Status] {statusText}");
         }
 
-        // NEW: Add disconnect functionality
-        private void Disconnect_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (_serialPort != null && _serialPort.IsOpen)
-                {
-                    _serialPort.Close();
-                    _serialPort.DataReceived -= SerialPort_DataReceived;
-                    _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
-                }
-
-                _isConnected = false;
-                _serialDisconnected = true;
-                _serialPortFullyInitialized = false;
-
-                UpdateConnectionStatus();
-
-                Debug.WriteLine("[Manual] User disconnected serial port");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ERROR] Failed to disconnect: {ex.Message}");
-            }
-        }
-        // Update your existing GetUnmappedApplicationsPeakLevel method in MainWindow.xaml.cs:
-
-        private float GetUnmappedApplicationsPeakLevel(HashSet<string> mappedApplications)
-        {
-            // Minimal caching for maximum responsiveness
-            if ((DateTime.Now - _lastUnmappedPeakCalculation).TotalMilliseconds < 25) // Very minimal caching
-            {
-                return _cachedUnmappedPeak;
-            }
-
-            float highestPeak = 0;
-
-            try
-            {
-                var sessions = _cachedSessionsForMeters;
-                if (sessions == null) return 0;
-
-                // Process more sessions for better responsiveness
-                int maxSessions = Math.Min(sessions.Count, 15); // Process more sessions for completeness
-
-                for (int i = 0; i < maxSessions; i++)
-                {
-                    var session = sessions[i];
-                    try
-                    {
-                        if (session == null) continue;
-
-                        int pid = (int)session.GetProcessID;
-
-                        // Skip system sessions and low PIDs
-                        if (pid <= 4) continue;
-
-                        string processName = AudioUtilities.GetProcessNameSafely(pid);
-                        _processNameCache[pid] = processName;
-
-                        // Skip if we couldn't get a valid process name
-                        if (string.IsNullOrEmpty(processName)) continue;
-
-                        // Skip if this application is mapped to a slider
-                        if (mappedApplications.Contains(processName)) continue;
-
-                        // Get the peak level for this unmapped session
-                        try
-                        {
-                            float peak = session.AudioMeterInformation.MasterPeakValue;
-                            if (peak > highestPeak)
-                                highestPeak = peak;
-                        }
-                        catch
-                        {
-                            // Session became invalid - ignore
-                        }
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ERROR] Getting unmapped peak levels: {ex.Message}");
-            }
-
-            _cachedUnmappedPeak = highestPeak;
-            _lastUnmappedPeakCalculation = DateTime.Now;
-            
-            return highestPeak;
-        }
-        private void DebugActiveTimers()
-        {
-            var timers = new List<string>();
-
-            if (_meterTimer?.IsEnabled == true) timers.Add("_meterTimer");
-            if (_serialWatchdogTimer?.IsEnabled == true) timers.Add("_serialWatchdogTimer");
-            if (_serialReconnectTimer?.IsEnabled == true) timers.Add("_serialReconnectTimer");
-            if (_sessionCacheTimer?.IsEnabled == true) timers.Add("_sessionCacheTimer");
-            if (_forceCleanupTimer?.IsEnabled == true) timers.Add("_forceCleanupTimer");
-
-            Debug.WriteLine($"[TIMERS] Active: {string.Join(", ", timers)} (Total: {timers.Count})");
-        }
       
-        private void DebugAudioSessions()
-        {
-            try
-            {
-                var enumerator = new MMDeviceEnumerator();
-                var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                var sessions = device.AudioSessionManager.Sessions;
-
-                Debug.WriteLine($"=== AUDIO SESSIONS DEBUG ({DateTime.Now:HH:mm:ss}) ===");
-                Debug.WriteLine($"Total sessions found: {sessions.Count}");
-
-                var sessionsByApp = new Dictionary<string, List<string>>();
-
-                for (int i = 0; i < sessions.Count; i++)
-                {
-                    try
-                    {
-                        var session = sessions[i];
-                        if (session == null) continue;
-
-                        int processId = (int)session.GetProcessID;
-                        string processName = AudioUtilities.GetProcessNameSafely(processId);
-
-                        if (string.IsNullOrEmpty(processName))
-                        {
-                            processName = $"unknown_{processId}";
-                        }
-
-                        string sessionId = session.GetSessionIdentifier ?? "no-id";
-                        float volume = session.SimpleAudioVolume.Volume;
-                        bool muted = session.SimpleAudioVolume.Mute;
-                        float peak = session.AudioMeterInformation.MasterPeakValue;
-
-                        if (!sessionsByApp.ContainsKey(processName))
-                        {
-                            sessionsByApp[processName] = new List<string>();
-                        }
-
-                        sessionsByApp[processName].Add($"Vol:{volume:F2} Muted:{muted} Peak:{peak:F3} ID:{sessionId.Substring(0, Math.Min(20, sessionId.Length))}");
-
-                        Debug.WriteLine($"  [{i}] {processName} (PID:{processId}) - Vol:{volume:F2} Muted:{muted} Peak:{peak:F3}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"  [{i}] ERROR: {ex.Message}");
-                    }
-                }
-
-                Debug.WriteLine("\n=== SESSIONS BY APP ===");
-                foreach (var kvp in sessionsByApp.OrderBy(x => x.Key))
-                {
-                    Debug.WriteLine($"{kvp.Key}: {kvp.Value.Count} sessions");
-                    foreach (var session in kvp.Value)
-                    {
-                        Debug.WriteLine($"  - {session}");
-                    }
-                }
-                Debug.WriteLine("=== END DEBUG ===\n");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"DebugAudioSessions failed: {ex.Message}");
-            }
-        }
-
-        // Call this method after connecting to serial port to see current sessions
-        // You can also add a button in your UI to call this for live debugging
         private void UpdateMeters(object? sender, EventArgs e)
         {
             if (!_metersEnabled || _isClosing) return;
@@ -3299,7 +3103,6 @@ namespace DeejNG
                                     if (unmappedPeak > highestPeak)
                                     {
                                         highestPeak = unmappedPeak;
-
                                     }
                                     if (!ctrl.IsMuted) allMuted = false;
                                 }
@@ -3316,7 +3119,6 @@ namespace DeejNG
                                             if (peak > highestPeak)
                                             {
                                                 highestPeak = peak;
-
                                             }
                                             if (!matchingSession.SimpleAudioVolume.Mute) allMuted = false;
                                         }
@@ -3335,9 +3137,7 @@ namespace DeejNG
                         }
 
                         float finalLevel = ctrl.IsMuted || allMuted ? 0 : Math.Min(highestPeak * visualGain, 1.0f);
-                        
-              
-                        
+
                         ctrl.UpdateAudioMeter(finalLevel);
                     }
                     catch (Exception ex)
@@ -3352,132 +3152,119 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] UpdateMeters: {ex.Message}");
             }
         }
-        private AudioSessionControl? FindSessionOptimized(SessionCollection sessions, string targetName)
+
+        private void UpdateSessionCache()
+        {
+            var defaultDevice = new MMDeviceEnumerator()
+                .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+
+            _audioDevice = defaultDevice;
+
+            // Process in smaller batches to reduce GC pressure
+            var sessions = defaultDevice.AudioSessionManager.Sessions;
+            int batchSize = Math.Min(sessions.Count, 15); // Process max 15 sessions
+
+            for (int i = 0; i < batchSize; i++)
+            {
+                var session = sessions[i];
+                try
+                {
+                    if (session == null) continue;
+
+                    int processId = (int)session.GetProcessID;
+                    string processName = AudioUtilities.GetProcessNameSafely(processId);
+                    _processNameCache[processId] = processName;
+
+                    if (!string.IsNullOrEmpty(processName))
+                    {
+                        // Update cache without creating unnecessary objects
+                        UpdateSessionCacheEntry(session, processName, processId);
+                    }
+                }
+                catch (ArgumentException)
+                {
+                    continue; // Session no longer valid
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ERROR] Processing session in cache updater: {ex.Message}");
+                    continue;
+                }
+            }
+        }
+        private void UpdateSessionCacheEntry(AudioSessionControl session, string processName, int processId)
         {
             try
             {
-                // Limit search to prevent hanging but check enough to find the session
-                int maxSessions = Math.Min(sessions.Count, 20); // Increased from 10
+                string sessionId = session.GetSessionIdentifier?.ToLowerInvariant() ?? "";
+                string instanceId = session.GetSessionInstanceIdentifier?.ToLowerInvariant() ?? "";
 
-                for (int i = 0; i < maxSessions; i++)
+                // Update cache only if needed
+                bool found = false;
+                for (int i = 0; i < _sessionIdCache.Count; i++)
                 {
-                    try
+                    if (_sessionIdCache[i].sessionId == sessionId && _sessionIdCache[i].instanceId == instanceId)
                     {
-                        var session = sessions[i];
-                        if (session == null) continue;
-
-                        int pid = (int)session.GetProcessID;
-                        if (pid <= 4) continue;
-
-                        if (_processNameCache.TryGetValue(pid, out string procName))
-                        {
-                            if (procName == targetName) return session;
-                        }
-                        else
-                        {
-                            try
-                            {
-                                using (var process = Process.GetProcessById(pid))
-                                {
-                                    if (process?.ProcessName?.ToLowerInvariant() == targetName)
-                                    {
-                                        _processNameCache[pid] = targetName;
-                                        return session;
-                                    }
-                                }
-                            }
-                            catch
-                            {
-                                _processNameCache[pid] = "";
-                            }
-                        }
+                        found = true;
+                        break;
                     }
-                    catch (ArgumentException) { continue; }
-                    catch { continue; }
+                }
+
+                if (!found)
+                {
+                    _sessionIdCache.Add((session, sessionId, instanceId));
                 }
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[ERROR] Finding session optimized: {ex.Message}");
+                Debug.WriteLine($"[ERROR] Updating session cache entry: {ex.Message}");
             }
-
-            return null;
         }
 
-        // Optimized unmapped peak level detection
-        private float GetUnmappedApplicationsPeakLevelOptimized(HashSet<string> mappedApplications, SessionCollection sessions)
-        {
-            float highestPeak = 0;
-
-            try
-            {
-                // Check fewer sessions but still get representative data
-                int maxSessions = Math.Min(sessions.Count, 15);
-
-                for (int i = 0; i < maxSessions; i++)
-                {
-                    try
-                    {
-                        var session = sessions[i];
-                        if (session == null) continue;
-
-                        int pid = (int)session.GetProcessID;
-                        if (pid <= 4) continue;
-
-                        // Use centralized method for consistency
-                        string processName = AudioUtilities.GetProcessNameSafely(pid);
-                        
-                        if (string.IsNullOrEmpty(processName))
-                        {
-                            continue;
-                        }
-
-                        // Check if this process is in mapped applications
-                        if (mappedApplications.Contains(processName))
-                        {
-                            continue;
-                        }
-
-                        try
-                        {
-                            float peak = session.AudioMeterInformation.MasterPeakValue;
-                            if (peak > 0.01f) // Only count meaningful audio levels
-                            {
-                                if (peak > highestPeak) 
-                                {
-                                    highestPeak = peak;
-                                }
-                            }
-                        }
-                        catch { continue; }
-                    }
-                    catch { continue; }
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ERROR] Getting unmapped peak levels optimized: {ex.Message}");
-            }
-
-            return highestPeak;
-        }
         #endregion Private Methods
 
-        #region Private Classes
+        #region Public Classes
 
-        /// <summary>
-        /// Handles centralized audio session events and dispatches them to the correct control
-        /// based on current slider configuration - this solves the app reassignment issue
-        /// </summary>
         public class DecoupledAudioSessionEventsHandler : IAudioSessionEventsHandler
         {
+            #region Private Fields
+
             private readonly MainWindow _mainWindow;
             private readonly string _targetName;
+
+            #endregion Private Fields
+
+            #region Public Constructors
 
             public DecoupledAudioSessionEventsHandler(MainWindow mainWindow, string targetName)
             {
                 _mainWindow = mainWindow;
                 _targetName = targetName;
+            }
+
+            #endregion Public Constructors
+
+            #region Public Methods
+
+            public void OnChannelVolumeChanged(uint channelCount, nint newVolumes, uint channelIndex)
+            { }
+
+            public void OnDisplayNameChanged(string displayName)
+            { }
+
+            public void OnGroupingParamChanged(ref Guid groupingId)
+            { }
+
+            public void OnIconPathChanged(string iconPath)
+            { }
+
+            public void OnSessionDisconnected(AudioSessionDisconnectReason disconnectReason)
+            {
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                {
+                    Debug.WriteLine($"[DecoupledHandler] Session disconnected for {_targetName}: {disconnectReason}");
+                    _mainWindow.HandleSessionDisconnected(_targetName);
+                });
             }
 
             public void OnSimpleVolumeChanged(float volume, bool mute)
@@ -3488,22 +3275,6 @@ namespace DeejNG
                     control?.SetMuted(mute);
                 });
             }
-
-            public void OnVolumeChanged(float volume, bool mute)
-            {
-                System.Windows.Application.Current.Dispatcher.Invoke(() =>
-                {
-                    var control = _mainWindow.FindControlForTarget(_targetName);
-                    control?.SetMuted(mute);
-                 
-                });
-               
-            }
-
-            public void OnDisplayNameChanged(string displayName) { }
-            public void OnIconPathChanged(string iconPath) { }
-            public void OnChannelVolumeChanged(uint channelCount, nint newVolumes, uint channelIndex) { }
-            public void OnGroupingParamChanged(ref Guid groupingId) { }
 
             public void OnStateChanged(AudioSessionState state)
             {
@@ -3517,27 +3288,26 @@ namespace DeejNG
                 }
             }
 
-            public void OnSessionDisconnected(AudioSessionDisconnectReason disconnectReason)
+            public void OnVolumeChanged(float volume, bool mute)
             {
                 System.Windows.Application.Current.Dispatcher.Invoke(() =>
                 {
-                    Debug.WriteLine($"[DecoupledHandler] Session disconnected for {_targetName}: {disconnectReason}");
-                    _mainWindow.HandleSessionDisconnected(_targetName);
+                    var control = _mainWindow.FindControlForTarget(_targetName);
+                    control?.SetMuted(mute);
                 });
             }
+
+            #endregion Public Methods
         }
-       
 
-        #endregion Private Classes
+        #endregion Public Classes
     }
-    
 
-    static class IconHandler
+    internal static class IconHandler
     {
-
         #region Private Properties
 
-        static string IconPath => Path.Combine(AppContext.BaseDirectory, "icon.ico");
+        private static string IconPath => Path.Combine(AppContext.BaseDirectory, "icon.ico");
 
         #endregion Private Properties
 
@@ -3581,6 +3351,5 @@ namespace DeejNG
         }
 
         #endregion Public Methods
-
     }
 }

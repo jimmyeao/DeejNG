@@ -111,21 +111,35 @@ namespace DeejNG.Dialogs
         #region Public Constructors
 
         // Bright red
+        /// <summary>
+        /// Initializes a new instance of the ChannelControl UI component.
+        /// Sets up event handlers and starts a high-frequency timer for VU meter updates.
+        /// </summary>
         public ChannelControl()
         {
+            // Load the visual components defined in XAML
             InitializeComponent();
-            Loaded += ChannelControl_Loaded;
-            Unloaded += ChannelControl_Unloaded;
-            MouseDoubleClick += ChannelControl_MouseDoubleClick;
 
-            // Replace CompositionTarget.Rendering with controlled timer for better performance
+            // Register event handlers for lifecycle and interaction events
+            Loaded += ChannelControl_Loaded;                   // Called when the control is added to the visual tree
+            Unloaded += ChannelControl_Unloaded;               // Called when the control is removed from the visual tree
+            MouseDoubleClick += ChannelControl_MouseDoubleClick; // Allow editing or selection on double-click
+
+            // Initialize a DispatcherTimer to update VU meter visuals at high frequency (every 25ms)
             _meterUpdateTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(25) // Very high FPS for ultra-smooth visuals
+                Interval = TimeSpan.FromMilliseconds(25) // Approx. 40 FPS for smooth animations
             };
+
+            // Hook up the Tick event to update meter visuals
             _meterUpdateTimer.Tick += MeterUpdateTimer_Tick;
+
+            // Start the timer immediately
             _meterUpdateTimer.Start();
+
+            // Note: This approach replaces CompositionTarget.Rendering for better control and performance
         }
+
 
         #endregion Public Constructors
 
@@ -142,15 +156,26 @@ namespace DeejNG.Dialogs
 
         #region Public Properties
 
+        /// <summary>
+        /// Gets or sets the list of audio targets (e.g., apps or devices to control).
+        /// When set, it updates the UI or internal state to reflect the new target list.
+        /// </summary>
         public List<AudioTarget> AudioTargets
         {
+            // Returns the current list of audio targets
             get => _audioTargets;
+
+            // Sets a new list of audio targets and updates the display
             set
             {
+                // Ensure the internal list is never null
                 _audioTargets = value ?? new List<AudioTarget>();
+
+                // Refresh any visual or logical representation of the target list
                 UpdateTargetsDisplay();
             }
         }
+
 
         public float CurrentVolume => (float)VolumeSlider.Value;
 
@@ -199,42 +224,79 @@ namespace DeejNG.Dialogs
             }
         }
 
+        /// <summary>
+        /// Sets the visibility of the volume meter (e.g., a Skia-based VU meter).
+        /// </summary>
+        /// <param name="visible">True to show the meter; false to hide it.</param>
         public void SetMeterVisibility(bool visible)
         {
-            // MeterVisuals.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            // Show or hide the SkiaCanvas that renders the meter graphics
             SkiaCanvas.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+
+            // Optionally switch to another UI element instead (commented out line)
+            // MeterVisuals.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        /// <summary>
+        /// Programmatically sets the muted state of the control,
+        /// updating the internal state, UI, and visuals without triggering events.
+        /// </summary>
+        /// <param name="muted">True to mute, false to unmute.</param>
         public void SetMuted(bool muted)
         {
-            _suppressEvents = true;
-            _isMuted = muted;
-            MuteButton.IsChecked = muted;
-            UpdateMuteButtonVisual();
-            _suppressEvents = false;
+            _suppressEvents = true;        // Prevent external event handling during update
+            _isMuted = muted;              // Update internal state
+            MuteButton.IsChecked = muted;  // Reflect change in the UI control
+            UpdateMuteButtonVisual();      // Update any related visual styling (e.g., icon color)
+            _suppressEvents = false;       // Re-enable events
         }
 
+        /// <summary>
+        /// Programmatically sets the volume slider's value without firing change events.
+        /// </summary>
+        /// <param name="level">The new volume level (typically between 0.0 and 1.0).</param>
         public void SetVolume(float level)
         {
-            _suppressEvents = true; // ✅ prevent events
-            VolumeSlider.Value = level;
-            _suppressEvents = false;
+            _suppressEvents = true;        // Prevent event handlers from reacting to slider change
+            VolumeSlider.Value = level;    // Update the slider UI
+            _suppressEvents = false;       // Re-enable events
         }
 
+
+        /// <summary>
+        /// Applies optional smoothing to the incoming volume level and sets the final value.
+        /// Can also suppress volume change events temporarily during this operation.
+        /// </summary>
+        /// <param name="rawLevel">The raw input volume level (expected range: 0.0f to 1.0f).</param>
+        /// <param name="suppressEvent">If true, suppresses any volume change events triggered during the update.</param>
+        /// <param name="disableSmoothing">If true, disables smoothing and sets the raw volume directly.</param>
         public void SmoothAndSetVolume(float rawLevel, bool suppressEvent = false, bool disableSmoothing = false)
         {
+            // Optionally suppress volume change events during this update
             _suppressEvents = suppressEvent;
+
             if (disableSmoothing)
             {
+                // If smoothing is disabled, apply the raw level immediately
                 SetVolume(rawLevel);
             }
             else
             {
-                _smoothedVolume = _smoothedVolume == 0 ? rawLevel : _smoothedVolume + (rawLevel - _smoothedVolume) * SmoothingFactor;
+                // Apply exponential smoothing to the volume level
+                // If it's the first value (_smoothedVolume == 0), initialize with raw level
+                // Otherwise, interpolate toward raw level using the smoothing factor
+                _smoothedVolume = _smoothedVolume == 0
+                    ? rawLevel
+                    : _smoothedVolume + (rawLevel - _smoothedVolume) * SmoothingFactor;
+
+                // Apply the smoothed volume
                 SetVolume(_smoothedVolume);
             }
+
+            // Re-enable event firing after update
             _suppressEvents = false;
         }
+
 
         public void UpdateAudioMeter(float rawLevel)
         {

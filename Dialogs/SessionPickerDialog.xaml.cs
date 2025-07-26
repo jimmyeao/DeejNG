@@ -10,33 +10,47 @@ namespace DeejNG.Dialogs
 
         #region Public Methods
 
+        /// <summary>
+        /// Retrieves a list of currently active audio session names for display or selection,
+        /// excluding any that are already in use (except the current one).
+        /// Also includes special entries for "System" and "Unmapped Applications".
+        /// </summary>
+        /// <param name="alreadyUsed">List of session names already assigned to other sliders or controls.</param>
+        /// <param name="current">The current session name being edited (allowed even if already used).</param>
+        /// <returns>List of <see cref="SessionInfo"/> representing selectable audio sessions.</returns>
         public static List<SessionInfo> GetSessionNames(List<string> alreadyUsed, string current)
         {
+            // Initialize session list with special static entries
             var sessionList = new List<SessionInfo>
-            {
-                new SessionInfo { Id = "system", FriendlyName = "System" },
-                new SessionInfo { Id = "unmapped", FriendlyName = "Unmapped Applications" }
-            };
+    {
+        new SessionInfo { Id = "system", FriendlyName = "System" },
+        new SessionInfo { Id = "unmapped", FriendlyName = "Unmapped Applications" }
+    };
 
             try
             {
+                // Get the default output audio device
                 var enumerator = new MMDeviceEnumerator();
                 var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+
+                // Retrieve all active sessions (e.g., apps playing sound)
                 var sessions = device.AudioSessionManager.Sessions;
 
+                // Track names we've already seen to avoid duplicates (case-insensitive)
                 var seenFriendlyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    "system",
-                    "unmapped"
-                };
+        {
+            "system",
+            "unmapped"
+        };
 
-                // Add already used apps to seen list (except current)
+                // Mark already-used names as "seen", except for the current one being edited
                 foreach (var used in alreadyUsed)
                 {
                     if (!string.Equals(used, current, StringComparison.OrdinalIgnoreCase))
                         seenFriendlyNames.Add(used);
                 }
 
+                // Iterate through all active sessions
                 for (int i = 0; i < sessions.Count; i++)
                 {
                     try
@@ -44,7 +58,7 @@ namespace DeejNG.Dialogs
                         var session = sessions[i];
                         if (session == null) continue;
 
-                        // 🔥 FIX: Use safe process name retrieval
+                        // Get the process ID safely; continue if it fails
                         int processId;
                         try
                         {
@@ -56,7 +70,7 @@ namespace DeejNG.Dialogs
                             continue;
                         }
 
-                        // 🚀 USE EXISTING SAFE METHOD instead of direct Process access
+                        // Use the utility method to safely get the process name
                         string friendlyName = AudioUtilities.GetProcessNameSafely(processId);
 
                         if (string.IsNullOrEmpty(friendlyName))
@@ -65,17 +79,18 @@ namespace DeejNG.Dialogs
                             continue;
                         }
 
-                        // Only add if we haven't seen this app name before
+                        // Add only if this session name hasn't been added before
                         if (!seenFriendlyNames.Contains(friendlyName))
                         {
                             sessionList.Add(new SessionInfo
                             {
                                 Id = session.GetSessionIdentifier ??
-                                 session.GetSessionInstanceIdentifier ??
-                                 $"session_{processId}_{i}",
+                                     session.GetSessionInstanceIdentifier ??
+                                     $"session_{processId}_{i}", // fallback ID
                                 FriendlyName = friendlyName
                             });
-                            seenFriendlyNames.Add(friendlyName);
+
+                            seenFriendlyNames.Add(friendlyName); // Mark as seen to prevent duplicates
                             Debug.WriteLine($"[SessionPicker] Added session: {friendlyName} (PID: {processId})");
                         }
                     }
@@ -90,9 +105,11 @@ namespace DeejNG.Dialogs
             }
             catch (Exception ex)
             {
+                // If session enumeration fails entirely, log the error
                 Debug.WriteLine($"[SessionPicker] Failed to enumerate audio sessions: {ex.Message}");
             }
 
+            // Return the full list of sessions (starting with "System" and "Unmapped")
             return sessionList;
         }
 
@@ -134,118 +151,50 @@ namespace DeejNG.Dialogs
 
         #region Private Methods
 
-        // Keep the original LoadSessions method for input mode compatibility
-        private void LoadSessions(bool isInputMode)
-        {
-            try
-            {
-                var items = new List<KeyValuePair<string, string>>();
+      
 
-                if (isInputMode)
-                {
-                    items.Add(new("System", "system"));
-
-                    var devices = new MMDeviceEnumerator()
-                        .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
-
-                    foreach (var device in devices)
-                    {
-                        string name = device.FriendlyName;
-                        items.Add(new(name, name));
-                    }
-                }
-                else
-                {
-                    items.Add(new("System", "system"));
-                    items.Add(new("Unmapped Applications", "unmapped"));
-
-                    var sessions = new MMDeviceEnumerator()
-                        .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
-                        .AudioSessionManager.Sessions;
-
-                    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                    for (int i = 0; i < sessions.Count; i++)
-                    {
-                        try
-                        {
-                            var session = sessions[i];
-                            if (session == null) continue;
-
-                            int processId;
-                            try
-                            {
-                                processId = (int)session.GetProcessID;
-                            }
-                            catch
-                            {
-                                continue;
-                            }
-
-                            // 🔥 FIX: Use safe process name retrieval here too
-                            string procName = AudioUtilities.GetProcessNameSafely(processId);
-
-                            if (string.IsNullOrEmpty(procName))
-                            {
-                                procName = $"unknown_{processId}";
-                            }
-
-                            if (!seen.Contains(procName))
-                            {
-                                items.Add(new(procName, procName.ToLowerInvariant()));
-                                seen.Add(procName);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"[SessionPicker] Error processing session {i} in LoadSessions: {ex.Message}");
-                        }
-                    }
-                }
-
-                SessionComboBox.ItemsSource = items;
-                SessionComboBox.DisplayMemberPath = "Key";
-                SessionComboBox.SelectedValuePath = "Value";
-
-                if (items.Count > 0)
-                    SessionComboBox.SelectedIndex = 0;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[SessionPicker] Error in LoadSessions: {ex.Message}");
-                MessageBox.Show($"Error loading sessions: {ex.Message}", "Load Error",
-                              MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
-        }
-
+        /// <summary>
+        /// Handles the OK button click in the session picker dialog.
+        /// Assigns the selected session name based on either a selected item or manual entry,
+        /// then closes the dialog with a success result.
+        /// </summary>
         private void Ok_Click(object sender, RoutedEventArgs e)
         {
             try
             {
+                // Case 1: A predefined session was selected from the ComboBox
                 if (SessionComboBox.SelectedItem is AudioSessionManagerHelper.SessionInfo selectedSession)
                 {
-                    SelectedSession = selectedSession.FriendlyName; // Use FriendlyName for consistency
+                    // Store the user-selected session's friendly name
+                    SelectedSession = selectedSession.FriendlyName;
                     Debug.WriteLine($"[SessionPicker] Selected: {SelectedSession}");
                 }
+                // Case 2: The user typed a custom session name into the ComboBox (manual entry)
                 else if (!string.IsNullOrWhiteSpace(SessionComboBox.Text))
                 {
+                    // Store the trimmed manual entry
                     SelectedSession = SessionComboBox.Text.Trim();
                     Debug.WriteLine($"[SessionPicker] Manual entry: {SelectedSession}");
                 }
+                // Case 3: No selection or manual entry provided — do nothing
                 else
                 {
                     Debug.WriteLine("[SessionPicker] No selection made");
                     return;
                 }
 
+                // Set DialogResult to true so the parent window knows the user confirmed the selection
                 DialogResult = true;
+
+                // Close the dialog
                 Close();
             }
             catch (Exception ex)
             {
+                // Log and show any unexpected error
                 Debug.WriteLine($"[SessionPicker] Error in Ok_Click: {ex.Message}");
                 MessageBox.Show($"Error selecting session: {ex.Message}", "Selection Error",
-                              MessageBoxButton.OK, MessageBoxImage.Warning);
+                                MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
 
