@@ -165,14 +165,10 @@ namespace DeejNG.Services
 
         public void Dispose()
         {
+            // Stop all timers - this is the only cleanup needed
             StopAll();
 
-            _meterTimer = null;
-            _sessionCacheTimer = null;
-            _forceCleanupTimer = null;
-            _serialReconnectTimer = null;
-            _serialWatchdogTimer = null;
-            _positionSaveTimer = null;
+          
         }
     }
 }

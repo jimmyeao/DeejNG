@@ -516,82 +516,116 @@ namespace DeejNG
             }
         }
 
+        /// <summary>
+        /// Applies the specified volume level to a list of audio targets (input/output devices or sessions).
+        /// Respects mute state and includes special handling for unmapped applications.
+        /// </summary>
+        /// <param name="ctrl">The UI control representing the channel (provides mute state).</param>
+        /// <param name="targets">A list of audio targets to apply volume to.</param>
+        /// <param name="level">The desired volume level (0.0 - 1.0).</param>
         private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level)
         {
-            // Simple check - don't apply volumes until we're ready
+            // 🚫 Do not apply volume if the application state doesn't currently allow it
             if (!_allowVolumeApplication)
             {
                 return;
             }
 
+            // 🔁 Iterate over each audio target and apply volume based on its type
             foreach (var target in targets)
             {
                 try
                 {
                     if (target.IsInputDevice)
                     {
+                        // 🎤 Apply volume to input device (e.g., microphone)
                         _deviceManager.ApplyInputDeviceVolume(target.Name, level, ctrl.IsMuted);
                     }
                     else if (target.IsOutputDevice)
                     {
+                        // 🔊 Apply volume to output device (e.g., speakers)
                         _deviceManager.ApplyOutputDeviceVolume(target.Name, level, ctrl.IsMuted);
                     }
                     else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
                     {
-                        // Handle unmapped applications with aggressive throttling
+                        // ❓ Special handling for unmapped sessions (apps not explicitly assigned)
                         lock (_unmappedLock)
                         {
-                            // More aggressive throttling for unmapped
+                            // ⏱️ Aggressive throttling to avoid performance hit from frequent updates
                             var now = DateTime.Now;
                             if ((now - _lastUnmappedMeterUpdate) < UNMAPPED_THROTTLE_INTERVAL)
                             {
-                                // Skip this update entirely for responsiveness
+                                // Skip this update if too soon since the last one
+                                return;
                             }
                             _lastUnmappedMeterUpdate = now;
 
+                            // Exclude known mapped apps to avoid overwriting them
                             var mappedApps = GetAllMappedApplications();
-                            mappedApps.Remove("unmapped"); // Don't exclude unmapped from itself
+                            mappedApps.Remove("unmapped"); // Ensure we don't filter itself
 
+                            // Apply volume to all remaining (unmapped) sessions
                             _audioService.ApplyVolumeToUnmappedApplications(level, ctrl.IsMuted, mappedApps);
                         }
                     }
                     else
                     {
+                        // 🎯 Apply volume to a named audio session (e.g., a specific app)
                         _audioService.ApplyVolumeToTarget(target.Name, level, ctrl.IsMuted);
                     }
                 }
                 catch (Exception ex)
                 {
+                    // ⚠️ Log any errors without crashing the volume loop
                     Debug.WriteLine($"[ERROR] Applying volume to {target.Name}: {ex.Message}");
                 }
             }
         }
 
+        /// <summary>
+        /// Handles system-wide volume change notifications (e.g., mute toggles).
+        /// This is typically triggered when the user changes the system volume outside the app,
+        /// such as via the Windows volume tray icon or media keys.
+        /// </summary>
+        /// <param name="data">Volume change data received from the system.</param>
         private void AudioEndpointVolume_OnVolumeNotification(AudioVolumeNotificationData data)
         {
+            // Ensure the UI update runs on the main thread (required for WPF UI updates)
             Dispatcher.Invoke(() =>
             {
+                // Find the channel control that represents the system audio (e.g., master volume)
                 var systemControl = _channelControls.FirstOrDefault(c =>
                     string.Equals(c.TargetExecutable, "system", StringComparison.OrdinalIgnoreCase));
 
                 if (systemControl != null)
                 {
+                    // Update the mute state of the system control based on the system notification
                     systemControl.SetMuted(data.Muted);
                 }
             });
         }
 
+
+        /// <summary>
+        /// Cleans up stale or invalid event handlers from the _registeredHandlers dictionary.
+        /// This helps prevent memory leaks or updates to non-existent audio targets.
+        /// </summary>
         private void CleanupEventHandlers()
         {
             try
             {
+                // List to track handlers that need to be removed
                 var handlersToRemove = new List<string>();
 
+                // Iterate through all registered handlers
                 foreach (var kvp in _registeredHandlers)
                 {
                     try
                     {
+                        // Get the currently valid targets (e.g., active audio sessions or devices)
                         var currentTargets = GetCurrentTargets();
+
+                        // If the target is no longer valid, mark it for removal
                         if (!currentTargets.Contains(kvp.Key))
                         {
                             handlersToRemove.Add(kvp.Key);
@@ -599,10 +633,12 @@ namespace DeejNG
                     }
                     catch
                     {
+                        // If checking current targets fails, assume it's invalid and mark for removal
                         handlersToRemove.Add(kvp.Key);
                     }
                 }
 
+                // Remove all handlers marked for cleanup
                 foreach (var target in handlersToRemove)
                 {
                     _registeredHandlers.Remove(target);
@@ -611,13 +647,14 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
+                // Log any unexpected errors during cleanup
                 Debug.WriteLine($"[Cleanup] Error cleaning event handlers: {ex.Message}");
             }
         }
 
+
         private void ComPortSelector_DropDownOpened(object sender, EventArgs e)
         {
-            Debug.WriteLine("[UI] COM port dropdown opened, refreshing ports...");
             LoadAvailablePorts();
         }
 
@@ -629,47 +666,58 @@ namespace DeejNG
             }
         }
 
+        /// <summary>
+        /// Handles the Connect button click event. Connects or disconnects the serial port based on current connection state.
+        /// </summary>
         private void Connect_Click(object sender, RoutedEventArgs e)
         {
             if (_serialManager.IsConnected)
             {
-                // User wants to disconnect manually
+                // ✅ Already connected: user wants to manually disconnect
+
+                // Stop the auto-reconnect timer so it doesn't try to reconnect
                 _timerCoordinator.StopSerialReconnect();
+
+                // Perform manual disconnection from the serial port
                 _serialManager.ManualDisconnect();
             }
             else
             {
-                // User wants to connect to selected port
+                // ✅ Not connected: user wants to connect to a selected COM port
+
+                // Ensure a port is selected in the dropdown
                 if (ComPortSelector.SelectedItem is string selectedPort)
                 {
                     Debug.WriteLine($"[Manual] User clicked connect for port: {selectedPort}");
 
-                    // Update button state immediately
+                    // Disable the button and provide visual feedback
                     ConnectButton.IsEnabled = false;
                     ConnectButton.Content = "Connecting...";
 
-                    // Stop automatic reconnection while user is manually connecting
+                    // Prevent auto-reconnect while a manual connection is being attempted
                     _timerCoordinator.StopSerialReconnect();
 
-                    // Try connection
+                    // Initiate the connection to the selected COM port with a baud rate of 9600
                     _serialManager.InitSerial(selectedPort, 9600);
 
-                    // Reset button after short delay
+                    // Setup a timer to reset the button UI after 2 seconds
                     var resetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
                     resetTimer.Tick += (s, args) =>
                     {
                         resetTimer.Stop();
-                        UpdateConnectionStatus();
+                        UpdateConnectionStatus(); // Refresh UI based on new connection state
                     };
                     resetTimer.Start();
                 }
                 else
                 {
+                    // No port selected - inform the user
                     MessageBox.Show("Please select a COM port first.", "No Port Selected",
-                                  MessageBoxButton.OK, MessageBoxImage.Information);
+                                    MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
         }
+
 
         private void CreateNotifyIconContextMenu()
         {
@@ -759,46 +807,68 @@ namespace DeejNG
             Application.Current.Shutdown();
         }
 
+        /// <summary>
+        /// Triggered periodically by a DispatcherTimer to aggressively clean up audio sessions,
+        /// release unused COM objects, refresh caches, and remove stale event handlers.
+        /// </summary>
         private void ForceCleanupTimer_Tick(object sender, EventArgs e)
         {
+            // If the application is shutting down, skip cleanup
             if (_isClosing) return;
 
             try
             {
                 Debug.WriteLine("[ForceCleanup] Starting aggressive cleanup...");
+
+                // ✅ Attempt internal cleanup within the audio service (e.g. clear stale sessions)
                 _audioService?.ForceCleanup();
+
+                // ✅ Cleanup static references and COM leaks from NAudio or other interop layers
                 AudioUtilities.ForceCleanup();
 
+                // ✅ Remove event handlers that no longer have valid targets
                 CleanupEventHandlers();
 
-                // Refresh device cache if needed
+                // ✅ Refresh internal device cache if audio devices have changed or been removed
                 if (_deviceManager.ShouldRefreshCache())
                 {
                     _deviceManager.RefreshCaches();
                 }
 
-                // Force COM object cleanup
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                GC.Collect();
+                // ✅ Force .NET to collect unused memory and finalize COM objects
+                GC.Collect();                    // Trigger garbage collection
+                GC.WaitForPendingFinalizers();   // Wait for any finalizers (including COM cleanup)
+                GC.Collect();                    // Run GC again to finalize fully
 
+                // ✅ Update timestamp of last forced cleanup
                 _lastForcedCleanup = DateTime.Now;
+
                 Debug.WriteLine("[ForceCleanup] Cleanup completed");
             }
             catch (Exception ex)
             {
+                // Log any errors that occurred during cleanup
                 Debug.WriteLine($"[ForceCleanup] Error: {ex.Message}");
             }
         }
 
+
+        /// <summary>
+        /// Dynamically creates volume slider controls based on the specified count.
+        /// Initializes each ChannelControl with saved target settings or defaults.
+        /// </summary>
+        /// <param name="count">The number of sliders (channels) to create.</param>
         private void GenerateSliders(int count)
         {
+            // Clear existing UI controls and backing data
             SliderPanel.Children.Clear();
             _channelControls.Clear();
 
+            // Load previously saved slider target configurations from disk
             var savedSettings = _settingsManager.LoadSettingsFromDisk();
             var savedTargetGroups = savedSettings?.SliderTargets ?? new List<List<AudioTarget>>();
 
+            // Indicate that we're initializing (prevents unnecessary volume changes)
             _isInitializing = true;
             _allowVolumeApplication = false;
 
@@ -808,7 +878,7 @@ namespace DeejNG
             {
                 var control = new ChannelControl();
 
-                // Set targets for this control
+                // Assign saved targets if available; otherwise assign default for slider 0
                 List<AudioTarget> targetsForThisControl;
 
                 if (i < savedTargetGroups.Count && savedTargetGroups[i].Count > 0)
@@ -821,6 +891,7 @@ namespace DeejNG
 
                     if (i == 0)
                     {
+                        // Default: first slider controls "system" volume
                         targetsForThisControl.Add(new AudioTarget
                         {
                             Name = "system",
@@ -829,17 +900,21 @@ namespace DeejNG
                     }
                 }
 
+                // Apply targets and default mute state
                 control.AudioTargets = targetsForThisControl;
                 control.SetMuted(false);
 
+                // Register event: when the user changes the selected session target
                 control.TargetChanged += (_, _) => SaveSettings();
 
+                // Register event: when volume or mute changes, apply to targets (if allowed)
                 control.VolumeOrMuteChanged += (targets, vol, mute) =>
                 {
                     if (!_allowVolumeApplication) return;
                     ApplyVolumeToTargets(control, targets, vol);
                 };
 
+                // Register event: when a session disconnects (e.g. app closes), clean up
                 control.SessionDisconnected += (sender, target) =>
                 {
                     Debug.WriteLine($"[MainWindow] Received session disconnected for {target}");
@@ -850,22 +925,29 @@ namespace DeejNG
                     }
                 };
 
+                // Add control to the backing list and the UI panel
                 _channelControls.Add(control);
                 SliderPanel.Children.Add(control);
             }
 
+            // Respect current UI toggle for whether to show VU meters
             SetMeterVisibilityForAll(ShowSlidersCheckBox.IsChecked ?? true);
 
             Debug.WriteLine("[Init] Sliders generated, waiting for first hardware data before completing initialization");
         }
 
+        /// <summary>
+        /// Handles raw data received from hardware sliders (e.g., via serial).
+        /// Parses slider values, normalizes them, updates the UI, and applies audio volume.
+        /// </summary>
+        /// <param name="data">Pipe-separated string of slider values (e.g., "512|320|1023").</param>
         private void HandleSliderData(string data)
         {
             if (string.IsNullOrWhiteSpace(data)) return;
 
             try
             {
-                // Validate data format before processing
+                // Validate format: must be pipe-separated or a single float
                 if (!data.Contains('|') && !float.TryParse(data, out _))
                 {
                     Debug.WriteLine($"[Serial] Invalid data format: {data}");
@@ -873,70 +955,77 @@ namespace DeejNG
                 }
 
                 string[] parts = data.Split('|');
+                if (parts.Length == 0) return;
 
-                if (parts.Length == 0)
-                {
-                    return;
-                }
-
+                // Update the UI on the main thread
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     try
                     {
-                        // Hardware slider count takes priority - regenerate if mismatch
+                        // If hardware slider count differs from current app config, regenerate sliders
                         if (_channelControls.Count != parts.Length)
                         {
                             Debug.WriteLine($"[INFO] Hardware has {parts.Length} sliders but app has {_channelControls.Count}. Adjusting to match hardware.");
 
-                            // Save current targets before regenerating
+                            // Backup currently assigned audio targets before regenerating
                             var currentTargets = _channelControls.Select(c => c.AudioTargets).ToList();
 
+                            // Regenerate sliders to match hardware count
                             _expectedSliderCount = parts.Length;
                             GenerateSliders(parts.Length);
 
-                            // Restore saved targets for sliders that still exist
+                            // Restore saved targets where possible
                             for (int i = 0; i < Math.Min(currentTargets.Count, _channelControls.Count); i++)
                             {
                                 _channelControls[i].AudioTargets = currentTargets[i];
                             }
 
-                            SaveSettings();
+                            SaveSettings(); // Persist updated slider configuration
                             return;
                         }
 
-                        // Process the data for existing sliders only
+                        // Process only valid slider indexes
                         int maxIndex = Math.Min(parts.Length, _channelControls.Count);
 
                         for (int i = 0; i < maxIndex; i++)
                         {
+                            // Parse each slider level from string to float
                             if (!float.TryParse(parts[i].Trim(), out float level)) continue;
 
-                            // Handle hardware noise - snap small values to exact zero
+                            // Snap noisy low/high edge values to clean limits
                             if (level <= 10) level = 0;
                             if (level >= 1013) level = 1023;
 
+                            // Normalize from 0–1023 range to 0–1
                             level = Math.Clamp(level / 1023f, 0f, 1f);
+
+                            // Optional: invert slider if user setting is checked
                             if (InvertSliderCheckBox.IsChecked ?? false)
                                 level = 1f - level;
 
                             var ctrl = _channelControls[i];
                             var targets = ctrl.AudioTargets;
 
+                            // Skip if no audio targets are assigned
                             if (targets.Count == 0) continue;
 
                             float currentVolume = ctrl.CurrentVolume;
+
+                            // Ignore if value hasn't changed significantly
                             if (Math.Abs(currentVolume - level) < 0.01f) continue;
 
+                            // Smooth volume change, and optionally suppress event
                             ctrl.SmoothAndSetVolume(level, suppressEvent: !_allowVolumeApplication, disableSmoothing: _disableSmoothing);
 
+                            // Apply volume to target apps/devices if allowed
                             if (_allowVolumeApplication)
                             {
                                 ApplyVolumeToTargets(ctrl, targets, level);
-                                ShowVolumeOverlay();
+                                ShowVolumeOverlay(); // Optionally show overlay UI
                             }
                         }
 
-                        // Enable volume application after first successful data processing
+                        // First successful data received – finish initialization
                         if (!_allowVolumeApplication)
                         {
                             _allowVolumeApplication = true;
@@ -944,8 +1033,9 @@ namespace DeejNG
 
                             Debug.WriteLine("[Init] First data received - enabling volume application and completing setup");
 
-                            SyncMuteStates();
+                            SyncMuteStates(); // Ensure mute buttons match current state
 
+                            // Start VU meter updates if not already running
                             if (!_timerCoordinator.IsMetersRunning)
                             {
                                 _timerCoordinator.StartMeters();
@@ -964,38 +1054,48 @@ namespace DeejNG
             }
         }
 
+        /// <summary>
+        /// Loads available COM ports into the ComboBox and attempts to restore the user's previous selection,
+        /// falling back through known options or defaulting to the first available.
+        /// </summary>
         private void LoadAvailablePorts()
         {
             try
             {
+                // Get all available serial (COM) ports on the system
                 var availablePorts = SerialPort.GetPortNames();
                 string currentSelection = ComPortSelector.SelectedItem as string;
 
+                // Update the ComboBox with the detected ports
                 ComPortSelector.ItemsSource = availablePorts;
 
                 Debug.WriteLine($"[Ports] Found {availablePorts.Length} ports: [{string.Join(", ", availablePorts)}]");
 
-                // Try to restore previous selection first
+                // Attempt to restore the previously selected COM port if it still exists
                 if (!string.IsNullOrEmpty(currentSelection) && availablePorts.Contains(currentSelection))
                 {
                     ComPortSelector.SelectedItem = currentSelection;
                     Debug.WriteLine($"[Ports] Restored previous selection: {currentSelection}");
                 }
+                // If not, try to use the last successfully connected port
                 else if (!string.IsNullOrEmpty(_serialManager.LastConnectedPort) && availablePorts.Contains(_serialManager.LastConnectedPort))
                 {
                     ComPortSelector.SelectedItem = _serialManager.LastConnectedPort;
                     Debug.WriteLine($"[Ports] Selected saved port: {_serialManager.LastConnectedPort}");
                 }
+                // If not, try to use the port saved in the app settings
                 else if (!string.IsNullOrEmpty(_settingsManager.Settings.PortName) && availablePorts.Contains(_settingsManager.Settings.PortName))
                 {
                     ComPortSelector.SelectedItem = _settingsManager.Settings.PortName;
                     Debug.WriteLine($"[Ports] Selected settings port: {_settingsManager.Settings.PortName}");
                 }
+                // Otherwise, just select the first available port
                 else if (availablePorts.Length > 0)
                 {
                     ComPortSelector.SelectedIndex = 0;
                     Debug.WriteLine($"[Ports] Selected first available port: {availablePorts[0]}");
                 }
+                // No ports found – clear selection
                 else
                 {
                     ComPortSelector.SelectedIndex = -1;
@@ -1004,6 +1104,7 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
+                // On error, log it and clear the ComboBox to avoid inconsistent state
                 Debug.WriteLine($"[ERROR] Failed to load available ports: {ex.Message}");
                 ComPortSelector.ItemsSource = new string[0];
                 ComPortSelector.SelectedIndex = -1;

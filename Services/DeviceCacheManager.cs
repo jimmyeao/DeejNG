@@ -10,7 +10,9 @@ namespace DeejNG.Services
     {
         private readonly Dictionary<string, MMDevice> _inputDeviceMap = new();
         private readonly Dictionary<string, MMDevice> _outputDeviceMap = new();
-        private readonly Dictionary<string, float> _lastInputVolume = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, float?> _lastInputVolume = new(StringComparer.OrdinalIgnoreCase);
+        private const int CacheRefreshIntervalSeconds = 30;
+        private const float VolumeChangeThreshold = 0.01f;
         private readonly MMDeviceEnumerator _deviceEnumerator = new();
         private DateTime _lastDeviceCacheTime = DateTime.MinValue;
         private readonly object _cacheLock = new object();
@@ -76,13 +78,15 @@ namespace DeejNG.Services
 
             if (mic != null)
             {
-                float previous = _lastInputVolume.TryGetValue(deviceName, out var lastVol) ? lastVol : -1f;
+                // FIX: Use nullable float instead of -1f sentinel
+                float? previous = _lastInputVolume.TryGetValue(deviceName, out var lastVol) ? lastVol : null;
 
-                if (Math.Abs(previous - level) > 0.01f)
+                // Check if this is first time setting volume or if volume changed significantly
+                if (previous == null || Math.Abs(previous.Value - level) > VolumeChangeThreshold)
                 {
                     try
                     {
-                        mic.AudioEndpointVolume.Mute = isMuted || level <= 0.01f;
+                        mic.AudioEndpointVolume.Mute = isMuted || level <= VolumeChangeThreshold;
                         mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
                         _lastInputVolume[deviceName] = level;
                     }
@@ -125,6 +129,7 @@ namespace DeejNG.Services
                 {
                     _inputDeviceMap.Clear();
                     _outputDeviceMap.Clear();
+                    _lastInputVolume.Clear(); // Clear the volume cache too
                     BuildInputDeviceCache();
                     BuildOutputDeviceCache();
                     _lastDeviceCacheTime = DateTime.Now;
@@ -139,7 +144,7 @@ namespace DeejNG.Services
 
         public bool ShouldRefreshCache()
         {
-            return (DateTime.Now - _lastDeviceCacheTime).TotalSeconds > 30;
+            return (DateTime.Now - _lastDeviceCacheTime).TotalSeconds > CacheRefreshIntervalSeconds;
         }
 
         private void BuildInputDeviceCache()
