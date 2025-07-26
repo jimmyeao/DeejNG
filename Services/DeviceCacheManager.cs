@@ -25,48 +25,64 @@ namespace DeejNG.Services
 
         public MMDevice GetInputDevice(string deviceName)
         {
+            var key = deviceName.ToLowerInvariant();
+
+            // First check: Quick cache lookup
             lock (_cacheLock)
             {
-                if (_inputDeviceMap.TryGetValue(deviceName.ToLowerInvariant(), out var device))
+                if (_inputDeviceMap.TryGetValue(key, out var cachedDevice))
                 {
-                    return device;
+                    return cachedDevice;
                 }
-
-                // Try to find and cache the device
-                var foundDevice = _deviceEnumerator
-                    .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-                    .FirstOrDefault(d => d.FriendlyName.Equals(deviceName, StringComparison.OrdinalIgnoreCase));
-
-                if (foundDevice != null)
-                {
-                    _inputDeviceMap[deviceName.ToLowerInvariant()] = foundDevice;
-                }
-
-                return foundDevice;
             }
+
+            // Expensive operation outside lock to prevent blocking other threads
+            var foundDevice = _deviceEnumerator
+                .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+                .FirstOrDefault(d => d.FriendlyName.Equals(deviceName, StringComparison.OrdinalIgnoreCase));
+
+            // Second lock: Add to cache if found
+            if (foundDevice != null)
+            {
+                lock (_cacheLock)
+                {
+                    // Use TryAdd to handle race conditions gracefully
+                    _inputDeviceMap.TryAdd(key, foundDevice);
+                }
+            }
+
+            return foundDevice;
         }
 
         public MMDevice GetOutputDevice(string deviceName)
         {
+            var key = deviceName.ToLowerInvariant();
+
+            // First check: Quick cache lookup
             lock (_cacheLock)
             {
-                if (_outputDeviceMap.TryGetValue(deviceName.ToLowerInvariant(), out var device))
+                if (_outputDeviceMap.TryGetValue(key, out var cachedDevice))
                 {
-                    return device;
+                    return cachedDevice;
                 }
-
-                // Try to find and cache the device
-                var foundDevice = _deviceEnumerator
-                    .EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active)
-                    .FirstOrDefault(d => d.FriendlyName.Equals(deviceName, StringComparison.OrdinalIgnoreCase));
-
-                if (foundDevice != null)
-                {
-                    _outputDeviceMap[deviceName.ToLowerInvariant()] = foundDevice;
-                }
-
-                return foundDevice;
             }
+
+            // Expensive operation outside lock to prevent blocking other threads
+            var foundDevice = _deviceEnumerator
+                .EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active)
+                .FirstOrDefault(d => d.FriendlyName.Equals(deviceName, StringComparison.OrdinalIgnoreCase));
+
+            // Second lock: Add to cache if found
+            if (foundDevice != null)
+            {
+                lock (_cacheLock)
+                {
+                    // Use TryAdd to handle race conditions gracefully
+                    _outputDeviceMap.TryAdd(key, foundDevice);
+                }
+            }
+
+            return foundDevice;
         }
 
         public void ApplyInputDeviceVolume(string deviceName, float level, bool isMuted)

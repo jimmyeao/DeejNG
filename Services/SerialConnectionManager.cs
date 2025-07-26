@@ -23,15 +23,11 @@ namespace DeejNG.Services
         private DateTime _lastValidDataTimestamp = DateTime.MinValue;
         private int _noDataCounter = 0;
         private bool _expectingData = false;
-        private const int WatchdogTimeoutSeconds = 5;
-        private const int MaxWatchdogTimeouts = 3;
-        private const int MaxSerialBufferSize = 1024;
-        private const int MaxSerialLineLength = 200;
-        private const int BufferCleanupIntervalMinutes = 5;
+
         public event Action<string> DataReceived;
         public event Action Connected;
         public event Action Disconnected;
-        private DateTime _lastBufferCleanupTime = DateTime.MinValue;
+
         public bool IsConnected => _isConnected && !_serialDisconnected;
         public bool IsFullyInitialized => _serialPortFullyInitialized;
         public string LastConnectedPort => _lastConnectedPort;
@@ -200,6 +196,7 @@ namespace DeejNG.Services
 
             try
             {
+                // First check if the port is actually open
                 if (_serialPort == null || !_serialPort.IsOpen)
                 {
                     Debug.WriteLine("[SerialWatchdog] Serial port closed unexpectedly");
@@ -207,17 +204,19 @@ namespace DeejNG.Services
                     return;
                 }
 
+                // Check if we're receiving data
                 if (_expectingData)
                 {
                     TimeSpan elapsed = DateTime.Now - _lastValidDataTimestamp;
 
-                    // Use constants instead of magic numbers
-                    if (elapsed.TotalSeconds > WatchdogTimeoutSeconds)
+                    // If it's been more than 5 seconds without data, assume disconnected
+                    if (elapsed.TotalSeconds > 5)
                     {
                         _noDataCounter++;
                         Debug.WriteLine($"[SerialWatchdog] No data received for {elapsed.TotalSeconds:F1} seconds (count: {_noDataCounter})");
 
-                        if (_noDataCounter >= MaxWatchdogTimeouts)
+                        // After 3 consecutive timeouts, consider disconnected
+                        if (_noDataCounter >= 3)
                         {
                             Debug.WriteLine("[SerialWatchdog] Too many timeouts, considering disconnected");
                             HandleSerialDisconnection();
@@ -225,6 +224,7 @@ namespace DeejNG.Services
                             return;
                         }
 
+                        // Try to write a single byte to test connection
                         try
                         {
                             _serialPort.Write(new byte[] { 10 }, 0, 1);
@@ -238,11 +238,14 @@ namespace DeejNG.Services
                     }
                     else
                     {
+                        // Reset counter if we're getting data
                         _noDataCounter = 0;
                     }
                 }
                 else if (_isConnected && (DateTime.Now - _lastValidDataTimestamp).TotalSeconds > 10)
                 {
+                    // If we haven't seen any data for 10 seconds after connecting,
+                    // we may need to set the flag to start expecting data
                     _expectingData = true;
                 }
             }
@@ -251,6 +254,7 @@ namespace DeejNG.Services
                 Debug.WriteLine($"[SerialWatchdog] Error: {ex.Message}");
             }
         }
+
         public bool ShouldAttemptReconnect()
         {
             return _serialDisconnected && !_manualDisconnect;
@@ -268,12 +272,13 @@ namespace DeejNG.Services
             {
                 string incoming = _serialPort.ReadExisting();
 
+                // Update timestamp when we receive data
                 _lastValidDataTimestamp = DateTime.Now;
                 _expectingData = true;
                 _noDataCounter = 0;
 
-                // Buffer management with improved cleanup logic
-                if (_serialBuffer.Length > MaxSerialBufferSize)
+                // Buffer management to prevent long-running issues
+                if (_serialBuffer.Length > 1024)
                 {
                     string bufferContent = _serialBuffer.ToString();
                     int lastNewline = Math.Max(bufferContent.LastIndexOf('\n'), bufferContent.LastIndexOf('\r'));
@@ -291,10 +296,11 @@ namespace DeejNG.Services
                     }
                 }
 
-                _invalidSerialCharsRegex.Replace(incoming, "");
+                // Filter out non-printable characters and invalid data
+                incoming = _invalidSerialCharsRegex.Replace(incoming, "");
                 _serialBuffer.Append(incoming);
 
-                // Process complete lines...
+                // Process all complete lines in the buffer
                 while (true)
                 {
                     string buffer = _serialBuffer.ToString();
@@ -307,6 +313,7 @@ namespace DeejNG.Services
 
                     string line = buffer.Substring(0, newLineIndex).Trim();
 
+                    // Remove the processed line including any CR/LF characters
                     int removeLength = newLineIndex + 1;
                     if (buffer.Length > newLineIndex + 1)
                     {
@@ -318,11 +325,12 @@ namespace DeejNG.Services
 
                     _serialBuffer.Remove(0, removeLength);
 
-                    // Use constant for line length validation
-                    if (!string.IsNullOrWhiteSpace(line) && line.Length < MaxSerialLineLength)
+                    // Validate and process line
+                    if (!string.IsNullOrWhiteSpace(line) && line.Length < 200)
                     {
                         DataReceived?.Invoke(line);
 
+                        // Mark as fully initialized after first valid data
                         if (!_serialPortFullyInitialized)
                         {
                             _serialPortFullyInitialized = true;
@@ -331,17 +339,7 @@ namespace DeejNG.Services
                     }
                 }
 
-                // FIX: Improved periodic buffer cleanup
-                if (_serialBuffer.Length == 0)
-                {
-                    var now = DateTime.Now;
-                    if ((now - _lastBufferCleanupTime).TotalMinutes >= BufferCleanupIntervalMinutes)
-                    {
-                        _serialBuffer.Clear();
-                        _lastBufferCleanupTime = now;
-                        Debug.WriteLine("[Serial] Periodic buffer cleanup performed");
-                    }
-                }
+                // Periodic buffer cleanup removed - was dead code (only cleared when buffer already empty)
             }
             catch (IOException)
             {
@@ -357,6 +355,7 @@ namespace DeejNG.Services
                 _serialBuffer.Clear();
             }
         }
+
         private void SerialPort_ErrorReceived(object sender, SerialErrorReceivedEventArgs e)
         {
             Debug.WriteLine($"[Serial] Error received: {e.EventType}");

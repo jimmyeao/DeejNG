@@ -16,7 +16,8 @@ namespace DeejNG.Services
         private DateTime _lastSettingsSave = DateTime.MinValue;
         private string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeejNG", "settings.json");
 
-        public AppSettings Settings { get; private set; } = new AppSettings();
+        // Rename to avoid conflict with DeejNG.Settings class
+        public AppSettings AppSettings { get; private set; } = new AppSettings();
 
         public event Action<AppSettings> SettingsChanged;
 
@@ -29,14 +30,14 @@ namespace DeejNG.Services
                     var json = File.ReadAllText(SettingsPath);
                     Debug.WriteLine($"[Settings] Loading from: {SettingsPath}");
 
-                    Settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+                    AppSettings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
 
-                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayEnabled: {Settings.OverlayEnabled}");
-                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayPosition: ({Settings.OverlayX}, {Settings.OverlayY})");
-                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayOpacity: {Settings.OverlayOpacity}");
-                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayTimeoutSeconds: {Settings.OverlayTimeoutSeconds}");
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayEnabled: {AppSettings.OverlayEnabled}");
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayPosition: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayOpacity: {AppSettings.OverlayOpacity}");
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayTimeoutSeconds: {AppSettings.OverlayTimeoutSeconds}");
 
-                    return Settings;
+                    return AppSettings;
                 }
                 else
                 {
@@ -48,9 +49,9 @@ namespace DeejNG.Services
                 Debug.WriteLine($"[Settings] Error loading settings: {ex.Message}");
             }
 
-            Settings = new AppSettings();
+            AppSettings = new AppSettings();
             Debug.WriteLine("[Settings] Using default AppSettings");
-            return Settings;
+            return AppSettings;
         }
 
         public void SaveSettings(AppSettings newSettings)
@@ -66,13 +67,13 @@ namespace DeejNG.Services
             {
                 try
                 {
-                    Settings = newSettings;
+                    AppSettings = newSettings;
 
                     var options = new JsonSerializerOptions
                     {
                         WriteIndented = true
                     };
-                    var json = JsonSerializer.Serialize(Settings, options);
+                    var json = JsonSerializer.Serialize(AppSettings, options);
 
                     // Ensure directory exists
                     var dir = Path.GetDirectoryName(SettingsPath);
@@ -84,9 +85,9 @@ namespace DeejNG.Services
                     File.WriteAllText(SettingsPath, json);
                     _lastSettingsSave = DateTime.Now;
 
-                    Debug.WriteLine($"[Settings] Saved successfully with {Settings.SliderTargets?.Count ?? 0} slider configurations and overlay settings");
+                    Debug.WriteLine($"[Settings] Saved successfully with {AppSettings.SliderTargets?.Count ?? 0} slider configurations and overlay settings");
 
-                    SettingsChanged?.Invoke(Settings);
+                    SettingsChanged?.Invoke(AppSettings);
                 }
                 catch (Exception ex)
                 {
@@ -102,34 +103,24 @@ namespace DeejNG.Services
 
         public string LoadSavedPortName()
         {
-            try
+            // Use the in-memory AppSettings instead of reloading from disk
+            if (!string.IsNullOrWhiteSpace(AppSettings?.PortName))
             {
-                var settings = LoadSettingsFromDisk();
-                if (!string.IsNullOrWhiteSpace(settings?.PortName))
-                {
-                    Debug.WriteLine($"[Settings] Loaded saved port name: {settings.PortName}");
-                    return settings.PortName;
-                }
-                else
-                {
-                    Debug.WriteLine("[Settings] No saved port name found");
-                    return string.Empty;
-                }
+                Debug.WriteLine($"[Settings] Using cached port name: {AppSettings.PortName}");
+                return AppSettings.PortName;
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ERROR] Failed to load saved port name: {ex.Message}");
-                return string.Empty;
-            }
+
+            Debug.WriteLine("[Settings] No saved port name found");
+            return string.Empty;
         }
 
         public void SaveInvertState(bool isInverted)
         {
             try
             {
-                var settings = LoadSettingsFromDisk() ?? new AppSettings();
-                settings.IsSliderInverted = isInverted;
-                SaveSettings(settings);
+                // Use existing in-memory settings instead of reloading from disk
+                AppSettings.IsSliderInverted = isInverted;
+                SaveSettings(AppSettings);
             }
             catch (Exception ex)
             {
@@ -161,25 +152,25 @@ namespace DeejNG.Services
 
         public void ValidateOverlayPosition()
         {
-            Debug.WriteLine($"[Settings] Initial overlay position from file: ({Settings.OverlayX}, {Settings.OverlayY})");
+            Debug.WriteLine($"[Settings] Initial overlay position from file: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
 
-            if (!IsPositionValid(Settings.OverlayX, Settings.OverlayY))
+            if (!IsPositionValid(AppSettings.OverlayX, AppSettings.OverlayY))
             {
-                Debug.WriteLine($"[Settings] Position ({Settings.OverlayX}, {Settings.OverlayY}) is outside virtual screen bounds, resetting to default");
-                Settings.OverlayX = 100;
-                Settings.OverlayY = 100;
+                Debug.WriteLine($"[Settings] Position ({AppSettings.OverlayX}, {AppSettings.OverlayY}) is outside virtual screen bounds, resetting to default");
+                AppSettings.OverlayX = 100;
+                AppSettings.OverlayY = 100;
             }
             else
             {
-                Debug.WriteLine($"[Settings] Position ({Settings.OverlayX}, {Settings.OverlayY}) is valid for multi-monitor setup");
+                Debug.WriteLine($"[Settings] Position ({AppSettings.OverlayX}, {AppSettings.OverlayY}) is valid for multi-monitor setup");
             }
 
-            if (Settings.OverlayOpacity <= 0 || Settings.OverlayOpacity > 1)
+            if (AppSettings.OverlayOpacity <= 0 || AppSettings.OverlayOpacity > 1)
             {
-                Settings.OverlayOpacity = 0.85;
+                AppSettings.OverlayOpacity = 0.85;
             }
 
-            Debug.WriteLine($"[Settings] Final overlay settings - Enabled: {Settings.OverlayEnabled}, Position: ({Settings.OverlayX}, {Settings.OverlayY}), Opacity: {Settings.OverlayOpacity}, Timeout: {Settings.OverlayTimeoutSeconds}");
+            Debug.WriteLine($"[Settings] Final overlay settings - Enabled: {AppSettings.OverlayEnabled}, Position: ({AppSettings.OverlayX}, {AppSettings.OverlayY}), Opacity: {AppSettings.OverlayOpacity}, Timeout: {AppSettings.OverlayTimeoutSeconds}");
         }
 
         public AppSettings CreateSettingsFromUI(
@@ -204,12 +195,12 @@ namespace DeejNG.Services
                 DisableSmoothing = disableSmoothing,
 
                 // Preserve overlay settings from current settings
-                OverlayEnabled = Settings.OverlayEnabled,
-                OverlayOpacity = Settings.OverlayOpacity,
-                OverlayTimeoutSeconds = Settings.OverlayTimeoutSeconds,
-                OverlayX = Settings.OverlayX,
-                OverlayY = Settings.OverlayY,
-                OverlayTextColor = Settings.OverlayTextColor
+                OverlayEnabled = AppSettings.OverlayEnabled,
+                OverlayOpacity = AppSettings.OverlayOpacity,
+                OverlayTimeoutSeconds = AppSettings.OverlayTimeoutSeconds,
+                OverlayX = AppSettings.OverlayX,
+                OverlayY = AppSettings.OverlayY,
+                OverlayTextColor = AppSettings.OverlayTextColor
             };
         }
     }
