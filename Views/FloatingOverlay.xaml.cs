@@ -265,7 +265,7 @@ namespace DeejNG.Views
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
-
+            this.LocationChanged += Window_LocationChanged;
             try
             {
                 var helper = new WindowInteropHelper(this);
