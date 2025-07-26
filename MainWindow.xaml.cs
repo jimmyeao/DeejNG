@@ -1,30 +1,19 @@
-﻿// MainWindow.xaml.cs
-using System;
-using System.Collections.Generic;
+﻿
 using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
-using System.Linq;
 using Microsoft.Win32;
-
-using System.Runtime;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
-
 using DeejNG.Dialogs;
 using DeejNG.Services;
-using Microsoft.VisualBasic.Logging;
-
-using Microsoft.Win32;
-
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 using DeejNG.Classes;
 using DeejNG.Models;
-using static System.Windows.Forms.Design.AxImporter;
 using System.Runtime.InteropServices;
 using System.Windows.Media;
 using DeejNG.Views;
@@ -35,81 +24,49 @@ namespace DeejNG
     {
         #region Public Fields
 
-        // You'll also need to make _channelControls accessible to allow the ChannelControl to get its index
-        // In MainWindow.xaml.cs, change the private field to:
         public List<ChannelControl> _channelControls = new();
-
         public FloatingOverlay _overlay;
 
         #endregion Public Fields
 
         #region Private Fields
 
-        private const int CALIBRATION_DELAY_MS = 500;
-        private const int METER_SESSION_CACHE_MS = 1000;
         private static readonly System.Text.RegularExpressions.Regex _invalidSerialCharsRegex = new System.Text.RegularExpressions.Regex(@"[^\x20-\x7E\r\n]", System.Text.RegularExpressions.RegexOptions.Compiled);
-
-        // Object pools to reduce allocations
-        private readonly Queue<List<AudioTarget>> _audioTargetListPool = new();
-
-        private readonly HashSet<string> _cachedMappedApplications = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly MMDeviceEnumerator _deviceEnumerator = new();
         private readonly Dictionary<string, float> _lastInputVolume = new(StringComparer.OrdinalIgnoreCase);
         private readonly object _settingsLock = new object();
-        private readonly Queue<HashSet<string>> _stringHashSetPool = new();
         private readonly HashSet<string> _tempStringSet = new(StringComparer.OrdinalIgnoreCase);
         // Cached collections to avoid repeated allocations
         private readonly List<AudioTarget> _tempTargetList = new();
-
         private readonly object _unmappedLock = new object();
-        private readonly TimeSpan DEVICE_CACHE_DURATION = TimeSpan.FromSeconds(5);
         private readonly TimeSpan UNMAPPED_THROTTLE_INTERVAL = TimeSpan.FromMilliseconds(100);
         // 500ms calibration period
         private bool _allowVolumeApplication = false;
-
         private AppSettings _appSettings = new();
         private MMDevice _audioDevice;
         private AudioService _audioService;
         private MMDevice _cachedAudioDevice;
         private SessionCollection _cachedSessionsForMeters;
-        private float _cachedUnmappedPeak = 0;
-        private DateTime _calibrationStartTime = DateTime.MinValue;
         private bool _disableSmoothing = false;
         private int _expectedSliderCount = -1;
         private bool _expectingData = false;
         private DispatcherTimer _forceCleanupTimer;
         private bool _hasLoadedInitialSettings = false;
-        private bool _hasReceivedInitialData = false;
-        // Track expected number of sliders
-        private bool _hasReceivedInitialSerialData = false;
-
         private bool _hasSyncedMuteStates = false;
-        private Dictionary<int, float> _initialSliderValues = new();
         private Dictionary<string, MMDevice> _inputDeviceMap = new();
-        private bool _isCalibrating = false;
         private bool _isClosing = false;
         private bool _isConnected = false;
         private bool _isInitializing = true;
         private string _lastConnectedPort = string.Empty;
         private DateTime _lastDeviceCacheTime = DateTime.MinValue;
-        private DateTime _lastDeviceRefresh = DateTime.MinValue;
         private DateTime _lastForcedCleanup = DateTime.MinValue;
-        // Increase throttling
-        private DateTime _lastMappedApplicationsUpdate = DateTime.MinValue;
-
         private DateTime _lastMeterSessionRefresh = DateTime.MinValue;
         private DateTime _lastSessionRefresh = DateTime.MinValue;
         private DateTime _lastSettingsSave = DateTime.MinValue;
         private DateTime _lastUnmappedMeterUpdate = DateTime.MinValue;
-        private float _lastUnmappedPeak = 0;
-        // Cache unmapped peak calculations
-        private DateTime _lastUnmappedPeakCalculation = DateTime.MinValue;
-
-        private DateTime _lastUnmappedPeakUpdate = DateTime.MinValue;
         private DateTime _lastValidDataTimestamp = DateTime.MinValue;
         private bool _manualDisconnect = false;
         private bool _metersEnabled = true;
-        private int _meterSkipCounter = 0;
         private DispatcherTimer _meterTimer;
         private int _noDataCounter = 0;
         private Dictionary<string, MMDevice> _outputDeviceMap = new();
@@ -122,14 +79,11 @@ namespace DeejNG
         private bool _serialPortFullyInitialized = false;
         private DispatcherTimer _serialReconnectTimer;
         private DispatcherTimer _serialWatchdogTimer;
-        private int _sessionCacheHitCount = 0;
         private DispatcherTimer _sessionCacheTimer;
         private List<(AudioSessionControl session, string sessionId, string instanceId)> _sessionIdCache = new();
-
         //  private Dictionary<string, AudioSessionControl> _sessionLookup = new();
         private AudioEndpointVolume _systemVolume;
         private string _userSelectedPort = string.Empty;
-
         private bool isDarkTheme = false;
 
         #endregion Private Fields
@@ -241,18 +195,6 @@ namespace DeejNG
             }
 
             return null;
-        }
-
-        public Dictionary<int, List<AudioTarget>> GetAllAssignedTargets()
-        {
-            var result = new Dictionary<int, List<AudioTarget>>();
-
-            for (int i = 0; i < _channelControls.Count; i++)
-            {
-                result[i] = new List<AudioTarget>(_channelControls[i].AudioTargets);
-            }
-
-            return result;
         }
 
         public HashSet<string> GetAllMappedApplications()
@@ -678,42 +620,7 @@ namespace DeejNG
             {
                 Debug.WriteLine($"[ERROR] Applying theme '{theme}': {ex.Message}");
                 // Fallback to default theme if there's an error
-                ApplyThemeFallback("Light");
-            }
-        }
-
-        private void ApplyThemeFallback(string theme)
-        {
-            isDarkTheme = theme == "Dark";
-            Uri themeUri;
-            if (theme == "Dark")
-            {
-                themeUri = new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml");
-                isDarkTheme = true;
-            }
-            else
-            {
-                themeUri = new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Light.xaml");
-                isDarkTheme = false;
-            }
-
-            // Update the theme
-            var existingTheme = Application.Current.Resources.MergedDictionaries.FirstOrDefault(d => d.Source == themeUri);
-            if (existingTheme == null)
-            {
-                existingTheme = new ResourceDictionary() { Source = themeUri };
-                Application.Current.Resources.MergedDictionaries.Add(existingTheme);
-            }
-
-            // Remove the other theme
-            var otherThemeUri = isDarkTheme
-                ? new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Light.xaml")
-                : new Uri("pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml");
-
-            var currentTheme = Application.Current.Resources.MergedDictionaries.FirstOrDefault(d => d.Source == otherThemeUri);
-            if (currentTheme != null)
-            {
-                Application.Current.Resources.MergedDictionaries.Remove(currentTheme);
+               
             }
         }
 
@@ -1104,31 +1011,6 @@ namespace DeejNG
             }
         }
 
-        private void Disconnect_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (_serialPort != null && _serialPort.IsOpen)
-                {
-                    _serialPort.Close();
-                    _serialPort.DataReceived -= SerialPort_DataReceived;
-                    _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
-                }
-
-                _isConnected = false;
-                _serialDisconnected = true;
-                _serialPortFullyInitialized = false;
-
-                UpdateConnectionStatus();
-
-                Debug.WriteLine("[Manual] User disconnected serial port");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[ERROR] Failed to disconnect: {ex.Message}");
-            }
-        }
-
         private void EnableStartup()
         {
             string appName = "DeejNG";
@@ -1157,7 +1039,6 @@ namespace DeejNG
                 MessageBox.Show($"Failed to set startup key: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
-
      
         private async void ExitMenuItem_Click(object sender, RoutedEventArgs e)
         {
@@ -1331,75 +1212,7 @@ namespace DeejNG
             Debug.WriteLine("[Init] Sliders generated, waiting for first hardware data before completing initialization");
         }
 
-        //private float GetUnmappedApplicationsPeakLevel(HashSet<string> mappedApplications)
-        //{
-        //    // Minimal caching for maximum responsiveness
-        //    if ((DateTime.Now - _lastUnmappedPeakCalculation).TotalMilliseconds < 25) // Very minimal caching
-        //    {
-        //        return _cachedUnmappedPeak;
-        //    }
-
-        //    float highestPeak = 0;
-
-        //    try
-        //    {
-        //        var sessions = _cachedSessionsForMeters;
-        //        if (sessions == null) return 0;
-
-        //        // Process more sessions for better responsiveness
-        //        int maxSessions = Math.Min(sessions.Count, 15); // Process more sessions for completeness
-
-        //        for (int i = 0; i < maxSessions; i++)
-        //        {
-        //            var session = sessions[i];
-        //            try
-        //            {
-        //                if (session == null) continue;
-
-        //                int pid = (int)session.GetProcessID;
-
-        //                // Skip system sessions and low PIDs
-        //                if (pid <= 4) continue;
-
-        //                string processName = AudioUtilities.GetProcessNameSafely(pid);
-        //                _processNameCache[pid] = processName;
-
-        //                // Skip if we couldn't get a valid process name
-        //                if (string.IsNullOrEmpty(processName)) continue;
-
-        //                // Skip if this application is mapped to a slider
-        //                if (mappedApplications.Contains(processName)) continue;
-
-        //                // Get the peak level for this unmapped session
-        //                try
-        //                {
-        //                    float peak = session.AudioMeterInformation.MasterPeakValue;
-        //                    if (peak > highestPeak)
-        //                        highestPeak = peak;
-        //                }
-        //                catch
-        //                {
-        //                    // Session became invalid - ignore
-        //                }
-        //            }
-        //            catch
-        //            {
-        //                continue;
-        //            }
-        //        }
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        Debug.WriteLine($"[ERROR] Getting unmapped peak levels: {ex.Message}");
-        //    }
-
-        //    _cachedUnmappedPeak = highestPeak;
-        //    _lastUnmappedPeakCalculation = DateTime.Now;
-
-        //    return highestPeak;
-        //}
-
-        // Optimized unmapped peak level detection
+      
         private float GetUnmappedApplicationsPeakLevelOptimized(HashSet<string> mappedApplications, SessionCollection sessions)
         {
             float highestPeak = 0;
@@ -1457,7 +1270,6 @@ namespace DeejNG
             return highestPeak;
         }
 
-        // Method to handle serial disconnection
         private void HandleSerialDisconnection()
         {
             if (_serialDisconnected) return;
@@ -2054,7 +1866,7 @@ namespace DeejNG
             }
         }
 
-        // Add this new method
+
         private void ManualDisconnect()
         {
             try
@@ -2191,33 +2003,6 @@ namespace DeejNG
             });
         }
       
-
-        private void RefreshPorts_Click(object sender, RoutedEventArgs e)
-        {
-            // Refresh the list of available ports
-            LoadAvailablePorts();
-
-            // Show a message if no ports are available
-            if (ComPortSelector.Items.Count == 0)
-            {
-                MessageBox.Show("No serial ports detected. Please connect your device and try again.",
-                                "No Ports Available",
-                                MessageBoxButton.OK,
-                                MessageBoxImage.Information);
-            }
-            else
-            {
-                // If we're in disconnected state and there are ports available,
-                // attempt to reconnect to the last known port
-                if (_serialDisconnected && !string.IsNullOrEmpty(_lastConnectedPort) &&
-                    ComPortSelector.Items.Contains(_lastConnectedPort))
-                {
-                    ComPortSelector.SelectedItem = _lastConnectedPort;
-                    InitSerial(_lastConnectedPort, 9600);
-                }
-            }
-        }
-
         private void ReleaseComObject(object comObject)
         {
             if (comObject != null)
@@ -2236,9 +2021,7 @@ namespace DeejNG
                 }
             }
         }
-
-      
-
+  
         private void SaveInvertState()
         {
             try
