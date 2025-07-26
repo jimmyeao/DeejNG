@@ -9,9 +9,15 @@ namespace DeejNG.Dialogs
 {
     public partial class SettingsWindow : Window
     {
-        private AppSettings _settings;
+        #region Private Fields
+
         private readonly string _settingsPath;
         private MainWindow _mainWindow;
+        private AppSettings _settings;
+
+        #endregion Private Fields
+
+        #region Public Constructors
 
         public SettingsWindow()
         {
@@ -42,69 +48,34 @@ namespace DeejNG.Dialogs
             OverlayEnabledCheckBox.Unchecked += OverlayEnabledCheckBox_Changed;
             TextColorComboBox.SelectionChanged += TextColorComboBox_SelectionChanged;
         }
+
+        #endregion Public Constructors
+
+        #region Public Enums
+
         public enum TextColorOption
         {
             Auto,
             White,
             Black
         }
-        private void SetTextColorSelection(string textColor)
+
+        #endregion Public Enums
+
+        #region Private Methods
+
+        private void ApplySettingsToOverlay()
         {
-           
-            if (Enum.TryParse<TextColorOption>(textColor, true, out var colorOption))
+            if (_mainWindow != null)
             {
-                TextColorComboBox.SelectedIndex = (int)colorOption;
+                PreserveOverlayPosition();
+                _mainWindow.UpdateOverlaySettings(_settings);
+
+                if (_mainWindow._overlay != null)
+                {
+                    _mainWindow._overlay.UpdateSettings(_settings);
+                }
             }
-            else
-            {
-                TextColorComboBox.SelectedIndex = 0; // Default to Auto
-            }
-        }
-
-        private string GetTextColorFromSelection()
-        {
-            return TextColorComboBox.SelectedIndex switch
-            {
-                0 => "Auto",
-                1 => "White",
-                2 => "Black",
-                _ => "Auto"
-            };
-        }
-
-        private void TextColorComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (_settings == null) return;
-
-            _settings.OverlayTextColor = GetTextColorFromSelection();
-            ApplySettingsToOverlay();
-
-            Debug.WriteLine($"[Settings] Text color changed to: {_settings.OverlayTextColor}");
-        }
-        private void OverlayEnabledCheckBox_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_settings == null) return;
-
-            _settings.OverlayEnabled = OverlayEnabledCheckBox.IsChecked == true;
-            ApplySettingsToOverlay();
-
-            if (_settings.OverlayEnabled)
-            {
-                ShowOverlayImmediately();
-            }
-            else
-            {
-                HideOverlayImmediately();
-            }
-        }
-
-        private void OpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (_settings == null) return;
-
-            PreserveOverlayPosition();
-            _settings.OverlayOpacity = e.NewValue;
-            ApplySettingsToOverlay();
         }
 
         private void AutoCloseCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -121,36 +92,31 @@ namespace DeejNG.Dialogs
             }
         }
 
-        private void TimeoutSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        private void Cancel_Click(object sender, RoutedEventArgs e)
         {
-            if (_settings == null) return;
-
-            if (AutoCloseCheckBox.IsChecked == true)
+            var originalSettings = LoadSettings();
+            if (_mainWindow != null)
             {
-                _settings.OverlayTimeoutSeconds = (int)e.NewValue;
-                ApplySettingsToOverlay();
-            }
-        }
+                _mainWindow.UpdateOverlaySettings(originalSettings);
 
-        // New method for text color changes
-
-
-        private void ShowOverlayImmediately()
-        {
-            if (_mainWindow != null && _settings.OverlayEnabled)
-            {
-                Debug.WriteLine("[Settings] Showing overlay immediately");
-                _mainWindow.ShowVolumeOverlay();
-
-                if (_mainWindow._overlay != null && _mainWindow._channelControls?.Count > 0)
+                if (_mainWindow._overlay != null)
                 {
-                    var volumes = _mainWindow._channelControls.Select(c => c.CurrentVolume).ToList();
-                    var labels = _mainWindow._channelControls.Select(c => _mainWindow.GetChannelLabel(c)).ToList();
-
-                    _mainWindow._overlay.ShowVolumes(volumes, labels);
-                    Debug.WriteLine($"[Settings] Overlay shown with {volumes.Count} channels");
+                    _mainWindow._overlay.UpdateSettings(originalSettings);
                 }
             }
+
+            Close();
+        }
+
+        private string GetTextColorFromSelection()
+        {
+            return TextColorComboBox.SelectedIndex switch
+            {
+                0 => "Auto",
+                1 => "White",
+                2 => "Black",
+                _ => "Auto"
+            };
         }
 
         private void HideOverlayImmediately()
@@ -159,30 +125,6 @@ namespace DeejNG.Dialogs
             {
                 Debug.WriteLine("[Settings] Hiding overlay immediately");
                 _mainWindow._overlay.Hide();
-            }
-        }
-
-        private void PreserveOverlayPosition()
-        {
-            if (_mainWindow?._overlay != null)
-            {
-                _settings.OverlayX = Math.Round(_mainWindow._overlay.Left, 1);
-                _settings.OverlayY = Math.Round(_mainWindow._overlay.Top, 1);
-                Debug.WriteLine($"[Settings] Preserved precise overlay position: ({_settings.OverlayX}, {_settings.OverlayY})");
-            }
-        }
-
-        private void ApplySettingsToOverlay()
-        {
-            if (_mainWindow != null)
-            {
-                PreserveOverlayPosition();
-                _mainWindow.UpdateOverlaySettings(_settings);
-
-                if (_mainWindow._overlay != null)
-                {
-                    _mainWindow._overlay.UpdateSettings(_settings);
-                }
             }
         }
 
@@ -204,6 +146,42 @@ namespace DeejNG.Dialogs
             }
 
             return new AppSettings();
+        }
+
+        private void OpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_settings == null) return;
+
+            PreserveOverlayPosition();
+            _settings.OverlayOpacity = e.NewValue;
+            ApplySettingsToOverlay();
+        }
+
+        private void OverlayEnabledCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_settings == null) return;
+
+            _settings.OverlayEnabled = OverlayEnabledCheckBox.IsChecked == true;
+            ApplySettingsToOverlay();
+
+            if (_settings.OverlayEnabled)
+            {
+                ShowOverlayImmediately();
+            }
+            else
+            {
+                HideOverlayImmediately();
+            }
+        }
+
+        private void PreserveOverlayPosition()
+        {
+            if (_mainWindow?._overlay != null)
+            {
+                _settings.OverlayX = Math.Round(_mainWindow._overlay.Left, 1);
+                _settings.OverlayY = Math.Round(_mainWindow._overlay.Top, 1);
+                Debug.WriteLine($"[Settings] Preserved precise overlay position: ({_settings.OverlayX}, {_settings.OverlayY})");
+            }
         }
 
         private void Save_Click(object sender, RoutedEventArgs e)
@@ -243,20 +221,57 @@ namespace DeejNG.Dialogs
             Close();
         }
 
-        private void Cancel_Click(object sender, RoutedEventArgs e)
+        private void SetTextColorSelection(string textColor)
         {
-            var originalSettings = LoadSettings();
-            if (_mainWindow != null)
+            if (Enum.TryParse<TextColorOption>(textColor, true, out var colorOption))
             {
-                _mainWindow.UpdateOverlaySettings(originalSettings);
+                TextColorComboBox.SelectedIndex = (int)colorOption;
+            }
+            else
+            {
+                TextColorComboBox.SelectedIndex = 0; // Default to Auto
+            }
+        }
+        private void ShowOverlayImmediately()
+        {
+            if (_mainWindow != null && _settings.OverlayEnabled)
+            {
+                Debug.WriteLine("[Settings] Showing overlay immediately");
+                _mainWindow.ShowVolumeOverlay();
 
-                if (_mainWindow._overlay != null)
+                if (_mainWindow._overlay != null && _mainWindow._channelControls?.Count > 0)
                 {
-                    _mainWindow._overlay.UpdateSettings(originalSettings);
+                    var volumes = _mainWindow._channelControls.Select(c => c.CurrentVolume).ToList();
+                    var labels = _mainWindow._channelControls.Select(c => _mainWindow.GetChannelLabel(c)).ToList();
+
+                    _mainWindow._overlay.ShowVolumes(volumes, labels);
+                    Debug.WriteLine($"[Settings] Overlay shown with {volumes.Count} channels");
                 }
             }
-
-            Close();
         }
+
+        private void TextColorComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_settings == null) return;
+
+            _settings.OverlayTextColor = GetTextColorFromSelection();
+            ApplySettingsToOverlay();
+
+            Debug.WriteLine($"[Settings] Text color changed to: {_settings.OverlayTextColor}");
+        }
+        private void TimeoutSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_settings == null) return;
+
+            if (AutoCloseCheckBox.IsChecked == true)
+            {
+                _settings.OverlayTimeoutSeconds = (int)e.NewValue;
+                ApplySettingsToOverlay();
+            }
+        }
+
+        #endregion Private Methods
+
+        // New method for text color changes
     }
 }

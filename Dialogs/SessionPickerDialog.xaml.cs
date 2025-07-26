@@ -1,16 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Windows;
+﻿using DeejNG.Classes; // Add this for AudioUtilities
 using NAudio.CoreAudioApi;
-using DeejNG.Classes; // Add this for AudioUtilities
+using System.Diagnostics;
+using System.Windows;
 
 namespace DeejNG.Dialogs
 {
     public static class AudioSessionManagerHelper
     {
+
         #region Public Methods
 
         public static List<SessionInfo> GetSessionNames(List<string> alreadyUsed, string current)
@@ -105,6 +102,7 @@ namespace DeejNG.Dialogs
 
         public class SessionInfo
         {
+
             #region Public Properties
 
             public string FriendlyName { get; set; }
@@ -117,99 +115,24 @@ namespace DeejNG.Dialogs
             public override string ToString() => FriendlyName;
 
             #endregion Public Methods
+
         }
 
         #endregion Public Classes
+
     }
 
     public partial class SessionPickerDialog : Window
     {
-        #region Public Constructors
-
-        public string? SelectedTarget { get; private set; }
-
-        public SessionPickerDialog(bool isInputMode)
-        {
-            InitializeComponent();
-            LoadSessions(isInputMode);
-        }
-
-        public SessionPickerDialog(string current)
-        {
-            InitializeComponent();
-
-            try
-            {
-                var allTargets = Application.Current.Windows.OfType<MainWindow>().FirstOrDefault()?.GetCurrentTargets() ?? new List<string>();
-                var sessions = AudioSessionManagerHelper.GetSessionNames(allTargets, current);
-
-                SessionComboBox.ItemsSource = sessions;
-                SessionComboBox.DisplayMemberPath = "FriendlyName";
-                SessionComboBox.SelectedValuePath = "Id";
-
-                // Try to select the current session
-                var currentSession = sessions.FirstOrDefault(s =>
-                    string.Equals(s.FriendlyName, current, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(s.Id, current, StringComparison.OrdinalIgnoreCase));
-
-                if (currentSession != null)
-                {
-                    SessionComboBox.SelectedItem = currentSession;
-                    Debug.WriteLine($"[SessionPicker] Selected current session: {current}");
-                }
-                else
-                {
-                    Debug.WriteLine($"[SessionPicker] Could not find current session: {current}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[SessionPicker] Error in constructor: {ex.Message}");
-                MessageBox.Show($"Error loading audio sessions: {ex.Message}", "Session Picker Error",
-                              MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
-        }
-
-        #endregion Public Constructors
 
         #region Public Properties
 
         public string SelectedSession { get; private set; }
+        public string? SelectedTarget { get; private set; }
 
         #endregion Public Properties
 
         #region Private Methods
-
-        private void Ok_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (SessionComboBox.SelectedItem is AudioSessionManagerHelper.SessionInfo selectedSession)
-                {
-                    SelectedSession = selectedSession.FriendlyName; // Use FriendlyName for consistency
-                    Debug.WriteLine($"[SessionPicker] Selected: {SelectedSession}");
-                }
-                else if (!string.IsNullOrWhiteSpace(SessionComboBox.Text))
-                {
-                    SelectedSession = SessionComboBox.Text.Trim();
-                    Debug.WriteLine($"[SessionPicker] Manual entry: {SelectedSession}");
-                }
-                else
-                {
-                    Debug.WriteLine("[SessionPicker] No selection made");
-                    return;
-                }
-
-                DialogResult = true;
-                Close();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[SessionPicker] Error in Ok_Click: {ex.Message}");
-                MessageBox.Show($"Error selecting session: {ex.Message}", "Selection Error",
-                              MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
-        }
 
         // Keep the original LoadSessions method for input mode compatibility
         private void LoadSessions(bool isInputMode)
@@ -291,6 +214,37 @@ namespace DeejNG.Dialogs
             {
                 Debug.WriteLine($"[SessionPicker] Error in LoadSessions: {ex.Message}");
                 MessageBox.Show($"Error loading sessions: {ex.Message}", "Load Error",
+                              MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private void Ok_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (SessionComboBox.SelectedItem is AudioSessionManagerHelper.SessionInfo selectedSession)
+                {
+                    SelectedSession = selectedSession.FriendlyName; // Use FriendlyName for consistency
+                    Debug.WriteLine($"[SessionPicker] Selected: {SelectedSession}");
+                }
+                else if (!string.IsNullOrWhiteSpace(SessionComboBox.Text))
+                {
+                    SelectedSession = SessionComboBox.Text.Trim();
+                    Debug.WriteLine($"[SessionPicker] Manual entry: {SelectedSession}");
+                }
+                else
+                {
+                    Debug.WriteLine("[SessionPicker] No selection made");
+                    return;
+                }
+
+                DialogResult = true;
+                Close();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[SessionPicker] Error in Ok_Click: {ex.Message}");
+                MessageBox.Show($"Error selecting session: {ex.Message}", "Selection Error",
                               MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
