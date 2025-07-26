@@ -744,6 +744,6 @@ namespace DeejNG.Views
 
         #endregion Private Methods
 
-        // Fixed method - no longer tries to access private _appSettings
+      
     }
 }

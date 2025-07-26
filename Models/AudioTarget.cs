@@ -12,10 +12,7 @@ namespace DeejNG.Models
     /// </summary>
     public class AudioTarget
     {
-        /// <summary>
-        /// The name of the audio target (e.g., "Spotify", "Microphone", "Speakers").
-        /// </summary>
-        public string Name { get; set; } = "";
+        #region Public Properties
 
         /// <summary>
         /// Indicates whether the target is an input device (e.g., a microphone).
@@ -26,6 +23,13 @@ namespace DeejNG.Models
         /// Indicates whether the target is an output device (e.g., speakers or headphones).
         /// </summary>
         public bool IsOutputDevice { get; set; } = false;
+
+        /// <summary>
+        /// The name of the audio target (e.g., "Spotify", "Microphone", "Speakers").
+        /// </summary>
+        public string Name { get; set; } = "";
+
+        #endregion Public Properties
     }
 
 }

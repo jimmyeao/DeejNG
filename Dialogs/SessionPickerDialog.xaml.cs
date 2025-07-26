@@ -117,23 +117,39 @@ namespace DeejNG.Dialogs
 
         #region Public Classes
 
+        /// <summary>
+        /// Represents basic information about an audio session,
+        /// including a user-friendly name and an internal identifier.
+        /// </summary>
         public class SessionInfo
         {
-
             #region Public Properties
 
+            /// <summary>
+            /// A user-friendly name for the session (e.g., "Spotify", "Chrome").
+            /// Used for display purposes in the UI.
+            /// </summary>
             public string FriendlyName { get; set; }
+
+            /// <summary>
+            /// A unique identifier for the session, typically used for matching
+            /// or controlling the audio session internally.
+            /// </summary>
             public string Id { get; set; }
 
             #endregion Public Properties
 
             #region Public Methods
 
+            /// <summary>
+            /// Returns the friendly name when this object is converted to a string.
+            /// Useful for displaying in combo boxes or logs.
+            /// </summary>
             public override string ToString() => FriendlyName;
 
             #endregion Public Methods
-
         }
+
 
         #endregion Public Classes
 
@@ -151,7 +167,7 @@ namespace DeejNG.Dialogs
 
         #region Private Methods
 
-      
+
 
         /// <summary>
         /// Handles the OK button click in the session picker dialog.
