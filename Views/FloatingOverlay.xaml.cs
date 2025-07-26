@@ -1,24 +1,33 @@
 ﻿// Updated FloatingOverlay.xaml.cs with proper text color handling
 
+using DeejNG.Classes;
 using SkiaSharp;
 using SkiaSharp.Views.Desktop;
 using SkiaSharp.Views.WPF;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Threading;
-using DeejNG.Classes;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace DeejNG.Views
 {
     public partial class FloatingOverlay : Window
     {
         #region Private Fields
+        // Win32 API constants
 
+        private const int GWL_EXSTYLE = -20;
+        private const int WS_EX_NOACTIVATE = 0x08000000;
+        private const int WS_EX_TOOLWINDOW = 0x00000080;
+        private const int HWND_TOPMOST = -1;
+        private const uint SWP_NOACTIVATE = 0x0010;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOSIZE = 0x0001;
         private const float HorizontalSpacing = 130f;
         private const float LabelOffset = 65f;
         private const int MaxChannelsPerRow = 6;
@@ -37,6 +46,15 @@ namespace DeejNG.Views
         private MainWindow _parentWindow;
         private string _textColorMode = "Auto";
         private List<float> _volumes = new();
+        // Win32 API imports
+        [DllImport("user32.dll")]
+        private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
 
         #endregion Private Fields
 
@@ -46,18 +64,21 @@ namespace DeejNG.Views
         {
             InitializeComponent();
 
-            _parentWindow = parentWindow;
-            this.Opacity = 1.0;
+            // Essential focus prevention (minimal overhead)
+            this.ShowActivated = false;
+            this.Focusable = false;
+            this.IsTabStop = false;
+            this.Topmost = true;
+            this.WindowStyle = WindowStyle.None;
+            this.AllowsTransparency = true;
+            this.Background = System.Windows.Media.Brushes.Transparent;
+            this.ResizeMode = ResizeMode.NoResize;
+            this.ShowInTaskbar = false;
+            this.Owner = parentWindow;
 
             SetPrecisePosition(settings.OverlayX, settings.OverlayY);
             OverlayOpacity = settings.OverlayOpacity;
             _textColorMode = settings.OverlayTextColor ?? "Auto";
-
-            this.AllowsTransparency = true;
-            this.WindowStyle = WindowStyle.None;
-            this.Background = null;
-            this.Topmost = true;
-
             SetupAutoCloseTimer(settings.OverlayTimeoutSeconds);
             SetupBackgroundAnalysisTimer();
 
@@ -86,71 +107,63 @@ namespace DeejNG.Views
         /// <param name="channelLabels">Optional list of labels for each channel. If null, defaults to "Ch 1", "Ch 2", etc.</param>
         public void ShowVolumes(List<float> volumes, List<string> channelLabels = null)
         {
-            // THROTTLE: Prevent excessive volume updates (enforces a 50ms minimum update interval)
-            if (DateTime.Now.Subtract(_lastVolumeUpdate).TotalMilliseconds < 50)
+            // REDUCE throttling for better responsiveness (50ms -> 16ms for ~60fps)
+            if (DateTime.Now.Subtract(_lastVolumeUpdate).TotalMilliseconds < 16)
             {
-                return; // Skip update if called too soon
+                return;
             }
-            _lastVolumeUpdate = DateTime.Now; // Record current update time
+            _lastVolumeUpdate = DateTime.Now;
 
-            // Store the new volume levels
             _volumes = new List<float>(volumes);
 
-            // If custom channel labels are provided and match the number of volumes, use them
             if (channelLabels != null && channelLabels.Count == volumes.Count)
             {
                 _channelLabels = new List<string>(channelLabels);
             }
             else
             {
-                // Otherwise, generate default labels like "Ch 1", "Ch 2", etc.
                 _channelLabels = volumes.Select((_, i) => $"Ch {i + 1}").ToList();
             }
 
-            // Adjust the overlay window size to match the number of channels and layout
             UpdateWindowSizeToContent();
 
-            // OPTIMIZED: Start background color analysis only if in "Auto" text color mode and not already running
+            // OPTIMIZE: Only start background analysis if really needed
             if (_textColorMode == "Auto" && !_backgroundAnalysisTimer.IsEnabled)
             {
                 _backgroundAnalysisTimer.Start();
-
-                // Immediately analyze background on a separate thread to set appropriate text color
+                // Don't block UI - do this async
                 Task.Run(() =>
                 {
                     try
                     {
                         AnalyzeBackgroundAndUpdateTextColor();
                     }
-                    catch
-                    {
-                        // Ignore any errors that occur during analysis
-                    }
+                    catch { }
                 });
             }
 
-            // Trigger a repaint of the canvas to reflect new volume data
             OverlayCanvas.InvalidateVisual();
 
-            // If the overlay window is not currently visible, show and bring it to the front
+            // FOCUS PREVENTION: Only change what's necessary
             if (!this.IsVisible)
             {
-                this.Show();
-                this.Activate();
+                // Use Visibility instead of Show() - this is the key fix
+                this.Visibility = Visibility.Visible;
+
+                // DON'T call Activate() - this was stealing focus
+                // DON'T call SetWindowPos unless absolutely necessary
             }
 
-            // Restart the auto-close timer (if it exists) to keep overlay visible temporarily
             if (_autoCloseTimer != null)
             {
                 _autoCloseTimer.Stop();
                 _autoCloseTimer.Start();
             }
         }
-
         /// <summary>
-        /// Applies updated overlay settings such as opacity, position, auto-close timeout, and text color mode.
-        /// </summary>
-        /// <param name="settings">The updated settings to apply.</param>
+                 /// Applies updated overlay settings such as opacity, position, auto-close timeout, and text color mode.
+                 /// </summary>
+                 /// <param name="settings">The updated settings to apply.</param>
         public void UpdateSettings(AppSettings settings)
         {
             // Prevents unnecessary updates or recursion during settings application
@@ -203,12 +216,72 @@ namespace DeejNG.Views
             _backgroundAnalysisTimer?.Stop();
             base.OnClosed(e);
         }
+        public new void Show()
+        {
+            try
+            {
+                // Don't call base.Show() as it can steal focus
+                this.Visibility = Visibility.Visible;
 
+                // If you need to ensure it's topmost, do it without activation
+                if (this.IsLoaded)
+                {
+                    var helper = new WindowInteropHelper(this);
+                    if (helper.Handle != IntPtr.Zero)
+                    {
+                        SetWindowPos(helper.Handle, (IntPtr)HWND_TOPMOST, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Overlay] Error in custom Show: {ex.Message}");
+            }
+        }
+        public new void Hide()
+        {
+            try
+            {
+                this.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Overlay] Error in Hide: {ex.Message}");
+            }
+        }
+
+        // Prevent any focus-related events
+        protected override void OnGotFocus(RoutedEventArgs e)
+        {
+            // Don't call base to prevent focus handling
+            e.Handled = true;
+        }
+
+        protected override void OnActivated(EventArgs e)
+        {
+            // Don't call base to prevent activation
+        }
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
-            this.LocationChanged += Window_LocationChanged;
-            UpdateWindowSizeToContent();
+
+            try
+            {
+                var helper = new WindowInteropHelper(this);
+                IntPtr hwnd = helper.Handle;
+
+                // Minimal Win32 fix - just prevent activation
+                int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+                exStyle |= WS_EX_NOACTIVATE;
+                SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+
+                Debug.WriteLine("[Overlay] Applied WS_EX_NOACTIVATE");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Overlay] Error setting window styles: {ex.Message}");
+            }
         }
 
         #endregion Protected Methods

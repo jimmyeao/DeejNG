@@ -1,21 +1,22 @@
-﻿using System.Diagnostics;
+﻿using DeejNG.Classes;
+using DeejNG.Dialogs;
+using DeejNG.Models;
+using DeejNG.Services;
+using DeejNG.Views;
+using Microsoft.Win32;
+using NAudio.CoreAudioApi;
+using NAudio.CoreAudioApi.Interfaces;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
-using Microsoft.Win32;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Threading;
-using DeejNG.Dialogs;
-using DeejNG.Services;
-using NAudio.CoreAudioApi;
-using NAudio.CoreAudioApi.Interfaces;
-using DeejNG.Classes;
-using DeejNG.Models;
-using System.Runtime.InteropServices;
+using System.Windows.Interop;
 using System.Windows.Media;
-using DeejNG.Views;
+using System.Windows.Threading;
 
 namespace DeejNG
 {
@@ -29,7 +30,11 @@ namespace DeejNG
         #endregion Public Fields
 
         #region Private Fields
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
 
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
         // Object pools to reduce allocations (UNUSED - can be removed)
         private readonly Queue<List<AudioTarget>> _audioTargetListPool = new();
         private readonly HashSet<string> _cachedMappedApplications = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -76,7 +81,7 @@ namespace DeejNG
         public MainWindow()
         {
             _isInitializing = true;
-
+            RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
             InitializeComponent();
             Loaded += MainWindow_Loaded;
 
@@ -115,7 +120,7 @@ namespace DeejNG
             _serialManager.DataReceived += HandleSliderData;
             _serialManager.Connected += () =>
             {
-                Dispatcher.Invoke(() =>
+                Dispatcher.BeginInvoke(() =>
                 {
                     UpdateConnectionStatus();
 
@@ -127,12 +132,12 @@ namespace DeejNG
 
                     // Stop reconnection timer on successful connection
                     _timerCoordinator.StopSerialReconnect();
-                });
+                }, DispatcherPriority.Background); // FIX: Use background priority to prevent focus stealing
             };
             _serialManager.Disconnected += () =>
             {
                 _allowVolumeApplication = false;
-                Dispatcher.Invoke(() =>
+                Dispatcher.BeginInvoke(() =>
                 {
                     UpdateConnectionStatus();
 
@@ -141,7 +146,7 @@ namespace DeejNG
                     {
                         _timerCoordinator.StartSerialReconnect();
                     }
-                });
+                }, DispatcherPriority.Background); // FIX: Use background priority to prevent focus stealing
             };
 
             StartSessionCacheUpdater();
@@ -289,24 +294,40 @@ namespace DeejNG
             if (_overlay == null)
             {
                 Debug.WriteLine("[Overlay] Creating new overlay");
-                Debug.WriteLine($"[Overlay] Loaded position from settings: ({_settingsManager.AppSettings.OverlayX}, {_settingsManager.AppSettings.OverlayY})");
 
-                // Validate position against virtual screen bounds (multi-monitor)
                 if (!_settingsManager.IsPositionValid(_settingsManager.AppSettings.OverlayX, _settingsManager.AppSettings.OverlayY))
                 {
-                    Debug.WriteLine($"[Overlay] Loaded position ({_settingsManager.AppSettings.OverlayX}, {_settingsManager.AppSettings.OverlayY}) is invalid, using default");
                     _settingsManager.AppSettings.OverlayX = 100;
                     _settingsManager.AppSettings.OverlayY = 100;
                 }
 
                 _overlay = new FloatingOverlay(_settingsManager.AppSettings, this);
-                Debug.WriteLine($"[Overlay] Created at validated position ({_settingsManager.AppSettings.OverlayX}, {_settingsManager.AppSettings.OverlayY})");
             }
 
             var volumes = _channelControls.Select(c => c.CurrentVolume).ToList();
             var labels = _channelControls.Select(c => GetChannelLabel(c)).ToList();
 
+            // Let the overlay handle focus prevention internally
             _overlay.ShowVolumes(volumes, labels);
+        }
+
+        // FIX: Safe overlay display that won't steal focus
+        private void ShowVolumeOverlayIfSafe()
+        {
+            // Only show overlay if:
+            // 1. Our main window is already active/focused, OR
+            // 2. Overlay is set to always show (no timeout), OR
+            // 3. Window is visible and not minimized
+            if (this.IsActive ||
+                _settingsManager.AppSettings.OverlayTimeoutSeconds == AppSettings.OverlayNoTimeout ||
+                (this.IsVisible && this.WindowState != WindowState.Minimized))
+            {
+                ShowVolumeOverlay();
+            }
+            else
+            {
+                Debug.WriteLine("[Overlay] Skipping overlay to prevent focus stealing");
+            }
         }
 
         public void UpdateOverlayPosition(double x, double y)
@@ -518,11 +539,7 @@ namespace DeejNG
 
         private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level)
         {
-            // Simple check - don't apply volumes until we're ready
-            if (!_allowVolumeApplication)
-            {
-                return;
-            }
+            if (!_allowVolumeApplication) return;
 
             foreach (var target in targets)
             {
@@ -538,19 +555,17 @@ namespace DeejNG
                     }
                     else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
                     {
-                        // Handle unmapped applications with aggressive throttling
                         lock (_unmappedLock)
                         {
-                            // More aggressive throttling for unmapped
                             var now = DateTime.Now;
                             if ((now - _lastUnmappedMeterUpdate) < UNMAPPED_THROTTLE_INTERVAL)
                             {
-                                // Skip this update entirely for responsiveness
+                                // Skip for responsiveness
                             }
                             _lastUnmappedMeterUpdate = now;
 
                             var mappedApps = GetAllMappedApplications();
-                            mappedApps.Remove("unmapped"); // Don't exclude unmapped from itself
+                            mappedApps.Remove("unmapped");
 
                             _audioService.ApplyVolumeToUnmappedApplications(level, ctrl.IsMuted, mappedApps);
                         }
@@ -566,7 +581,6 @@ namespace DeejNG
                 }
             }
         }
-
         private void AudioEndpointVolume_OnVolumeNotification(AudioVolumeNotificationData data)
         {
             Dispatcher.Invoke(() =>
@@ -865,7 +879,6 @@ namespace DeejNG
 
             try
             {
-                // Validate data format before processing
                 if (!data.Contains('|') && !float.TryParse(data, out _))
                 {
                     Debug.WriteLine($"[Serial] Invalid data format: {data}");
@@ -873,28 +886,22 @@ namespace DeejNG
                 }
 
                 string[] parts = data.Split('|');
+                if (parts.Length == 0) return;
 
-                if (parts.Length == 0)
-                {
-                    return;
-                }
-
+                // REVERT: Use normal priority for responsive UI
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     try
                     {
-                        // Hardware slider count takes priority - regenerate if mismatch
+                        // Hardware slider count takes priority
                         if (_channelControls.Count != parts.Length)
                         {
                             Debug.WriteLine($"[INFO] Hardware has {parts.Length} sliders but app has {_channelControls.Count}. Adjusting to match hardware.");
 
-                            // Save current targets before regenerating
                             var currentTargets = _channelControls.Select(c => c.AudioTargets).ToList();
-
                             _expectedSliderCount = parts.Length;
                             GenerateSliders(parts.Length);
 
-                            // Restore saved targets for sliders that still exist
                             for (int i = 0; i < Math.Min(currentTargets.Count, _channelControls.Count); i++)
                             {
                                 _channelControls[i].AudioTargets = currentTargets[i];
@@ -904,14 +911,13 @@ namespace DeejNG
                             return;
                         }
 
-                        // Process the data for existing sliders only
+                        // Process slider data
                         int maxIndex = Math.Min(parts.Length, _channelControls.Count);
 
                         for (int i = 0; i < maxIndex; i++)
                         {
                             if (!float.TryParse(parts[i].Trim(), out float level)) continue;
 
-                            // Handle hardware noise - snap small values to exact zero
                             if (level <= 10) level = 0;
                             if (level >= 1013) level = 1023;
 
@@ -927,12 +933,13 @@ namespace DeejNG
                             float currentVolume = ctrl.CurrentVolume;
                             if (Math.Abs(currentVolume - level) < 0.01f) continue;
 
+                            // Keep UI responsive
                             ctrl.SmoothAndSetVolume(level, suppressEvent: !_allowVolumeApplication, disableSmoothing: _disableSmoothing);
 
                             if (_allowVolumeApplication)
                             {
                                 ApplyVolumeToTargets(ctrl, targets, level);
-                                ShowVolumeOverlay();
+                                ShowVolumeOverlay(); // Let the overlay handle its own focus prevention
                             }
                         }
 
@@ -956,14 +963,13 @@ namespace DeejNG
                     {
                         Debug.WriteLine($"[ERROR] Processing slider data in UI thread: {ex.Message}");
                     }
-                }));
+                })); // REVERT: No DispatcherPriority specified = Normal priority
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[ERROR] Parsing slider data: {ex.Message}");
             }
         }
-
         private void LoadAvailablePorts()
         {
             try
@@ -1164,12 +1170,12 @@ namespace DeejNG
 
             Debug.WriteLine("[SerialReconnect] Attempting to reconnect...");
 
-            // Update UI to show attempting reconnection
-            Dispatcher.Invoke(() =>
+            // Update UI to show attempting reconnection with background priority to prevent focus stealing
+            Dispatcher.BeginInvoke(() =>
             {
                 ConnectionStatus.Text = "Attempting to reconnect...";
                 ConnectionStatus.Foreground = Brushes.Orange;
-            });
+            }, DispatcherPriority.Background);
 
             if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName))
             {
@@ -1185,12 +1191,12 @@ namespace DeejNG
                 if (availablePorts.Length == 0)
                 {
                     Debug.WriteLine("[SerialReconnect] No serial ports available");
-                    Dispatcher.Invoke(() =>
+                    Dispatcher.BeginInvoke(() =>
                     {
                         ConnectionStatus.Text = "Waiting for device...";
                         ConnectionStatus.Foreground = Brushes.Orange;
                         LoadAvailablePorts();
-                    });
+                    }, DispatcherPriority.Background);
                     return;
                 }
 
@@ -1208,11 +1214,11 @@ namespace DeejNG
             catch (Exception ex)
             {
                 Debug.WriteLine($"[SerialReconnect] Failed to reconnect: {ex.Message}");
-                Dispatcher.Invoke(() =>
+                Dispatcher.BeginInvoke(() =>
                 {
                     ConnectionStatus.Text = "Reconnection failed - retrying...";
                     ConnectionStatus.Foreground = Brushes.Red;
-                });
+                }, DispatcherPriority.Background);
             }
         }
 
@@ -1270,7 +1276,7 @@ namespace DeejNG
                 {
                     Debug.WriteLine("[AutoConnect] Successfully connected!");
                     attemptTimer.Stop();
-                    Dispatcher.Invoke(() => UpdateConnectionStatus());
+                    Dispatcher.BeginInvoke(() => UpdateConnectionStatus(), DispatcherPriority.Background);
                     return;
                 }
 
@@ -1285,7 +1291,7 @@ namespace DeejNG
                         _timerCoordinator.StartSerialReconnect();
                     }
 
-                    Dispatcher.Invoke(() => UpdateConnectionStatus());
+                    Dispatcher.BeginInvoke(() => UpdateConnectionStatus(), DispatcherPriority.Background);
                     return;
                 }
 
@@ -1560,10 +1566,10 @@ namespace DeejNG
                 statusColor = Brushes.Red;
             }
 
-            // Ensure we're on the UI thread
+            // Ensure we're on the UI thread and use background priority to prevent focus stealing
             if (!Dispatcher.CheckAccess())
             {
-                Dispatcher.Invoke(() => UpdateConnectionStatus());
+                Dispatcher.BeginInvoke(() => UpdateConnectionStatus(), DispatcherPriority.Background);
                 return;
             }
 
