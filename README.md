@@ -1,7 +1,8 @@
 ![example workflow](https://github.com/jimmyeao/DeejNG/actions/workflows/codeql.yml/badge.svg)
 # DeejNG
 
-![Screen Recording 2025-07-12 134720 (1)](https://github.com/user-attachments/assets/f6480159-9857-4fb0-8840-5471621184ac)
+<img width="667" height="459" alt="image" src="https://github.com/user-attachments/assets/fdbe1c28-3be5-4c03-a894-2f8d7ebb3296" />
+
 
 DeejNG is a modern, extensible audio mixer and controller for Windows, built with WPF (.NET 9), NAudio, and SkiaSharp. It allows real-time control over system and app volumes using physical sliders (e.g. Arduino), complete with VU meters, mute toggles, and persistent target mappings. This is meant as a companion app to the hardware, the code for which can be found here https://github.com/omriharel/deej
 
