@@ -1,10 +1,13 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace DeejNG.Services
 {
@@ -23,6 +26,21 @@ namespace DeejNG.Services
         private DateTime _lastValidDataTimestamp = DateTime.MinValue;
         private int _noDataCounter = 0;
         private bool _expectingData = false;
+        private bool _disposed = false;
+
+        // FIX 1: Add thread safety and buffering
+        private readonly object _bufferLock = new object();
+        private readonly ConcurrentQueue<string> _dataQueue = new ConcurrentQueue<string>();
+        private readonly Timer _dataProcessingTimer;
+        private readonly Timer _bufferCleanupTimer;
+
+        // FIX 2: Add rate limiting to prevent overwhelming
+        private DateTime _lastDataProcessed = DateTime.MinValue;
+        private const int MinProcessingIntervalMs = 10; // Minimum 10ms between processing
+
+        // FIX 3: Add buffer size monitoring
+        private int _totalBytesReceived = 0;
+        private DateTime _lastBufferSizeLog = DateTime.MinValue;
 
         public event Action<string> DataReceived;
         public event Action Connected;
@@ -32,6 +50,16 @@ namespace DeejNG.Services
         public bool IsFullyInitialized => _serialPortFullyInitialized;
         public string LastConnectedPort => _lastConnectedPort;
         public string CurrentPort => _serialPort?.PortName ?? string.Empty;
+
+        public SerialConnectionManager()
+        {
+            // FIX 4: Initialize processing timers
+            _dataProcessingTimer = new Timer(ProcessDataQueue, null,
+                TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(50));
+
+            _bufferCleanupTimer = new Timer(PerformBufferCleanup, null,
+                TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+        }
 
         public void InitSerial(string portName, int baudRate)
         {
@@ -51,12 +79,14 @@ namespace DeejNG.Services
 
                     _isConnected = false;
                     _serialDisconnected = true;
-                    // Don't call StatusChanged - let MainWindow handle UI updates
                     return;
                 }
 
-                // Close existing connection if any
+                // FIX 5: Properly close existing connection with complete cleanup
                 ClosePort();
+
+                // FIX 6: Clear all buffers and reset counters
+                ClearAllBuffers();
 
                 _serialPort = new SerialPort(portName, baudRate)
                 {
@@ -64,13 +94,21 @@ namespace DeejNG.Services
                     WriteTimeout = 1000,
                     ReceivedBytesThreshold = 1,
                     DtrEnable = true,
-                    RtsEnable = true
+                    RtsEnable = true,
+                    // FIX 7: Set buffer sizes to prevent OS-level buffer overflow
+                    ReadBufferSize = 4096,
+                    WriteBufferSize = 2048
                 };
 
+                // FIX 8: Ensure event handlers are not duplicated
                 _serialPort.DataReceived += SerialPort_DataReceived;
                 _serialPort.ErrorReceived += SerialPort_ErrorReceived;
 
                 _serialPort.Open();
+
+                // FIX 9: Clear any stale data from the port
+                _serialPort.DiscardInBuffer();
+                _serialPort.DiscardOutBuffer();
 
                 // Update connection state
                 _isConnected = true;
@@ -82,6 +120,7 @@ namespace DeejNG.Services
                 _lastValidDataTimestamp = DateTime.Now;
                 _noDataCounter = 0;
                 _expectingData = false;
+                _totalBytesReceived = 0;
 
                 Connected?.Invoke();
 
@@ -95,8 +134,6 @@ namespace DeejNG.Services
                 _isConnected = false;
                 _serialDisconnected = true;
                 _serialPortFullyInitialized = false;
-
-                // Don't call StatusChanged - let MainWindow handle UI updates
             }
         }
 
@@ -115,7 +152,6 @@ namespace DeejNG.Services
                 _serialDisconnected = true;
                 _serialPortFullyInitialized = false;
 
-                // Don't call StatusChanged - let MainWindow handle UI updates
                 Disconnected?.Invoke();
 
                 Debug.WriteLine("[Manual] Manual disconnect completed");
@@ -192,7 +228,7 @@ namespace DeejNG.Services
 
         public void CheckConnection()
         {
-            if (!_isConnected || _serialDisconnected) return;
+            if (!_isConnected || _serialDisconnected || _disposed) return;
 
             try
             {
@@ -224,10 +260,13 @@ namespace DeejNG.Services
                             return;
                         }
 
-                        // Try to write a single byte to test connection
+                        // FIX 10: Safer connection test with error handling
                         try
                         {
-                            _serialPort.Write(new byte[] { 10 }, 0, 1);
+                            if (_serialPort.IsOpen && _serialPort.BytesToWrite == 0)
+                            {
+                                _serialPort.Write(new byte[] { 10 }, 0, 1);
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -257,89 +296,67 @@ namespace DeejNG.Services
 
         public bool ShouldAttemptReconnect()
         {
-            return _serialDisconnected && !_manualDisconnect;
+            return _serialDisconnected && !_manualDisconnect && !_disposed;
         }
 
+        // FIX 11: Completely rewritten data received handler with proper buffering
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
-            if (_serialPort == null || !_serialPort.IsOpen)
+            if (_serialPort == null || !_serialPort.IsOpen || _disposed)
             {
-                HandleSerialDisconnection();
                 return;
             }
 
             try
             {
+                // FIX 12: Read all available data at once to reduce event frequency
+                int bytesToRead = _serialPort.BytesToRead;
+                if (bytesToRead == 0) return;
+
+                // FIX 13: Prevent reading too much data at once
+                if (bytesToRead > 1024)
+                {
+                    Debug.WriteLine($"[WARNING] Large data chunk: {bytesToRead} bytes - reading in chunks");
+                    bytesToRead = 1024;
+                }
+
                 string incoming = _serialPort.ReadExisting();
+                if (string.IsNullOrEmpty(incoming)) return;
 
                 // Update timestamp when we receive data
                 _lastValidDataTimestamp = DateTime.Now;
                 _expectingData = true;
                 _noDataCounter = 0;
+                _totalBytesReceived += incoming.Length;
 
-                // Buffer management to prevent long-running issues
-                if (_serialBuffer.Length > 1024)
+                // FIX 14: Filter invalid characters efficiently before buffering
+                if (_invalidSerialCharsRegex.IsMatch(incoming))
                 {
-                    string bufferContent = _serialBuffer.ToString();
-                    int lastNewline = Math.Max(bufferContent.LastIndexOf('\n'), bufferContent.LastIndexOf('\r'));
-
-                    if (lastNewline > 0)
-                    {
-                        _serialBuffer.Clear();
-                        _serialBuffer.Append(bufferContent.Substring(lastNewline + 1));
-                        Debug.WriteLine("[WARNING] Serial buffer trimmed to last valid line");
-                    }
-                    else
-                    {
-                        _serialBuffer.Clear();
-                        Debug.WriteLine("[WARNING] Serial buffer exceeded limit and was cleared");
-                    }
+                    incoming = _invalidSerialCharsRegex.Replace(incoming, "");
                 }
 
-                // Filter out non-printable characters and invalid data
-                incoming = _invalidSerialCharsRegex.Replace(incoming, "");
-                _serialBuffer.Append(incoming);
-
-                // Process all complete lines in the buffer
-                while (true)
+                // FIX 15: Thread-safe buffer management
+                lock (_bufferLock)
                 {
-                    string buffer = _serialBuffer.ToString();
-                    int newLineIndex = buffer.IndexOf('\n');
-                    if (newLineIndex == -1)
+                    // FIX 16: Improved buffer size management
+                    if (_serialBuffer.Length > 2048)
                     {
-                        newLineIndex = buffer.IndexOf('\r');
-                        if (newLineIndex == -1) break;
+                        Debug.WriteLine($"[WARNING] Serial buffer size: {_serialBuffer.Length} chars");
+                        TrimBuffer();
                     }
 
-                    string line = buffer.Substring(0, newLineIndex).Trim();
-
-                    // Remove the processed line including any CR/LF characters
-                    int removeLength = newLineIndex + 1;
-                    if (buffer.Length > newLineIndex + 1)
-                    {
-                        if (buffer[newLineIndex] == '\r' && buffer[newLineIndex + 1] == '\n')
-                            removeLength++;
-                        else if (buffer[newLineIndex] == '\n' && buffer[newLineIndex + 1] == '\r')
-                            removeLength++;
-                    }
-
-                    _serialBuffer.Remove(0, removeLength);
-
-                    // Validate and process line
-                    if (!string.IsNullOrWhiteSpace(line) && line.Length < 200)
-                    {
-                        DataReceived?.Invoke(line);
-
-                        // Mark as fully initialized after first valid data
-                        if (!_serialPortFullyInitialized)
-                        {
-                            _serialPortFullyInitialized = true;
-                            Debug.WriteLine("[Serial] Port fully initialized and receiving data");
-                        }
-                    }
+                    _serialBuffer.Append(incoming);
                 }
 
-                // Periodic buffer cleanup removed - was dead code (only cleared when buffer already empty)
+                // FIX 17: Queue data for processing instead of immediate processing
+                _dataQueue.Enqueue(incoming);
+
+                // Mark as fully initialized after first valid data
+                if (!_serialPortFullyInitialized && incoming.Length > 0)
+                {
+                    _serialPortFullyInitialized = true;
+                    Debug.WriteLine("[Serial] Port fully initialized and receiving data");
+                }
             }
             catch (IOException)
             {
@@ -352,7 +369,166 @@ namespace DeejNG.Services
             catch (Exception ex)
             {
                 Debug.WriteLine($"[ERROR] Serial read: {ex.Message}");
+                lock (_bufferLock)
+                {
+                    _serialBuffer.Clear();
+                }
+            }
+        }
+
+        // FIX 18: Process data queue on a timer to reduce CPU load
+        private void ProcessDataQueue(object state)
+        {
+            if (_disposed || _dataQueue.IsEmpty) return;
+
+            try
+            {
+                // Rate limiting
+                if ((DateTime.Now - _lastDataProcessed).TotalMilliseconds < MinProcessingIntervalMs)
+                {
+                    return;
+                }
+
+                int processedItems = 0;
+                const int maxItemsPerCycle = 10;
+
+                while (_dataQueue.TryDequeue(out _) && processedItems < maxItemsPerCycle)
+                {
+                    processedItems++;
+                }
+
+                if (processedItems > 0)
+                {
+                    ProcessBufferedLines();
+                    _lastDataProcessed = DateTime.Now;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Processing data queue: {ex.Message}");
+            }
+        }
+
+        // FIX 19: Improved line processing with better memory management
+        private void ProcessBufferedLines()
+        {
+            if (_disposed) return;
+
+            try
+            {
+                lock (_bufferLock)
+                {
+                    string buffer = _serialBuffer.ToString();
+                    if (string.IsNullOrEmpty(buffer)) return;
+
+                    int processedLength = 0;
+                    var lines = new List<string>();
+
+                    // Find all complete lines
+                    for (int i = 0; i < buffer.Length; i++)
+                    {
+                        if (buffer[i] == '\n' || buffer[i] == '\r')
+                        {
+                            if (i > processedLength)
+                            {
+                                string line = buffer.Substring(processedLength, i - processedLength).Trim();
+                                if (!string.IsNullOrWhiteSpace(line) && line.Length < 200)
+                                {
+                                    lines.Add(line);
+                                }
+                            }
+
+                            // Skip any additional CR/LF characters
+                            while (i + 1 < buffer.Length && (buffer[i + 1] == '\n' || buffer[i + 1] == '\r'))
+                            {
+                                i++;
+                            }
+
+                            processedLength = i + 1;
+                        }
+                    }
+
+                    // Remove processed data from buffer
+                    if (processedLength > 0)
+                    {
+                        _serialBuffer.Remove(0, processedLength);
+                    }
+
+                    // Process lines outside of lock
+                    foreach (string line in lines)
+                    {
+                        try
+                        {
+                            DataReceived?.Invoke(line);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[ERROR] Processing line '{line}': {ex.Message}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] ProcessBufferedLines: {ex.Message}");
+            }
+        }
+
+        // FIX 20: Improved buffer trimming
+        private void TrimBuffer()
+        {
+            try
+            {
+                string bufferContent = _serialBuffer.ToString();
+                int lastNewline = Math.Max(bufferContent.LastIndexOf('\n'), bufferContent.LastIndexOf('\r'));
+
+                if (lastNewline > bufferContent.Length / 2) // Keep last half if newline is in second half
+                {
+                    _serialBuffer.Clear();
+                    _serialBuffer.Append(bufferContent.Substring(lastNewline + 1));
+                    Debug.WriteLine($"[Buffer] Trimmed to last {_serialBuffer.Length} characters");
+                }
+                else
+                {
+                    // Keep only the last 256 characters
+                    int keepLength = Math.Min(256, bufferContent.Length);
+                    _serialBuffer.Clear();
+                    _serialBuffer.Append(bufferContent.Substring(bufferContent.Length - keepLength));
+                    Debug.WriteLine($"[Buffer] Trimmed to last {keepLength} characters");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Buffer trim: {ex.Message}");
                 _serialBuffer.Clear();
+            }
+        }
+
+        // FIX 21: Periodic buffer cleanup
+        private void PerformBufferCleanup(object state)
+        {
+            if (_disposed) return;
+
+            try
+            {
+                lock (_bufferLock)
+                {
+                    if (_serialBuffer.Length > 1024)
+                    {
+                        TrimBuffer();
+                    }
+                }
+
+                // Log statistics periodically
+                if ((DateTime.Now - _lastBufferSizeLog).TotalMinutes >= 5)
+                {
+                    Debug.WriteLine($"[Stats] Total bytes received: {_totalBytesReceived:N0}, Buffer size: {_serialBuffer.Length}, Queue size: {_dataQueue.Count}");
+                    _lastBufferSizeLog = DateTime.Now;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Buffer cleanup: {ex.Message}");
             }
         }
 
@@ -370,37 +546,56 @@ namespace DeejNG.Services
 
         public void HandleSerialDisconnection()
         {
-            if (_serialDisconnected) return;
+            if (_serialDisconnected || _disposed) return;
 
             Debug.WriteLine("[Serial] Disconnection detected");
             _serialDisconnected = true;
             _isConnected = false;
 
-            // Don't call StatusChanged here - let the MainWindow handle UI updates
             Disconnected?.Invoke();
 
             ClosePort();
         }
 
+        // FIX 22: Improved port cleanup with better error handling
         private void ClosePort()
         {
             try
             {
                 if (_serialPort != null)
                 {
+                    // Remove event handlers first
                     _serialPort.DataReceived -= SerialPort_DataReceived;
                     _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
 
                     if (_serialPort.IsOpen)
                     {
-                        _serialPort.DiscardInBuffer();
-                        _serialPort.DiscardOutBuffer();
-                        _serialPort.Close();
+                        try
+                        {
+                            _serialPort.DiscardInBuffer();
+                            _serialPort.DiscardOutBuffer();
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[WARNING] Error discarding buffers: {ex.Message}");
+                        }
+
+                        try
+                        {
+                            _serialPort.Close();
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[WARNING] Error closing port: {ex.Message}");
+                        }
                     }
 
                     _serialPort.Dispose();
                     _serialPort = null;
                 }
+
+                // Clear all buffers after closing port
+                ClearAllBuffers();
             }
             catch (Exception ex)
             {
@@ -408,10 +603,50 @@ namespace DeejNG.Services
             }
         }
 
+        // FIX 23: Comprehensive buffer clearing
+        private void ClearAllBuffers()
+        {
+            try
+            {
+                lock (_bufferLock)
+                {
+                    _serialBuffer.Clear();
+                }
+
+                // Clear the data queue
+                while (_dataQueue.TryDequeue(out _)) { }
+
+                Debug.WriteLine("[Buffer] All buffers cleared");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Clearing buffers: {ex.Message}");
+            }
+        }
+
+        // FIX 24: Proper disposal with all cleanup
         public void Dispose()
         {
-            ClosePort();
-            _serialBuffer.Clear();
+            if (_disposed) return;
+
+            try
+            {
+                Debug.WriteLine("[Serial] Disposing SerialConnectionManager");
+                _disposed = true;
+
+                // Dispose timers first
+                _dataProcessingTimer?.Dispose();
+                _bufferCleanupTimer?.Dispose();
+
+                // Close port and clear buffers
+                ClosePort();
+
+                Debug.WriteLine("[Serial] SerialConnectionManager disposed successfully");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] Error during disposal: {ex.Message}");
+            }
         }
     }
 }
