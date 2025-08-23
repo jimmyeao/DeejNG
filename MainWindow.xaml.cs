@@ -98,6 +98,9 @@ namespace DeejNG
 
             _audioService = new AudioService();
 
+            // Load settings but don't auto-connect to serial port yet
+            LoadSettingsWithoutSerialConnection();
+
             // Load the saved port name from settings BEFORE populating ports
             LoadSavedPortName();
 
@@ -161,9 +164,6 @@ namespace DeejNG
             CreateNotifyIconContextMenu();
             IconHandler.AddIconToRemovePrograms("DeejNG");
             SetDisplayIcon();
-
-            // Load settings but don't auto-connect to serial port yet
-            LoadSettingsWithoutSerialConnection();
 
             _isInitializing = false;
             if (_settingsManager.AppSettings.StartMinimized)
