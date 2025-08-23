@@ -154,10 +154,16 @@ namespace DeejNG.Views
                 // DON'T call SetWindowPos unless absolutely necessary
             }
 
+            // CRITICAL: Always restart the auto-close timer when volumes are updated (if timer exists)
             if (_autoCloseTimer != null)
             {
                 _autoCloseTimer.Stop();
                 _autoCloseTimer.Start();
+                Debug.WriteLine($"[Overlay] Auto-close timer restarted ({_autoCloseTimer.Interval.TotalSeconds}s)");
+            }
+            else if (this.IsVisible)
+            {
+                Debug.WriteLine("[Overlay] No auto-close timer (persistent display)");
             }
         }
         /// <summary>
@@ -181,8 +187,18 @@ namespace DeejNG.Views
                 SetPrecisePosition(settings.OverlayX, settings.OverlayY);
             }
 
+            // Store whether overlay was visible before timer update
+            bool wasVisible = this.IsVisible;
+
             // Setup the auto-close timer with the configured timeout value (or disable if set to 0/-1)
             SetupAutoCloseTimer(settings.OverlayTimeoutSeconds);
+
+            // CRITICAL FIX: If overlay is currently visible and auto-close is enabled, start the timer immediately
+            if (wasVisible && _autoCloseTimer != null)
+            {
+                _autoCloseTimer.Start();
+                Debug.WriteLine($"[Overlay] Started auto-close timer ({settings.OverlayTimeoutSeconds}s) for visible overlay");
+            }
 
             // If text color mode is "Auto", start background analysis for optimal text visibility
             if (_textColorMode == "Auto")
@@ -203,7 +219,7 @@ namespace DeejNG.Views
             _isUpdatingSettings = false;
 
             // Log the change for debugging
-            Debug.WriteLine($"[Overlay] Settings updated - Text color mode: {_textColorMode}");
+            Debug.WriteLine($"[Overlay] Settings updated - Text color mode: {_textColorMode}, Timeout: {settings.OverlayTimeoutSeconds}s");
         }
 
 

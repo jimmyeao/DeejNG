@@ -1,4 +1,6 @@
 ﻿using DeejNG.Classes;
+using DeejNG.Core.Interfaces;
+using DeejNG.Core.Services;
 using DeejNG.Dialogs;
 using DeejNG.Models;
 using DeejNG.Services;
@@ -25,7 +27,6 @@ namespace DeejNG
         #region Public Fields
 
         public List<ChannelControl> _channelControls = new();
-        public FloatingOverlay _overlay;
 
         #endregion Public Fields
 
@@ -73,6 +74,7 @@ namespace DeejNG
         private readonly AppSettingsManager _settingsManager;
         private readonly SerialConnectionManager _serialManager;
         private readonly TimerCoordinator _timerCoordinator;
+        private readonly IOverlayService _overlayService;
 
         #endregion Private Fields
 
@@ -92,6 +94,7 @@ namespace DeejNG
             _settingsManager = new AppSettingsManager();
             _serialManager = new SerialConnectionManager();
             _timerCoordinator = new TimerCoordinator();
+            _overlayService = new OverlayService();
 
             _audioService = new AudioService();
 
@@ -283,32 +286,12 @@ namespace DeejNG
 
         public void ShowVolumeOverlay()
         {
-            Debug.WriteLine("[Overlay] ShowVolumeOverlay triggered");
-
-            if (_settingsManager.AppSettings is null || !_settingsManager.AppSettings.OverlayEnabled)
+            if (_settingsManager.AppSettings?.OverlayEnabled == true)
             {
-                Debug.WriteLine("[Overlay] Disabled in settings");
-                return;
+                var volumes = _channelControls.Select(c => c.CurrentVolume).ToList();
+                var labels = _channelControls.Select(c => GetChannelLabel(c)).ToList();
+                _overlayService.ShowOverlay(volumes, labels);
             }
-
-            if (_overlay == null)
-            {
-                Debug.WriteLine("[Overlay] Creating new overlay");
-
-                if (!_settingsManager.IsPositionValid(_settingsManager.AppSettings.OverlayX, _settingsManager.AppSettings.OverlayY))
-                {
-                    _settingsManager.AppSettings.OverlayX = 100;
-                    _settingsManager.AppSettings.OverlayY = 100;
-                }
-
-                _overlay = new FloatingOverlay(_settingsManager.AppSettings, this);
-            }
-
-            var volumes = _channelControls.Select(c => c.CurrentVolume).ToList();
-            var labels = _channelControls.Select(c => GetChannelLabel(c)).ToList();
-
-            // Let the overlay handle focus prevention internally
-            _overlay.ShowVolumes(volumes, labels);
         }
 
         // FIX: Safe overlay display that won't steal focus
@@ -332,48 +315,20 @@ namespace DeejNG
 
         public void UpdateOverlayPosition(double x, double y)
         {
-            if (_settingsManager.AppSettings != null)
-            {
-                // Store precise position with higher precision
-                _settingsManager.AppSettings.OverlayX = Math.Round(x, 1);
-                _settingsManager.AppSettings.OverlayY = Math.Round(y, 1);
-
-                Debug.WriteLine($"[Overlay] Position updated: X={_settingsManager.AppSettings.OverlayX}, Y={_settingsManager.AppSettings.OverlayY}");
-
-                // Debounce saves using timer coordinator
-                _timerCoordinator.TriggerPositionSave();
-            }
+            _overlayService.UpdatePosition(x, y);
         }
 
         public void UpdateOverlaySettings(AppSettings newSettings)
         {
-            // Preserve current position if overlay exists and is visible
-            if (_overlay != null && _overlay.IsVisible)
-            {
-                var currentX = Math.Round(_overlay.Left, 1);
-                var currentY = Math.Round(_overlay.Top, 1);
-
-                _settingsManager.AppSettings.OverlayX = currentX;
-                _settingsManager.AppSettings.OverlayY = currentY;
-            }
-            else if (_settingsManager.IsPositionValid(newSettings.OverlayX, newSettings.OverlayY))
-            {
-                _settingsManager.AppSettings.OverlayX = newSettings.OverlayX;
-                _settingsManager.AppSettings.OverlayY = newSettings.OverlayY;
-            }
-            else
-            {
-                _settingsManager.AppSettings.OverlayX = 100;
-                _settingsManager.AppSettings.OverlayY = 100;
-            }
-
-            // Update all settings including text color
+            _overlayService.UpdateSettings(newSettings);
+            
+            // Update the settings manager with the new settings
             _settingsManager.AppSettings.OverlayEnabled = newSettings.OverlayEnabled;
             _settingsManager.AppSettings.OverlayOpacity = newSettings.OverlayOpacity;
             _settingsManager.AppSettings.OverlayTimeoutSeconds = newSettings.OverlayTimeoutSeconds;
             _settingsManager.AppSettings.OverlayTextColor = newSettings.OverlayTextColor;
-
-            Debug.WriteLine($"[Overlay] Settings updated - Text Color: {_settingsManager.AppSettings.OverlayTextColor}");
+            _settingsManager.AppSettings.OverlayX = newSettings.OverlayX;
+            _settingsManager.AppSettings.OverlayY = newSettings.OverlayY;
         }
 
         #endregion Public Methods
@@ -387,12 +342,8 @@ namespace DeejNG
             // Stop all timers first
             _timerCoordinator.StopAll();
 
-            // Close the overlay if it exists
-            if (_overlay != null)
-            {
-                _overlay.Close();
-                _overlay = null;
-            }
+            // Dispose overlay service
+            _overlayService?.Dispose();
 
             // Clean up all registered event handlers
             foreach (var target in _registeredHandlers.Keys.ToList())
@@ -1079,6 +1030,9 @@ namespace DeejNG
                 foreach (var ctrl in _channelControls)
                     ctrl.SetMeterVisibility(settings.VuMeters);
 
+                // Initialize overlay service with settings
+                _overlayService.UpdateSettings(settings);
+                
                 // If overlay is enabled and autohide is disabled, show it immediately after startup
                 if (settings.OverlayEnabled && settings.OverlayTimeoutSeconds == AppSettings.OverlayNoTimeout)
                 {
@@ -1105,6 +1059,24 @@ namespace DeejNG
         {
             SliderScrollViewer.Visibility = Visibility.Visible;
             StartOnBootCheckBox.IsChecked = _settingsManager.AppSettings.StartOnBoot;
+            
+            // Initialize overlay service
+            _overlayService.Initialize();
+            _overlayService.PositionChanged += OnOverlayPositionChanged;
+        }
+
+        private void OnOverlayPositionChanged(object sender, OverlayPositionChangedEventArgs e)
+        {
+            if (_settingsManager.AppSettings != null)
+            {
+                _settingsManager.AppSettings.OverlayX = e.X;
+                _settingsManager.AppSettings.OverlayY = e.Y;
+                
+                // Debounce saves using timer coordinator
+                _timerCoordinator.TriggerPositionSave();
+                
+                Debug.WriteLine($"[Overlay] Position updated via service: X={e.X}, Y={e.Y}");
+            }
         }
 
         private void PositionSaveTimer_Tick(object sender, EventArgs e)

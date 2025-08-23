@@ -86,13 +86,7 @@ namespace DeejNG.Dialogs
         {
             if (_mainWindow != null)
             {
-                PreserveOverlayPosition();
                 _mainWindow.UpdateOverlaySettings(_settings);
-
-                if (_mainWindow._overlay != null)
-                {
-                    _mainWindow._overlay.UpdateSettings(_settings);
-                }
             }
         }
 
@@ -136,11 +130,8 @@ namespace DeejNG.Dialogs
 
             if (_mainWindow != null)
             {
-                // Apply original settings to the main window
+                // Apply original settings to the main window and overlay
                 _mainWindow.UpdateOverlaySettings(originalSettings);
-
-                // Apply original settings to the overlay (if it exists)
-                _mainWindow._overlay?.UpdateSettings(originalSettings);
             }
 
             // Close the settings window without saving changes
@@ -172,10 +163,20 @@ namespace DeejNG.Dialogs
         /// </summary>
         private void HideOverlayImmediately()
         {
-            if (_mainWindow?._overlay != null)
+            if (_mainWindow != null)
             {
                 Debug.WriteLine("[Settings] Hiding overlay immediately");
-                _mainWindow._overlay.Hide();
+                // Temporarily disable overlay and apply settings
+                var tempSettings = new AppSettings
+                {
+                    OverlayEnabled = false,
+                    OverlayOpacity = _settings.OverlayOpacity,
+                    OverlayTimeoutSeconds = _settings.OverlayTimeoutSeconds,
+                    OverlayTextColor = _settings.OverlayTextColor,
+                    OverlayX = _settings.OverlayX,
+                    OverlayY = _settings.OverlayY
+                };
+                _mainWindow.UpdateOverlaySettings(tempSettings);
             }
         }
 
@@ -240,12 +241,9 @@ namespace DeejNG.Dialogs
         /// </summary>
         private void PreserveOverlayPosition()
         {
-            if (_mainWindow?._overlay != null)
-            {
-                _settings.OverlayX = Math.Round(_mainWindow._overlay.Left, 1);
-                _settings.OverlayY = Math.Round(_mainWindow._overlay.Top, 1);
-                Debug.WriteLine($"[Settings] Preserved precise overlay position: ({_settings.OverlayX}, {_settings.OverlayY})");
-            }
+            // Position is now managed by the overlay service automatically
+            // No need to manually preserve position here
+            Debug.WriteLine("[Settings] Position preservation handled by overlay service");
         }
 
 
@@ -284,7 +282,7 @@ namespace DeejNG.Dialogs
                 File.WriteAllText(_settingsPath, json);
                 Debug.WriteLine($"[Settings] Final save - Text Color: {_settings.OverlayTextColor}");
 
-                // Apply the updated settings to the main window (and overlay, if applicable)
+                // Apply the updated settings to the main window and overlay
                 _mainWindow?.UpdateOverlaySettings(_settings);
             }
             catch (Exception ex)
@@ -321,7 +319,7 @@ namespace DeejNG.Dialogs
 
         /// <summary>
         /// Immediately displays the overlay with current volume levels and channel labels.
-        /// Only runs if the overlay is enabled in settings and the main window/overlay are available.
+        /// Only runs if the overlay is enabled in settings and the main window is available.
         /// </summary>
         private void ShowOverlayImmediately()
         {
@@ -329,24 +327,11 @@ namespace DeejNG.Dialogs
             if (_mainWindow != null && _settings.OverlayEnabled)
             {
                 Debug.WriteLine("[Settings] Showing overlay immediately");
-
+                
                 // Instruct the main window to display the overlay
                 _mainWindow.ShowVolumeOverlay();
-
-                // If the overlay and channel controls are initialized and populated
-                if (_mainWindow._overlay != null && _mainWindow._channelControls?.Count > 0)
-                {
-                    // Get the current volume values from each channel
-                    var volumes = _mainWindow._channelControls.Select(c => c.CurrentVolume).ToList();
-
-                    // Get the display label for each channel (e.g., "Mic", "Spotify", etc.)
-                    var labels = _mainWindow._channelControls.Select(c => _mainWindow.GetChannelLabel(c)).ToList();
-
-                    // Pass the volume and label data to the overlay for display
-                    _mainWindow._overlay.ShowVolumes(volumes, labels);
-
-                    Debug.WriteLine($"[Settings] Overlay shown with {volumes.Count} channels");
-                }
+                
+                Debug.WriteLine($"[Settings] Overlay shown via service");
             }
         }
 
