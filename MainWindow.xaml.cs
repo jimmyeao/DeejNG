@@ -1,7 +1,9 @@
 ﻿using DeejNG.Classes;
+using DeejNG.Core.Configuration;
 using DeejNG.Core.Interfaces;
 using DeejNG.Core.Services;
 using DeejNG.Dialogs;
+using DeejNG.Infrastructure.System;
 using DeejNG.Models;
 using DeejNG.Services;
 using DeejNG.Views;
@@ -75,6 +77,7 @@ namespace DeejNG
         private readonly SerialConnectionManager _serialManager;
         private readonly TimerCoordinator _timerCoordinator;
         private readonly IOverlayService _overlayService;
+        private readonly ISystemIntegrationService _systemIntegrationService;
 
         #endregion Private Fields
 
@@ -94,7 +97,8 @@ namespace DeejNG
             _settingsManager = new AppSettingsManager();
             _serialManager = new SerialConnectionManager();
             _timerCoordinator = new TimerCoordinator();
-            _overlayService = new OverlayService();
+            _overlayService = ServiceLocator.Get<IOverlayService>();
+            _systemIntegrationService = ServiceLocator.Get<ISystemIntegrationService>();
 
             _audioService = new AudioService();
 
@@ -163,7 +167,7 @@ namespace DeejNG
             MyNotifyIcon.Icon = new System.Drawing.Icon(iconPath);
             CreateNotifyIconContextMenu();
             IconHandler.AddIconToRemovePrograms("DeejNG");
-            SetDisplayIcon();
+            _systemIntegrationService.SetDisplayIcon();
 
             _isInitializing = false;
             if (_settingsManager.AppSettings.StartMinimized)
@@ -418,33 +422,7 @@ namespace DeejNG
 
         #region Private Methods
 
-        private static void SetDisplayIcon()
-        {
-            try
-            {
-                var exePath = Environment.ProcessPath;
-                if (!System.IO.File.Exists(exePath))
-                {
-                    return;
-                }
 
-                var myUninstallKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall");
-                string[]? mySubKeyNames = myUninstallKey?.GetSubKeyNames();
-                for (int i = 0; i < mySubKeyNames?.Length; i++)
-                {
-                    RegistryKey? myKey = myUninstallKey?.OpenSubKey(mySubKeyNames[i], true);
-                    var displayName = (string?)myKey?.GetValue("DisplayName");
-                    if (displayName?.Contains("YourApp") == true)
-                    {
-                        myKey?.SetValue("DisplayIcon", exePath + ",0");
-                        break;
-                    }
-                }
-                DeejNG.Settings.Default.IsFirstRun = false;
-                DeejNG.Settings.Default.Save();
-            }
-            catch { }
-        }
 
         private void ApplyTheme(string theme)
         {
@@ -676,48 +654,9 @@ namespace DeejNG
             SaveSettings();
         }
 
-        private void DisableStartup()
-        {
-            string appName = "DeejNG";
-            try
-            {
-                using RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
-                key?.DeleteValue(appName, false);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to delete startup key: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
 
-        private void EnableStartup()
-        {
-            string appName = "DeejNG";
 
-            try
-            {
-                string shortcutPath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "Microsoft", "Windows", "Start Menu", "Programs",
-                    "Jimmy White",
-                    "DeejNG",
-                    "DeejNG.appref-ms");
 
-                if (File.Exists(shortcutPath))
-                {
-                    using RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
-                    key?.SetValue(appName, $"\"{shortcutPath}\"", RegistryValueKind.String);
-                }
-                else
-                {
-                    MessageBox.Show($"Startup shortcut not found:\n{shortcutPath}", "Startup Setup", MessageBoxButton.OK, MessageBoxImage.Warning);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to set startup key: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
 
         private async void ExitMenuItem_Click(object sender, RoutedEventArgs e)
         {
@@ -1003,7 +942,7 @@ namespace DeejNG
                 StartOnBootCheckBox.Checked -= StartOnBootCheckBox_Checked;
                 StartOnBootCheckBox.Unchecked -= StartOnBootCheckBox_Unchecked;
 
-                bool isInStartup = IsStartupEnabled();
+                bool isInStartup = _systemIntegrationService.IsStartupEnabled();
                 settings.StartOnBoot = isInStartup;
                 StartOnBootCheckBox.IsChecked = isInStartup;
 
@@ -1322,7 +1261,7 @@ namespace DeejNG
         private void StartOnBootCheckBox_Checked(object sender, RoutedEventArgs e)
         {
             if (_isInitializing) return;
-            EnableStartup();
+            _systemIntegrationService.EnableStartup();
             _settingsManager.AppSettings.StartOnBoot = true;
             SaveSettings();
         }
@@ -1330,7 +1269,7 @@ namespace DeejNG
         private void StartOnBootCheckBox_Unchecked(object sender, RoutedEventArgs e)
         {
             if (_isInitializing) return;
-            DisableStartup();
+            _systemIntegrationService.DisableStartup();
             _settingsManager.AppSettings.StartOnBoot = false;
             SaveSettings();
         }
@@ -1833,13 +1772,7 @@ namespace DeejNG
             return highestPeak;
         }
 
-        private bool IsStartupEnabled()
-        {
-            const string appName = "DeejNG";
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", false);
-            var value = key?.GetValue(appName) as string;
-            return !string.IsNullOrEmpty(value);
-        }
+
 
         private void InvertSlider_Checked(object sender, RoutedEventArgs e)
         {

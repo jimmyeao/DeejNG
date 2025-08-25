@@ -1,5 +1,6 @@
 using DeejNG.Core.Interfaces;
 using DeejNG.Core.Services;
+using DeejNG.Infrastructure.System;
 using System;
 using System.Collections.Generic;
 
@@ -19,6 +20,7 @@ namespace DeejNG.Core.Configuration
 
             // Register services
             Register<IOverlayService>(new OverlayService());
+            Register<ISystemIntegrationService>(new SystemIntegrationService());
 
             _isConfigured = true;
         }
