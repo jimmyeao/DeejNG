@@ -36,14 +36,18 @@ namespace DeejNG.Core.Services
         {
             // Find the main window but don't depend on its state
             _parentWindow = Application.Current?.MainWindow as MainWindow;
+#if DEBUG
             Debug.WriteLine("[OverlayService] Initialized");
+#endif
         }
 
         public void ShowOverlay(List<float> volumes, List<string> labels)
         {
             if (!IsEnabled)
             {
+#if DEBUG
                 Debug.WriteLine("[OverlayService] Overlay disabled");
+#endif
                 return;
             }
 
@@ -80,7 +84,9 @@ namespace DeejNG.Core.Services
                 {
                     _overlay.Hide();
                     OverlayHidden?.Invoke(this, EventArgs.Empty);
+#if DEBUG
                     Debug.WriteLine("[OverlayService] Overlay hidden");
+#endif
                 }
             }
         }
@@ -103,12 +109,16 @@ namespace DeejNG.Core.Services
                     // Apply position immediately to existing overlay
                     _overlay.Left = X;
                     _overlay.Top = Y;
+#if DEBUG
                     Debug.WriteLine($"[OverlayService] Applied position to existing overlay: ({X}, {Y})");
+#endif
                 }
             }
 
             PositionChanged?.Invoke(this, new OverlayPositionChangedEventArgs { X = X, Y = Y });
+#if DEBUG
             Debug.WriteLine($"[OverlayService] Position updated: X={X}, Y={Y}");
+#endif
         }
 
         public void UpdateSettings(AppSettings settings)
@@ -122,7 +132,9 @@ namespace DeejNG.Core.Services
             X = settings.OverlayX;
             Y = settings.OverlayY;
             
+#if DEBUG
             Debug.WriteLine($"[OverlayService] Position loaded from settings: X={X}, Y={Y}");
+#endif
 
             lock (_overlayLock)
             {
@@ -132,14 +144,18 @@ namespace DeejNG.Core.Services
                 }
             }
 
+#if DEBUG
             Debug.WriteLine($"[OverlayService] Settings updated - Enabled: {IsEnabled}, TextColor: {TextColorMode}, Position: ({X}, {Y})");
+#endif
         }
 
         private void EnsureOverlayExists()
         {
             if (_overlay == null)
             {
+#if DEBUG
                 Debug.WriteLine($"[OverlayService] Creating new overlay instance at position ({X}, {Y})");
+#endif
 
                 // Create settings object with current service values
                 var settings = new AppSettings
@@ -157,11 +173,15 @@ namespace DeejNG.Core.Services
                 if (_parentWindow?.IsVisible == true && _parentWindow.WindowState != WindowState.Minimized)
                 {
                     parentWindow = _parentWindow;
+#if DEBUG
                     Debug.WriteLine("[OverlayService] Using MainWindow as parent (visible)");
+#endif
                 }
                 else
                 {
+#if DEBUG
                     Debug.WriteLine("[OverlayService] Creating standalone overlay (MainWindow hidden/minimized)");
+#endif
                 }
 
                 _overlay = new FloatingOverlay(settings, parentWindow);
@@ -172,17 +192,23 @@ namespace DeejNG.Core.Services
                 {
                     _overlay.Left = X;
                     _overlay.Top = Y;
+#if DEBUG
                     Debug.WriteLine($"[OverlayService] Applied saved position to overlay: ({X}, {Y})");
+#endif
                 }
                 else
                 {
+#if DEBUG
                     Debug.WriteLine($"[OverlayService] Using overlay default position (no saved position)");
+#endif
                 }
                 
                 // Wire up position change events
                 _overlay.LocationChanged += OnOverlayLocationChanged;
                 
+#if DEBUG
                 Debug.WriteLine($"[OverlayService] Overlay created with parent: {(parentWindow != null ? "MainWindow" : "standalone")}");
+#endif
             }
         }
 
@@ -224,7 +250,9 @@ namespace DeejNG.Core.Services
                     }
                 }
                 _disposed = true;
+#if DEBUG
                 Debug.WriteLine("[OverlayService] Disposed");
+#endif
             }
         }
     }

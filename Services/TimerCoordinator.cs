@@ -106,7 +106,9 @@ namespace DeejNG.Services
         {
             if (_serialReconnectTimer != null)
             {
+#if DEBUG
                 Debug.WriteLine("[TimerCoordinator] Starting serial reconnect timer");
+#endif
                 _serialReconnectTimer.Start();
             }
         }
@@ -115,7 +117,9 @@ namespace DeejNG.Services
         {
             if (_serialReconnectTimer != null && _serialReconnectTimer.IsEnabled)
             {
+#if DEBUG
                 Debug.WriteLine("[TimerCoordinator] Stopping serial reconnect timer");
+#endif
                 _serialReconnectTimer.Stop();
             }
         }

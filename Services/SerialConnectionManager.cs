@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
@@ -40,14 +40,18 @@ namespace DeejNG.Services
                 // Validate port name
                 if (string.IsNullOrWhiteSpace(portName))
                 {
+#if DEBUG
                     Debug.WriteLine("[Serial] Invalid port name provided");
+#endif
                     return;
                 }
 
                 var availablePorts = SerialPort.GetPortNames();
                 if (!availablePorts.Contains(portName))
                 {
+#if DEBUG
                     Debug.WriteLine($"[Serial] Port {portName} not in available ports: [{string.Join(", ", availablePorts)}]");
+#endif
 
                     _isConnected = false;
                     _serialDisconnected = true;
@@ -85,11 +89,15 @@ namespace DeejNG.Services
 
                 Connected?.Invoke();
 
+#if DEBUG
                 Debug.WriteLine($"[Serial] Successfully connected to {portName} - waiting for data before applying ANY volumes");
+#endif
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[Serial] Failed to open port {portName}: {ex.Message}");
+#endif
 
                 // Update connection state
                 _isConnected = false;
@@ -104,7 +112,9 @@ namespace DeejNG.Services
         {
             try
             {
+#if DEBUG
                 Debug.WriteLine("[Manual] User initiated manual disconnect");
+#endif
 
                 // Set flag to prevent automatic reconnection
                 _manualDisconnect = true;
@@ -118,11 +128,15 @@ namespace DeejNG.Services
                 // Don't call StatusChanged - let MainWindow handle UI updates
                 Disconnected?.Invoke();
 
+#if DEBUG
                 Debug.WriteLine("[Manual] Manual disconnect completed");
+#endif
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Failed to disconnect manually: {ex.Message}");
+#endif
             }
         }
 
@@ -140,23 +154,31 @@ namespace DeejNG.Services
                 if (!string.IsNullOrEmpty(_userSelectedPort))
                 {
                     portToTry = _userSelectedPort;
+#if DEBUG
                     Debug.WriteLine($"[AutoConnect] Using user-selected port: {portToTry}");
+#endif
                 }
                 else
                 {
                     if (string.IsNullOrWhiteSpace(savedPortName))
                     {
+#if DEBUG
                         Debug.WriteLine("[AutoConnect] No saved port name");
+#endif
                         return false;
                     }
                     portToTry = savedPortName;
+#if DEBUG
                     Debug.WriteLine($"[AutoConnect] Using saved port: {portToTry}");
+#endif
                 }
 
                 var availablePorts = SerialPort.GetPortNames();
                 if (!availablePorts.Contains(portToTry))
                 {
+#if DEBUG
                     Debug.WriteLine($"[AutoConnect] Port '{portToTry}' not available. Available: [{string.Join(", ", availablePorts)}]");
+#endif
                     return false;
                 }
 
@@ -172,7 +194,9 @@ namespace DeejNG.Services
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[AutoConnect] Exception: {ex.Message}");
+#endif
                 return false;
             }
         }
@@ -180,12 +204,16 @@ namespace DeejNG.Services
         public void SetUserSelectedPort(string portName)
         {
             _userSelectedPort = portName;
+#if DEBUG
             Debug.WriteLine($"[UI] User selected port: {portName}");
+#endif
 
             // If user manually disconnected and now selects a port, clear the manual disconnect flag
             if (_manualDisconnect)
             {
+#if DEBUG
                 Debug.WriteLine("[UI] User selected new port after manual disconnect - clearing manual disconnect flag");
+#endif
                 _manualDisconnect = false;
             }
         }
@@ -199,7 +227,9 @@ namespace DeejNG.Services
                 // First check if the port is actually open
                 if (_serialPort == null || !_serialPort.IsOpen)
                 {
+#if DEBUG
                     Debug.WriteLine("[SerialWatchdog] Serial port closed unexpectedly");
+#endif
                     HandleSerialDisconnection();
                     return;
                 }
@@ -213,12 +243,16 @@ namespace DeejNG.Services
                     if (elapsed.TotalSeconds > 5)
                     {
                         _noDataCounter++;
+#if DEBUG
                         Debug.WriteLine($"[SerialWatchdog] No data received for {elapsed.TotalSeconds:F1} seconds (count: {_noDataCounter})");
+#endif
 
                         // After 3 consecutive timeouts, consider disconnected
                         if (_noDataCounter >= 3)
                         {
+#if DEBUG
                             Debug.WriteLine("[SerialWatchdog] Too many timeouts, considering disconnected");
+#endif
                             HandleSerialDisconnection();
                             _noDataCounter = 0;
                             return;
@@ -231,7 +265,9 @@ namespace DeejNG.Services
                         }
                         catch (Exception ex)
                         {
+#if DEBUG
                             Debug.WriteLine($"[SerialWatchdog] Exception when testing connection: {ex.Message}");
+#endif
                             HandleSerialDisconnection();
                             return;
                         }
@@ -251,7 +287,9 @@ namespace DeejNG.Services
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[SerialWatchdog] Error: {ex.Message}");
+#endif
             }
         }
 
@@ -287,12 +325,16 @@ namespace DeejNG.Services
                     {
                         _serialBuffer.Clear();
                         _serialBuffer.Append(bufferContent.Substring(lastNewline + 1));
+#if DEBUG
                         Debug.WriteLine("[WARNING] Serial buffer trimmed to last valid line");
+#endif
                     }
                     else
                     {
                         _serialBuffer.Clear();
+#if DEBUG
                         Debug.WriteLine("[WARNING] Serial buffer exceeded limit and was cleared");
+#endif
                     }
                 }
 
@@ -334,7 +376,9 @@ namespace DeejNG.Services
                         if (!_serialPortFullyInitialized)
                         {
                             _serialPortFullyInitialized = true;
+#if DEBUG
                             Debug.WriteLine("[Serial] Port fully initialized and receiving data");
+#endif
                         }
                     }
                 }
@@ -351,14 +395,18 @@ namespace DeejNG.Services
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Serial read: {ex.Message}");
+#endif
                 _serialBuffer.Clear();
             }
         }
 
         private void SerialPort_ErrorReceived(object sender, SerialErrorReceivedEventArgs e)
         {
+#if DEBUG
             Debug.WriteLine($"[Serial] Error received: {e.EventType}");
+#endif
 
             // Check for disconnection conditions
             if (e.EventType == SerialError.Frame || e.EventType == SerialError.RXOver ||
@@ -372,7 +420,9 @@ namespace DeejNG.Services
         {
             if (_serialDisconnected) return;
 
+#if DEBUG
             Debug.WriteLine("[Serial] Disconnection detected");
+#endif
             _serialDisconnected = true;
             _isConnected = false;
 
@@ -404,7 +454,9 @@ namespace DeejNG.Services
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Failed to cleanup serial port: {ex.Message}");
+#endif
             }
         }
 

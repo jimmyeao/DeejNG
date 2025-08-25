@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -108,7 +108,9 @@ namespace DeejNG.Services
                     }
                     catch (Exception ex)
                     {
+#if DEBUG
                         Debug.WriteLine($"[ERROR] Setting input device volume for '{deviceName}': {ex.Message}");
+#endif
                         RemoveInputDevice(deviceName);
                     }
                 }
@@ -131,7 +133,9 @@ namespace DeejNG.Services
                 }
                 catch (Exception ex)
                 {
+#if DEBUG
                     Debug.WriteLine($"[ERROR] Setting output device volume for '{deviceName}': {ex.Message}");
+#endif
                     RemoveOutputDevice(deviceName);
                 }
             }
@@ -149,11 +153,15 @@ namespace DeejNG.Services
                     BuildInputDeviceCache();
                     BuildOutputDeviceCache();
                     _lastDeviceCacheTime = DateTime.Now;
+#if DEBUG
                     Debug.WriteLine("[DeviceCache] Caches refreshed");
+#endif
                 }
                 catch (Exception ex)
                 {
+#if DEBUG
                     Debug.WriteLine($"[DeviceCache] Error refreshing caches: {ex.Message}");
+#endif
                 }
             }
         }
@@ -176,11 +184,15 @@ namespace DeejNG.Services
                         _inputDeviceMap[key] = device;
                     }
                 }
+#if DEBUG
                 Debug.WriteLine($"[DeviceCache] Cached {_inputDeviceMap.Count} input devices.");
+#endif
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[DeviceCache] Failed to build input device cache: {ex.Message}");
+#endif
             }
         }
 
@@ -197,11 +209,15 @@ namespace DeejNG.Services
                         _outputDeviceMap[key] = device;
                     }
                 }
+#if DEBUG
                 Debug.WriteLine($"[DeviceCache] Cached {_outputDeviceMap.Count} output devices.");
+#endif
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[DeviceCache] Failed to build output device cache: {ex.Message}");
+#endif
             }
         }
 

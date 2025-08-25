@@ -1,4 +1,4 @@
-﻿using DeejNG.Classes;
+using DeejNG.Classes;
 using DeejNG.Models;
 using System;
 using System.Collections.Generic;
@@ -28,29 +28,39 @@ namespace DeejNG.Services
                 if (File.Exists(SettingsPath))
                 {
                     var json = File.ReadAllText(SettingsPath);
+#if DEBUG
                     Debug.WriteLine($"[Settings] Loading from: {SettingsPath}");
+#endif
 
                     AppSettings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
 
+#if DEBUG
                     Debug.WriteLine($"[Settings] Loaded from disk - OverlayEnabled: {AppSettings.OverlayEnabled}");
                     Debug.WriteLine($"[Settings] Loaded from disk - OverlayPosition: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
                     Debug.WriteLine($"[Settings] Loaded from disk - OverlayOpacity: {AppSettings.OverlayOpacity}");
                     Debug.WriteLine($"[Settings] Loaded from disk - OverlayTimeoutSeconds: {AppSettings.OverlayTimeoutSeconds}");
+#endif
 
                     return AppSettings;
                 }
                 else
                 {
+#if DEBUG
                     Debug.WriteLine($"[Settings] Settings file does not exist: {SettingsPath}");
+#endif
                 }
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[Settings] Error loading settings: {ex.Message}");
+#endif
             }
 
             AppSettings = new AppSettings();
+#if DEBUG
             Debug.WriteLine("[Settings] Using default AppSettings");
+#endif
             return AppSettings;
         }
 
@@ -59,7 +69,9 @@ namespace DeejNG.Services
             // Prevent too frequent saves
             if ((DateTime.Now - _lastSettingsSave).TotalMilliseconds < 500)
             {
+#if DEBUG
                 Debug.WriteLine("[Settings] Skipping save - too frequent");
+#endif
                 return;
             }
 
@@ -85,13 +97,17 @@ namespace DeejNG.Services
                     File.WriteAllText(SettingsPath, json);
                     _lastSettingsSave = DateTime.Now;
 
+#if DEBUG
                     Debug.WriteLine($"[Settings] Saved successfully with {AppSettings.SliderTargets?.Count ?? 0} slider configurations and overlay settings");
+#endif
 
                     SettingsChanged?.Invoke(AppSettings);
                 }
                 catch (Exception ex)
                 {
+#if DEBUG
                     Debug.WriteLine($"[ERROR] Failed to save settings: {ex.Message}");
+#endif
                 }
             }
         }
@@ -106,11 +122,15 @@ namespace DeejNG.Services
             // Use the in-memory AppSettings instead of reloading from disk
             if (!string.IsNullOrWhiteSpace(AppSettings?.PortName))
             {
+#if DEBUG
                 Debug.WriteLine($"[Settings] Using cached port name: {AppSettings.PortName}");
+#endif
                 return AppSettings.PortName;
             }
 
+#if DEBUG
             Debug.WriteLine("[Settings] No saved port name found");
+#endif
             return string.Empty;
         }
 
@@ -124,7 +144,9 @@ namespace DeejNG.Services
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Error saving inversion settings: {ex.Message}");
+#endif
             }
         }
 
@@ -145,24 +167,32 @@ namespace DeejNG.Services
                            y >= virtualTop - 50 &&
                            y <= virtualBottom - 50;
 
+#if DEBUG
             Debug.WriteLine($"[Position] Checking position ({x}, {y}) against virtual bounds ({virtualLeft}, {virtualTop}) to ({virtualRight}, {virtualBottom}) - Valid: {isValid}");
+#endif
 
             return isValid;
         }
 
         public void ValidateOverlayPosition()
         {
+#if DEBUG
             Debug.WriteLine($"[Settings] Initial overlay position from file: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
+#endif
 
             if (!IsPositionValid(AppSettings.OverlayX, AppSettings.OverlayY))
             {
+#if DEBUG
                 Debug.WriteLine($"[Settings] Position ({AppSettings.OverlayX}, {AppSettings.OverlayY}) is outside virtual screen bounds, resetting to default");
+#endif
                 AppSettings.OverlayX = 100;
                 AppSettings.OverlayY = 100;
             }
             else
             {
+#if DEBUG
                 Debug.WriteLine($"[Settings] Position ({AppSettings.OverlayX}, {AppSettings.OverlayY}) is valid for multi-monitor setup");
+#endif
             }
 
             if (AppSettings.OverlayOpacity <= 0 || AppSettings.OverlayOpacity > 1)
@@ -170,7 +200,9 @@ namespace DeejNG.Services
                 AppSettings.OverlayOpacity = 0.85;
             }
 
+#if DEBUG
             Debug.WriteLine($"[Settings] Final overlay settings - Enabled: {AppSettings.OverlayEnabled}, Position: ({AppSettings.OverlayX}, {AppSettings.OverlayY}), Opacity: {AppSettings.OverlayOpacity}, Timeout: {AppSettings.OverlayTimeoutSeconds}");
+#endif
         }
 
         public AppSettings CreateSettingsFromUI(

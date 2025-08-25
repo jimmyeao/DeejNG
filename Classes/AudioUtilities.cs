@@ -167,13 +167,17 @@ namespace DeejNG.Classes
                         }
                     }
 
+#if DEBUG
                     Debug.WriteLine($"[AudioUtilities] Process cache cleaned, size: {_processNameCache.Count}");
+#endif
                 }
             }
             catch (Exception ex)
             {
                 // Log any unexpected cleanup errors
+#if DEBUG
                 Debug.WriteLine($"[AudioUtilities] Error during cache cleanup: {ex.Message}");
+#endif
             }
         }
 

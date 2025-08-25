@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -86,12 +86,16 @@ namespace DeejNG.Services
                 }
 
                 // Log the number of sessions affected
+#if DEBUG
                 Debug.WriteLine($"[Unmapped] Mute {isMuted} applied to {processedCount} apps");
+#endif
             }
             catch (Exception ex)
             {
                 // Log unexpected failure during the overall operation
+#if DEBUG
                 Debug.WriteLine($"[Unmapped] Failed to mute unmapped applications: {ex.GetType().Name}");
+#endif
             }
         }
 
@@ -128,7 +132,9 @@ namespace DeejNG.Services
                 }
                 catch (Exception ex)
                 {
+#if DEBUG
                     Debug.WriteLine($"[AudioService] Failed to set system volume: {ex.Message}");
+#endif
                 }
 
                 // Early return as system volume has been handled
@@ -186,24 +192,32 @@ namespace DeejNG.Services
                     catch (Exception ex)
                     {
                         // Log but continue on individual session processing failures
+#if DEBUG
                         Debug.WriteLine($"[AudioService] Error processing session {i}: {ex.Message}");
+#endif
                     }
                 }
 
                 // Report the result of the volume application
                 if (sessionCount == 0)
                 {
+#if DEBUG
                     Debug.WriteLine($"[AudioService] Could not find any session for {cleanedExecutable}");
+#endif
                 }
                 else
                 {
+#if DEBUG
                     Debug.WriteLine($"[AudioService] Applied volume to {sessionCount} sessions for {cleanedExecutable}");
+#endif
                 }
             }
             catch (Exception ex)
             {
                 // Catch all outer-level exceptions (e.g., device failure)
+#if DEBUG
                 Debug.WriteLine($"[AudioService] Failed to apply volume: {ex.Message}");
+#endif
             }
         }
 
@@ -278,14 +292,18 @@ namespace DeejNG.Services
                     catch (Exception ex)
                     {
                         // Catch and log errors on a per-session basis to avoid breaking the loop
+#if DEBUG
                         Debug.WriteLine($"[Unmapped] Failed to apply volume: {ex.GetType().Name}");
+#endif
                     }
                 }
             }
             catch (Exception ex)
             {
                 // Catch outer exceptions, e.g. device access failures
+#if DEBUG
                 Debug.WriteLine($"[Unmapped] Failed to apply volume: {ex.GetType().Name}");
+#endif
             }
         }
 
@@ -298,7 +316,9 @@ namespace DeejNG.Services
         {
             try
             {
+#if DEBUG
                 Debug.WriteLine("[AudioService] Force cleanup started");
+#endif
 
                 // Ensure thread-safe access to the session cache
                 lock (_cacheLock)
@@ -346,19 +366,25 @@ namespace DeejNG.Services
                             _sessionAccessTimes[kvp.Key] = kvp.Value;
                         }
 
+#if DEBUG
                         Debug.WriteLine($"[AudioService] Session cache reduced to {_sessionCache.Count} apps");
+#endif
                     }
                 }
 
                 // Call additional cleanup logic, e.g., clearing NAudio internals or releasing COM objects
                 AudioUtilities.ForceCleanup();
 
+#if DEBUG
                 Debug.WriteLine("[AudioService] Force cleanup completed");
+#endif
             }
             catch (Exception ex)
             {
                 // Log any unexpected errors that occur during the cleanup
+#if DEBUG
                 Debug.WriteLine($"[AudioService] Error during force cleanup: {ex.Message}");
+#endif
             }
         }
 
@@ -421,7 +447,9 @@ namespace DeejNG.Services
                     catch (Exception ex)
                     {
                         // Catch and log any issues with individual session processing
+#if DEBUG
                         Debug.WriteLine($"[AudioService] Error refreshing session {i}: {ex.Message}");
+#endif
                     }
                 }
 
@@ -484,7 +512,9 @@ namespace DeejNG.Services
 
                     if (toRemove.Count > 0)
                     {
+#if DEBUG
                         Debug.WriteLine($"[AudioService] Removed {toRemove.Count} stale session groups from cache");
+#endif
                     }
                 }
 
@@ -492,12 +522,16 @@ namespace DeejNG.Services
                 _lastRefresh = currentTime;
 
                 // Log final stats from the refresh
+#if DEBUG
                 Debug.WriteLine($"[AudioService] Cache refreshed: {sessionsByApp.Sum(kvp => kvp.Value.Count)} sessions in {sessionsByApp.Count} apps");
+#endif
             }
             catch (Exception ex)
             {
                 // Catch-all for unexpected errors in the refresh process
+#if DEBUG
                 Debug.WriteLine($"[AudioService] Failed to refresh session cache: {ex.Message}");
+#endif
             }
         }
 

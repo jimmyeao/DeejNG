@@ -1,4 +1,4 @@
-﻿using DeejNG.Classes;
+using DeejNG.Classes;
 using DeejNG.Core.Configuration;
 using DeejNG.Core.Interfaces;
 using DeejNG.Core.Services;
@@ -279,12 +279,16 @@ namespace DeejNG
                 if (_registeredHandlers.TryGetValue(targetName, out var handler))
                 {
                     _registeredHandlers.Remove(targetName);
+#if DEBUG
                     Debug.WriteLine($"[MainWindow] Removed handler for disconnected session: {targetName}");
+#endif
                 }
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[MainWindow] Error handling session disconnect for {targetName}: {ex.Message}");
+#endif
             }
         }
 
@@ -313,7 +317,9 @@ namespace DeejNG
             }
             else
             {
+#if DEBUG
                 Debug.WriteLine("[Overlay] Skipping overlay to prevent focus stealing");
+#endif
             }
         }
 
@@ -355,11 +361,15 @@ namespace DeejNG
                 try
                 {
                     _registeredHandlers.Remove(target);
+#if DEBUG
                     Debug.WriteLine($"[Cleanup] Unregistered event handler for {target} on application close");
+#endif
                 }
                 catch (Exception ex)
                 {
+#if DEBUG
                     Debug.WriteLine($"[ERROR] Failed to unregister handler for {target} on close: {ex.Message}");
+#endif
                 }
             }
 
@@ -386,7 +396,9 @@ namespace DeejNG
                     if (sessionTuple.session != null)
                     {
                         int refCount = Marshal.FinalReleaseComObject(sessionTuple.session);
+#if DEBUG
                         Debug.WriteLine($"[Cleanup] Released session COM object, final ref count: {refCount}");
+#endif
                     }
                 }
                 catch { }
@@ -421,8 +433,6 @@ namespace DeejNG
         #endregion Protected Methods
 
         #region Private Methods
-
-
 
         private void ApplyTheme(string theme)
         {
@@ -462,7 +472,9 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Applying theme '{theme}': {ex.Message}");
+#endif
             }
         }
 
@@ -506,7 +518,9 @@ namespace DeejNG
                 }
                 catch (Exception ex)
                 {
+#if DEBUG
                     Debug.WriteLine($"[ERROR] Applying volume to {target.Name}: {ex.Message}");
+#endif
                 }
             }
         }
@@ -549,18 +563,24 @@ namespace DeejNG
                 foreach (var target in handlersToRemove)
                 {
                     _registeredHandlers.Remove(target);
+#if DEBUG
                     Debug.WriteLine($"[Cleanup] Removed stale event handler for {target}");
+#endif
                 }
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[Cleanup] Error cleaning event handlers: {ex.Message}");
+#endif
             }
         }
 
         private void ComPortSelector_DropDownOpened(object sender, EventArgs e)
         {
+#if DEBUG
             Debug.WriteLine("[UI] COM port dropdown opened, refreshing ports...");
+#endif
             LoadAvailablePorts();
         }
 
@@ -585,7 +605,9 @@ namespace DeejNG
                 // User wants to connect to selected port
                 if (ComPortSelector.SelectedItem is string selectedPort)
                 {
+#if DEBUG
                     Debug.WriteLine($"[Manual] User clicked connect for port: {selectedPort}");
+#endif
 
                     // Update button state immediately
                     ConnectButton.IsEnabled = false;
@@ -638,7 +660,9 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Creating notify icon context menu: {ex.Message}");
+#endif
             }
         }
 
@@ -654,10 +678,6 @@ namespace DeejNG
             SaveSettings();
         }
 
-
-
-
-
         private async void ExitMenuItem_Click(object sender, RoutedEventArgs e)
         {
             Application.Current.Shutdown();
@@ -669,7 +689,9 @@ namespace DeejNG
 
             try
             {
+#if DEBUG
                 Debug.WriteLine("[ForceCleanup] Starting aggressive cleanup...");
+#endif
                 _audioService?.ForceCleanup();
                 AudioUtilities.ForceCleanup();
 
@@ -687,11 +709,15 @@ namespace DeejNG
                 GC.Collect();
 
                 _lastForcedCleanup = DateTime.Now;
+#if DEBUG
                 Debug.WriteLine("[ForceCleanup] Cleanup completed");
+#endif
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ForceCleanup] Error: {ex.Message}");
+#endif
             }
         }
 
@@ -706,7 +732,9 @@ namespace DeejNG
             _isInitializing = true;
             _allowVolumeApplication = false;
 
+#if DEBUG
             Debug.WriteLine("[Init] Generating sliders - ALL volume operations DISABLED until first data");
+#endif
 
             for (int i = 0; i < count; i++)
             {
@@ -746,11 +774,15 @@ namespace DeejNG
 
                 control.SessionDisconnected += (sender, target) =>
                 {
+#if DEBUG
                     Debug.WriteLine($"[MainWindow] Received session disconnected for {target}");
+#endif
                     if (_registeredHandlers.TryGetValue(target, out var handler))
                     {
                         _registeredHandlers.Remove(target);
+#if DEBUG
                         Debug.WriteLine($"[MainWindow] Removed handler for disconnected session: {target}");
+#endif
                     }
                 };
 
@@ -760,7 +792,9 @@ namespace DeejNG
 
             SetMeterVisibilityForAll(ShowSlidersCheckBox.IsChecked ?? true);
 
+#if DEBUG
             Debug.WriteLine("[Init] Sliders generated, waiting for first hardware data before completing initialization");
+#endif
         }
 
         private void HandleSliderData(string data)
@@ -771,7 +805,9 @@ namespace DeejNG
             {
                 if (!data.Contains('|') && !float.TryParse(data, out _))
                 {
+#if DEBUG
                     Debug.WriteLine($"[Serial] Invalid data format: {data}");
+#endif
                     return;
                 }
 
@@ -786,7 +822,9 @@ namespace DeejNG
                         // Hardware slider count takes priority
                         if (_channelControls.Count != parts.Length)
                         {
+#if DEBUG
                             Debug.WriteLine($"[INFO] Hardware has {parts.Length} sliders but app has {_channelControls.Count}. Adjusting to match hardware.");
+#endif
 
                             var currentTargets = _channelControls.Select(c => c.AudioTargets).ToList();
                             _expectedSliderCount = parts.Length;
@@ -839,7 +877,9 @@ namespace DeejNG
                             _allowVolumeApplication = true;
                             _isInitializing = false;
 
+#if DEBUG
                             Debug.WriteLine("[Init] First data received - enabling volume application and completing setup");
+#endif
 
                             SyncMuteStates();
 
@@ -851,13 +891,17 @@ namespace DeejNG
                     }
                     catch (Exception ex)
                     {
+#if DEBUG
                         Debug.WriteLine($"[ERROR] Processing slider data in UI thread: {ex.Message}");
+#endif
                     }
                 })); // REVERT: No DispatcherPriority specified = Normal priority
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Parsing slider data: {ex.Message}");
+#endif
             }
         }
         private void LoadAvailablePorts()
@@ -869,38 +913,52 @@ namespace DeejNG
 
                 ComPortSelector.ItemsSource = availablePorts;
 
+#if DEBUG
                 Debug.WriteLine($"[Ports] Found {availablePorts.Length} ports: [{string.Join(", ", availablePorts)}]");
+#endif
 
                 // Try to restore previous selection first
                 if (!string.IsNullOrEmpty(currentSelection) && availablePorts.Contains(currentSelection))
                 {
                     ComPortSelector.SelectedItem = currentSelection;
+#if DEBUG
                     Debug.WriteLine($"[Ports] Restored previous selection: {currentSelection}");
+#endif
                 }
                 else if (!string.IsNullOrEmpty(_serialManager.LastConnectedPort) && availablePorts.Contains(_serialManager.LastConnectedPort))
                 {
                     ComPortSelector.SelectedItem = _serialManager.LastConnectedPort;
+#if DEBUG
                     Debug.WriteLine($"[Ports] Selected saved port: {_serialManager.LastConnectedPort}");
+#endif
                 }
                 else if (!string.IsNullOrEmpty(_settingsManager.AppSettings.PortName) && availablePorts.Contains(_settingsManager.AppSettings.PortName))
                 {
                     ComPortSelector.SelectedItem = _settingsManager.AppSettings.PortName;
+#if DEBUG
                     Debug.WriteLine($"[Ports] Selected settings port: {_settingsManager.AppSettings.PortName}");
+#endif
                 }
                 else if (availablePorts.Length > 0)
                 {
                     ComPortSelector.SelectedIndex = 0;
+#if DEBUG
                     Debug.WriteLine($"[Ports] Selected first available port: {availablePorts[0]}");
+#endif
                 }
                 else
                 {
                     ComPortSelector.SelectedIndex = -1;
+#if DEBUG
                     Debug.WriteLine("[Ports] No ports available");
+#endif
                 }
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Failed to load available ports: {ex.Message}");
+#endif
                 ComPortSelector.ItemsSource = new string[0];
                 ComPortSelector.SelectedIndex = -1;
             }
@@ -913,12 +971,16 @@ namespace DeejNG
                 string savedPort = _settingsManager.LoadSavedPortName();
                 if (!string.IsNullOrWhiteSpace(savedPort))
                 {
+#if DEBUG
                     Debug.WriteLine($"[Settings] Loaded saved port name: {savedPort}");
+#endif
                 }
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Failed to load saved port name: {ex.Message}");
+#endif
             }
         }
 
@@ -980,14 +1042,18 @@ namespace DeejNG
                     {
                         startupTimer.Stop();
                         ShowVolumeOverlay();
+#if DEBUG
                         Debug.WriteLine("[Startup] Overlay shown automatically (autohide disabled)");
+#endif
                     };
                     startupTimer.Start();
                 }
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Failed to load settings without serial: {ex.Message}");
+#endif
                 _expectedSliderCount = 4;
                 GenerateSliders(4);
                 _hasLoadedInitialSettings = true;
@@ -1014,7 +1080,9 @@ namespace DeejNG
                 // Debounce saves using timer coordinator
                 _timerCoordinator.TriggerPositionSave();
                 
+#if DEBUG
                 Debug.WriteLine($"[Overlay] Position updated via service: X={e.X}, Y={e.Y}");
+#endif
             }
         }
 
@@ -1026,11 +1094,15 @@ namespace DeejNG
                 try
                 {
                     _settingsManager.SaveSettingsAsync(_settingsManager.AppSettings);
+#if DEBUG
                     Debug.WriteLine("[Overlay] Position saved to disk (debounced)");
+#endif
                 }
                 catch (Exception ex)
                 {
+#if DEBUG
                     Debug.WriteLine($"[ERROR] Failed to save overlay position: {ex.Message}");
+#endif
                 }
             });
         }
@@ -1039,7 +1111,9 @@ namespace DeejNG
         {
             if (_isInitializing || !_hasLoadedInitialSettings)
             {
+#if DEBUG
                 Debug.WriteLine("[Settings] Skipping save during initialization");
+#endif
                 return;
             }
 
@@ -1047,7 +1121,9 @@ namespace DeejNG
             {
                 if (_channelControls.Count == 0)
                 {
+#if DEBUG
                     Debug.WriteLine("[Settings] Skipping save - no channel controls");
+#endif
                     return;
                 }
 
@@ -1066,7 +1142,9 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Failed to save settings: {ex.Message}");
+#endif
             }
         }
 
@@ -1074,12 +1152,16 @@ namespace DeejNG
         {
             if (_isClosing || !_serialManager.ShouldAttemptReconnect())
             {
+#if DEBUG
                 Debug.WriteLine("[SerialReconnect] Stopping reconnect - closing or manual disconnect");
+#endif
                 _timerCoordinator.StopSerialReconnect();
                 return;
             }
 
+#if DEBUG
             Debug.WriteLine("[SerialReconnect] Attempting to reconnect...");
+#endif
 
             // Update UI to show attempting reconnection with background priority to prevent focus stealing
             Dispatcher.BeginInvoke(() =>
@@ -1090,7 +1172,9 @@ namespace DeejNG
 
             if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName))
             {
+#if DEBUG
                 Debug.WriteLine("[SerialReconnect] Successfully reconnected to saved port");
+#endif
                 return; // The Connected event will stop the timer
             }
 
@@ -1101,7 +1185,9 @@ namespace DeejNG
 
                 if (availablePorts.Length == 0)
                 {
+#if DEBUG
                     Debug.WriteLine("[SerialReconnect] No serial ports available");
+#endif
                     Dispatcher.BeginInvoke(() =>
                     {
                         ConnectionStatus.Text = "Waiting for device...";
@@ -1112,19 +1198,25 @@ namespace DeejNG
                 }
 
                 string portToTry = availablePorts[0];
+#if DEBUG
                 Debug.WriteLine($"[SerialReconnect] Trying first available port: {portToTry}");
+#endif
 
                 _serialManager.InitSerial(portToTry, 9600);
 
                 if (_serialManager.IsConnected)
                 {
+#if DEBUG
                     Debug.WriteLine($"[SerialReconnect] Successfully connected to {portToTry}");
+#endif
                     // The Connected event will handle UI updates and stop the timer
                 }
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[SerialReconnect] Failed to reconnect: {ex.Message}");
+#endif
                 Dispatcher.BeginInvoke(() =>
                 {
                     ConnectionStatus.Text = "Reconnection failed - retrying...";
@@ -1151,7 +1243,9 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Session cache update: {ex.Message}");
+#endif
             }
         }
 
@@ -1181,11 +1275,15 @@ namespace DeejNG
             attemptTimer.Tick += (s, e) =>
             {
                 connectionAttempts++;
+#if DEBUG
                 Debug.WriteLine($"[AutoConnect] Attempt #{connectionAttempts}");
+#endif
 
                 if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName))
                 {
+#if DEBUG
                     Debug.WriteLine("[AutoConnect] Successfully connected!");
+#endif
                     attemptTimer.Stop();
                     Dispatcher.BeginInvoke(() => UpdateConnectionStatus(), DispatcherPriority.Background);
                     return;
@@ -1193,7 +1291,9 @@ namespace DeejNG
 
                 if (connectionAttempts >= maxAttempts)
                 {
+#if DEBUG
                     Debug.WriteLine($"[AutoConnect] Failed after {maxAttempts} attempts - starting auto-reconnect timer");
+#endif
                     attemptTimer.Stop();
 
                     // Start the auto-reconnect timer since initial attempts failed
@@ -1283,7 +1383,9 @@ namespace DeejNG
         {
             if (!_allowVolumeApplication)
             {
+#if DEBUG
                 Debug.WriteLine("[Sync] Skipping SyncMuteStates - volume application disabled");
+#endif
                 return;
             }
 
@@ -1299,11 +1401,15 @@ namespace DeejNG
                     try
                     {
                         _registeredHandlers.Remove(target);
+#if DEBUG
                         Debug.WriteLine($"[Sync] Unregistered handler for {target}");
+#endif
                     }
                     catch (Exception ex)
                     {
+#if DEBUG
                         Debug.WriteLine($"[ERROR] Failed to unregister handler for {target}: {ex.Message}");
+#endif
                     }
                 }
                 _registeredHandlers.Clear();
@@ -1336,7 +1442,9 @@ namespace DeejNG
                     }
                     catch (Exception ex)
                     {
+#if DEBUG
                         Debug.WriteLine($"[ERROR] Mapping session in SyncMuteStates: {ex.Message}");
+#endif
                     }
                 }
 
@@ -1365,11 +1473,15 @@ namespace DeejNG
                             var handler = new DecoupledAudioSessionEventsHandler(this, targetName);
                             matchedSession.RegisterEventClient(handler);
                             _registeredHandlers[targetName] = handler;
+#if DEBUG
                             Debug.WriteLine($"[Event] Registered DECOUPLED handler for {targetName} (PID: {sessionProcessIds[targetName]})");
+#endif
                         }
                         catch (Exception ex)
                         {
+#if DEBUG
                             Debug.WriteLine($"[ERROR] Registering handler for {targetName}: {ex.Message}");
+#endif
                         }
                     }
                 }
@@ -1418,7 +1530,9 @@ namespace DeejNG
                                 }
                                 catch (Exception ex)
                                 {
+#if DEBUG
                                     Debug.WriteLine($"[ERROR] Getting mute state for {targetName}: {ex.Message}");
+#endif
                                 }
                             }
                         }
@@ -1426,11 +1540,15 @@ namespace DeejNG
                 }
 
                 _hasSyncedMuteStates = true;
+#if DEBUG
                 Debug.WriteLine($"[Sync] Registered {_registeredHandlers.Count} decoupled handlers for unique targets");
+#endif
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] In SyncMuteStates: {ex.Message}");
+#endif
             }
         }
 
@@ -1490,7 +1608,9 @@ namespace DeejNG
             ConnectButton.IsEnabled = true;
             ConnectButton.Content = _serialManager.IsConnected ? "Disconnect" : "Connect";
 
+#if DEBUG
             Debug.WriteLine($"[Status] {statusText}");
+#endif
         }
 
         private void UpdateMeters(object? sender, EventArgs e)
@@ -1613,7 +1733,9 @@ namespace DeejNG
                             }
                             catch (Exception ex)
                             {
+#if DEBUG
                                 Debug.WriteLine($"[ERROR] Processing target {target.Name}: {ex.Message}");
+#endif
                             }
                         }
 
@@ -1622,14 +1744,18 @@ namespace DeejNG
                     }
                     catch (Exception ex)
                     {
+#if DEBUG
                         Debug.WriteLine($"[ERROR] Control meter update: {ex.Message}");
+#endif
                         ctrl.UpdateAudioMeter(0);
                     }
                 }
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] UpdateMeters: {ex.Message}");
+#endif
             }
         }
 
@@ -1661,7 +1787,9 @@ namespace DeejNG
                 catch (ArgumentException) { }
                 catch (Exception ex)
                 {
+#if DEBUG
                     Debug.WriteLine($"[ERROR] Processing session in cache updater: {ex.Message}");
+#endif
                 }
             }
         }
@@ -1690,7 +1818,9 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Updating session cache entry: {ex.Message}");
+#endif
             }
         }
 
@@ -1720,7 +1850,9 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Finding session optimized: {ex.Message}");
+#endif
             }
 
             return null;
@@ -1766,13 +1898,13 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Getting unmapped peak levels optimized: {ex.Message}");
+#endif
             }
 
             return highestPeak;
         }
-
-
 
         private void InvertSlider_Checked(object sender, RoutedEventArgs e)
         {
@@ -1824,7 +1956,9 @@ namespace DeejNG
             {
                 System.Windows.Application.Current.Dispatcher.Invoke(() =>
                 {
+#if DEBUG
                     Debug.WriteLine($"[DecoupledHandler] Session disconnected for {_targetName}: {disconnectReason}");
+#endif
                     _mainWindow.HandleSessionDisconnected(_targetName);
                 });
             }

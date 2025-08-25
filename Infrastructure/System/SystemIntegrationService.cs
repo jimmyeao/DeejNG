@@ -22,7 +22,9 @@ namespace DeejNG.Infrastructure.System
                 {
                     using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
                     key?.SetValue(APP_NAME, $"\"{shortcutPath}\"", RegistryValueKind.String);
+#if DEBUG
                     Debug.WriteLine($"[Startup] Enabled using shortcut: {shortcutPath}");
+#endif
                 }
                 else
                 {
@@ -32,7 +34,9 @@ namespace DeejNG.Infrastructure.System
                     {
                         using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
                         key?.SetValue(APP_NAME, $"\"{exePath}\"", RegistryValueKind.String);
+#if DEBUG
                         Debug.WriteLine($"[Startup] Enabled using executable: {exePath}");
+#endif
                     }
                     else
                     {
@@ -42,7 +46,9 @@ namespace DeejNG.Infrastructure.System
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Failed to enable startup: {ex.Message}");
+#endif
                 MessageBox.Show($"Failed to enable startup: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -53,11 +59,15 @@ namespace DeejNG.Infrastructure.System
             {
                 using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
                 key?.DeleteValue(APP_NAME, false);
+#if DEBUG
                 Debug.WriteLine("[Startup] Disabled successfully");
+#endif
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Failed to disable startup: {ex.Message}");
+#endif
                 MessageBox.Show($"Failed to disable startup: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -69,12 +79,16 @@ namespace DeejNG.Infrastructure.System
                 using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", false);
                 var value = key?.GetValue(APP_NAME) as string;
                 bool isEnabled = !string.IsNullOrEmpty(value);
+#if DEBUG
                 Debug.WriteLine($"[Startup] Startup is {(isEnabled ? "enabled" : "disabled")}");
+#endif
                 return isEnabled;
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Failed to check startup status: {ex.Message}");
+#endif
                 return false;
             }
         }
@@ -86,7 +100,9 @@ namespace DeejNG.Infrastructure.System
                 var exePath = Environment.ProcessPath;
                 if (!File.Exists(exePath))
                 {
+#if DEBUG
                     Debug.WriteLine("[Icon] Executable path not found, skipping icon setup");
+#endif
                     return;
                 }
 
@@ -101,14 +117,18 @@ namespace DeejNG.Infrastructure.System
                     if (displayName?.Contains(APP_NAME) == true)
                     {
                         myKey?.SetValue("DisplayIcon", exePath + ",0");
+#if DEBUG
                         Debug.WriteLine($"[Icon] Set display icon for {displayName}");
+#endif
                         break;
                     }
                 }
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Failed to set display icon: {ex.Message}");
+#endif
                 // Don't show message box for icon errors as they're not critical
             }
         }
@@ -164,21 +184,27 @@ namespace DeejNG.Infrastructure.System
                 {
                     if (File.Exists(path))
                     {
+#if DEBUG
                         Debug.WriteLine($"[Startup] Found shortcut at: {path}");
+#endif
                         return path;
                     }
                 }
 
+#if DEBUG
                 Debug.WriteLine("[Startup] No shortcut found in any expected location");
                 Debug.WriteLine("[Startup] Checked paths:");
                 foreach (var path in possiblePaths)
                 {
                     Debug.WriteLine($"  - {path}");
                 }
+#endif
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[ERROR] Error searching for application shortcut: {ex.Message}");
+#endif
             }
 
             return string.Empty;
