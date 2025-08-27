@@ -1,28 +1,39 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
-using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
-using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace DeejNG.Services
 {
     public class SerialConnectionManager : IDisposable
     {
-        private static readonly Regex _invalidSerialCharsRegex = new Regex(@"[^\x20-\x7E\r\n]", RegexOptions.Compiled);
-
         private SerialPort _serialPort;
-        private StringBuilder _serialBuffer = new();
         private bool _isConnected = false;
         private bool _serialDisconnected = false;
         private bool _manualDisconnect = false;
         private bool _serialPortFullyInitialized = false;
         private string _lastConnectedPort = string.Empty;
         private string _userSelectedPort = string.Empty;
+
         private DateTime _lastValidDataTimestamp = DateTime.MinValue;
         private int _noDataCounter = 0;
         private bool _expectingData = false;
+
+        private volatile int _reading = 0;      // re-entrancy guard
+        private string _leftover = string.Empty; // pending partial line
+        private int _baudRate = 0;
+
+        // ---- Tuning ----
+        private const int MaxRemainderBytes = 4096;
+        private const int MaxLineLength = 200;
+        private const bool EnableWatchdog = true;
+        private static readonly TimeSpan WatchdogQuietThreshold = TimeSpan.FromSeconds(5);
+        private const int WatchdogMaxQuietIntervals = 3;
+        private const byte WatchdogProbeByte = 10; // 0 to disable probe
 
         public event Action<string> DataReceived;
         public event Action Connected;
@@ -37,7 +48,6 @@ namespace DeejNG.Services
         {
             try
             {
-                // Validate port name
                 if (string.IsNullOrWhiteSpace(portName))
                 {
 #if DEBUG
@@ -46,51 +56,47 @@ namespace DeejNG.Services
                     return;
                 }
 
-                var availablePorts = SerialPort.GetPortNames();
-                if (!availablePorts.Contains(portName))
+                var available = SerialPort.GetPortNames();
+                if (Array.IndexOf(available, portName) < 0)
                 {
 #if DEBUG
-                    Debug.WriteLine($"[Serial] Port {portName} not in available ports: [{string.Join(", ", availablePorts)}]");
+                    Debug.WriteLine($"[Serial] Port {portName} not available: [{string.Join(", ", available)}]");
 #endif
-
                     _isConnected = false;
                     _serialDisconnected = true;
-                    // Don't call StatusChanged - let MainWindow handle UI updates
                     return;
                 }
 
-                // Close existing connection if any
                 ClosePort();
 
+                _baudRate = baudRate;
                 _serialPort = new SerialPort(portName, baudRate)
                 {
                     ReadTimeout = 1000,
                     WriteTimeout = 1000,
+                    // Slider messages are tiny; keep threshold low so the handler fires promptly.
                     ReceivedBytesThreshold = 1,
                     DtrEnable = true,
-                    RtsEnable = true
+                    RtsEnable = true,
+                    NewLine = "\n"
                 };
 
                 _serialPort.DataReceived += SerialPort_DataReceived;
                 _serialPort.ErrorReceived += SerialPort_ErrorReceived;
-
                 _serialPort.Open();
 
-                // Update connection state
                 _isConnected = true;
-                _lastConnectedPort = portName;
                 _serialDisconnected = false;
                 _serialPortFullyInitialized = false;
+                _lastConnectedPort = portName;
 
-                // Reset the watchdog variables
                 _lastValidDataTimestamp = DateTime.Now;
                 _noDataCounter = 0;
                 _expectingData = false;
 
                 Connected?.Invoke();
-
 #if DEBUG
-                Debug.WriteLine($"[Serial] Successfully connected to {portName} - waiting for data before applying ANY volumes");
+                Debug.WriteLine($"[Serial] Connected to {portName} @ {baudRate}");
 #endif
             }
             catch (Exception ex)
@@ -98,13 +104,9 @@ namespace DeejNG.Services
 #if DEBUG
                 Debug.WriteLine($"[Serial] Failed to open port {portName}: {ex.Message}");
 #endif
-
-                // Update connection state
                 _isConnected = false;
                 _serialDisconnected = true;
                 _serialPortFullyInitialized = false;
-
-                // Don't call StatusChanged - let MainWindow handle UI updates
             }
         }
 
@@ -115,8 +117,6 @@ namespace DeejNG.Services
 #if DEBUG
                 Debug.WriteLine("[Manual] User initiated manual disconnect");
 #endif
-
-                // Set flag to prevent automatic reconnection
                 _manualDisconnect = true;
 
                 ClosePort();
@@ -125,12 +125,7 @@ namespace DeejNG.Services
                 _serialDisconnected = true;
                 _serialPortFullyInitialized = false;
 
-                // Don't call StatusChanged - let MainWindow handle UI updates
                 Disconnected?.Invoke();
-
-#if DEBUG
-                Debug.WriteLine("[Manual] Manual disconnect completed");
-#endif
             }
             catch (Exception ex)
             {
@@ -144,53 +139,31 @@ namespace DeejNG.Services
         {
             try
             {
-                if (_isConnected && !_serialDisconnected)
-                {
-                    return true;
-                }
+                if (IsConnected) return true;
 
-                // If user manually selected a port, use that instead of saved port
-                string portToTry;
-                if (!string.IsNullOrEmpty(_userSelectedPort))
-                {
-                    portToTry = _userSelectedPort;
-#if DEBUG
-                    Debug.WriteLine($"[AutoConnect] Using user-selected port: {portToTry}");
-#endif
-                }
-                else
-                {
-                    if (string.IsNullOrWhiteSpace(savedPortName))
-                    {
-#if DEBUG
-                        Debug.WriteLine("[AutoConnect] No saved port name");
-#endif
-                        return false;
-                    }
-                    portToTry = savedPortName;
-#if DEBUG
-                    Debug.WriteLine($"[AutoConnect] Using saved port: {portToTry}");
-#endif
-                }
-
-                var availablePorts = SerialPort.GetPortNames();
-                if (!availablePorts.Contains(portToTry))
+                string portToTry = !string.IsNullOrEmpty(_userSelectedPort) ? _userSelectedPort : savedPortName;
+                if (string.IsNullOrWhiteSpace(portToTry))
                 {
 #if DEBUG
-                    Debug.WriteLine($"[AutoConnect] Port '{portToTry}' not available. Available: [{string.Join(", ", availablePorts)}]");
+                    Debug.WriteLine("[AutoConnect] No saved or user-selected port");
 #endif
                     return false;
                 }
 
-                InitSerial(portToTry, 9600);
-
-                // Clear user selected port after successful connection
-                if (_isConnected && !_serialDisconnected)
+                var available = SerialPort.GetPortNames();
+                if (Array.IndexOf(available, portToTry) < 0)
                 {
-                    _userSelectedPort = string.Empty;
+#if DEBUG
+                    Debug.WriteLine($"[AutoConnect] Port '{portToTry}' not available. Available: [{string.Join(", ", available)}]");
+#endif
+                    return false;
                 }
 
-                return _isConnected && !_serialDisconnected;
+                // Reuse last configured baud rate; default to 9600 if unknown.
+                InitSerial(portToTry, _baudRate > 0 ? _baudRate : 9600);
+
+                if (IsConnected) _userSelectedPort = string.Empty;
+                return IsConnected;
             }
             catch (Exception ex)
             {
@@ -204,27 +177,18 @@ namespace DeejNG.Services
         public void SetUserSelectedPort(string portName)
         {
             _userSelectedPort = portName;
+            if (_manualDisconnect) _manualDisconnect = false;
 #if DEBUG
             Debug.WriteLine($"[UI] User selected port: {portName}");
 #endif
-
-            // If user manually disconnected and now selects a port, clear the manual disconnect flag
-            if (_manualDisconnect)
-            {
-#if DEBUG
-                Debug.WriteLine("[UI] User selected new port after manual disconnect - clearing manual disconnect flag");
-#endif
-                _manualDisconnect = false;
-            }
         }
 
         public void CheckConnection()
         {
-            if (!_isConnected || _serialDisconnected) return;
+            if (!IsConnected || !EnableWatchdog) return;
 
             try
             {
-                // First check if the port is actually open
                 if (_serialPort == null || !_serialPort.IsOpen)
                 {
 #if DEBUG
@@ -234,54 +198,38 @@ namespace DeejNG.Services
                     return;
                 }
 
-                // Check if we're receiving data
                 if (_expectingData)
                 {
-                    TimeSpan elapsed = DateTime.Now - _lastValidDataTimestamp;
+                    var elapsed = DateTime.Now - _lastValidDataTimestamp;
 
-                    // If it's been more than 5 seconds without data, assume disconnected
-                    if (elapsed.TotalSeconds > 5)
+                    if (elapsed >= WatchdogQuietThreshold)
                     {
                         _noDataCounter++;
 #if DEBUG
-                        Debug.WriteLine($"[SerialWatchdog] No data received for {elapsed.TotalSeconds:F1} seconds (count: {_noDataCounter})");
+                        Debug.WriteLine($"[SerialWatchdog] Quiet for {elapsed.TotalSeconds:F1}s (#{_noDataCounter})");
 #endif
+                        if (_serialPort.BytesToRead == 0 && WatchdogProbeByte != 0)
+                        {
+                            try { _serialPort.Write(new[] { WatchdogProbeByte }, 0, 1); }
+                            catch { /* ignore; disconnect if persistent */ }
+                        }
 
-                        // After 3 consecutive timeouts, consider disconnected
-                        if (_noDataCounter >= 3)
+                        if (_noDataCounter >= WatchdogMaxQuietIntervals)
                         {
 #if DEBUG
-                            Debug.WriteLine("[SerialWatchdog] Too many timeouts, considering disconnected");
+                            Debug.WriteLine("[SerialWatchdog] Too many quiet intervals, considering disconnected");
 #endif
                             HandleSerialDisconnection();
                             _noDataCounter = 0;
-                            return;
-                        }
-
-                        // Try to write a single byte to test connection
-                        try
-                        {
-                            _serialPort.Write(new byte[] { 10 }, 0, 1);
-                        }
-                        catch (Exception ex)
-                        {
-#if DEBUG
-                            Debug.WriteLine($"[SerialWatchdog] Exception when testing connection: {ex.Message}");
-#endif
-                            HandleSerialDisconnection();
-                            return;
                         }
                     }
                     else
                     {
-                        // Reset counter if we're getting data
                         _noDataCounter = 0;
                     }
                 }
-                else if (_isConnected && (DateTime.Now - _lastValidDataTimestamp).TotalSeconds > 10)
+                else if (IsConnected && (DateTime.Now - _lastValidDataTimestamp).TotalSeconds > 10)
                 {
-                    // If we haven't seen any data for 10 seconds after connecting,
-                    // we may need to set the flag to start expecting data
                     _expectingData = true;
                 }
             }
@@ -293,9 +241,19 @@ namespace DeejNG.Services
             }
         }
 
-        public bool ShouldAttemptReconnect()
+        public bool ShouldAttemptReconnect() => _serialDisconnected && !_manualDisconnect;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static string FilterPrintable(string s)
         {
-            return _serialDisconnected && !_manualDisconnect;
+            if (string.IsNullOrEmpty(s)) return s;
+            var sb = new StringBuilder(s.Length);
+            foreach (var ch in s)
+            {
+                if ((ch >= 0x20 && ch <= 0x7E) || ch == '\r' || ch == '\n')
+                    sb.Append(ch);
+            }
+            return sb.ToString();
         }
 
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
@@ -306,99 +264,74 @@ namespace DeejNG.Services
                 return;
             }
 
+            // Prevent re-entrant entry from the driver
+            if (Interlocked.Exchange(ref _reading, 1) == 1)
+                return;
+
             try
             {
-                string incoming = _serialPort.ReadExisting();
+                var incoming = _serialPort.ReadExisting();
 
-                // Update timestamp when we receive data
                 _lastValidDataTimestamp = DateTime.Now;
                 _expectingData = true;
                 _noDataCounter = 0;
 
-                // Buffer management to prevent long-running issues
-                if (_serialBuffer.Length > 1024)
+                if (_leftover.Length > MaxRemainderBytes) _leftover = string.Empty;
+
+                incoming = FilterPrintable(incoming);
+                if (incoming.Length == 0) return;
+
+                var combined = _leftover + incoming;
+
+                int start = 0;
+                for (int i = 0; i < combined.Length; i++)
                 {
-                    string bufferContent = _serialBuffer.ToString();
-                    int lastNewline = Math.Max(bufferContent.LastIndexOf('\n'), bufferContent.LastIndexOf('\r'));
-
-                    if (lastNewline > 0)
+                    char c = combined[i];
+                    if (c == '\n' || c == '\r')
                     {
-                        _serialBuffer.Clear();
-                        _serialBuffer.Append(bufferContent.Substring(lastNewline + 1));
-#if DEBUG
-                        Debug.WriteLine("[WARNING] Serial buffer trimmed to last valid line");
-#endif
-                    }
-                    else
-                    {
-                        _serialBuffer.Clear();
-#if DEBUG
-                        Debug.WriteLine("[WARNING] Serial buffer exceeded limit and was cleared");
-#endif
-                    }
-                }
-
-                // Filter out non-printable characters and invalid data
-                incoming = _invalidSerialCharsRegex.Replace(incoming, "");
-                _serialBuffer.Append(incoming);
-
-                // Process all complete lines in the buffer
-                while (true)
-                {
-                    string buffer = _serialBuffer.ToString();
-                    int newLineIndex = buffer.IndexOf('\n');
-                    if (newLineIndex == -1)
-                    {
-                        newLineIndex = buffer.IndexOf('\r');
-                        if (newLineIndex == -1) break;
-                    }
-
-                    string line = buffer.Substring(0, newLineIndex).Trim();
-
-                    // Remove the processed line including any CR/LF characters
-                    int removeLength = newLineIndex + 1;
-                    if (buffer.Length > newLineIndex + 1)
-                    {
-                        if (buffer[newLineIndex] == '\r' && buffer[newLineIndex + 1] == '\n')
-                            removeLength++;
-                        else if (buffer[newLineIndex] == '\n' && buffer[newLineIndex + 1] == '\r')
-                            removeLength++;
-                    }
-
-                    _serialBuffer.Remove(0, removeLength);
-
-                    // Validate and process line
-                    if (!string.IsNullOrWhiteSpace(line) && line.Length < 200)
-                    {
-                        DataReceived?.Invoke(line);
-
-                        // Mark as fully initialized after first valid data
-                        if (!_serialPortFullyInitialized)
+                        int len = i - start;
+                        if (len > 0)
                         {
-                            _serialPortFullyInitialized = true;
+                            var line = combined.AsSpan(start, len).Trim().ToString();
+                            if (line.Length > 0 && line.Length <= MaxLineLength)
+                            {
+                                DataReceived?.Invoke(line);
+
+                                if (!_serialPortFullyInitialized)
+                                {
+                                    _serialPortFullyInitialized = true;
 #if DEBUG
-                            Debug.WriteLine("[Serial] Port fully initialized and receiving data");
+                                    Debug.WriteLine("[Serial] Port fully initialized and receiving data");
 #endif
+                                }
+                            }
                         }
+
+                        // swallow paired CRLF
+                        if (i + 1 < combined.Length &&
+                            ((c == '\r' && combined[i + 1] == '\n') ||
+                             (c == '\n' && combined[i + 1] == '\r')))
+                        {
+                            i++;
+                        }
+                        start = i + 1;
                     }
                 }
 
-                // Periodic buffer cleanup removed - was dead code (only cleared when buffer already empty)
+                _leftover = (start < combined.Length) ? combined[start..] : string.Empty;
             }
-            catch (IOException)
-            {
-                HandleSerialDisconnection();
-            }
-            catch (InvalidOperationException)
-            {
-                HandleSerialDisconnection();
-            }
+            catch (IOException) { HandleSerialDisconnection(); }
+            catch (InvalidOperationException) { HandleSerialDisconnection(); }
             catch (Exception ex)
             {
 #if DEBUG
                 Debug.WriteLine($"[ERROR] Serial read: {ex.Message}");
 #endif
-                _serialBuffer.Clear();
+                _leftover = string.Empty;
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _reading, 0);
             }
         }
 
@@ -407,8 +340,6 @@ namespace DeejNG.Services
 #if DEBUG
             Debug.WriteLine($"[Serial] Error received: {e.EventType}");
 #endif
-
-            // Check for disconnection conditions
             if (e.EventType == SerialError.Frame || e.EventType == SerialError.RXOver ||
                 e.EventType == SerialError.Overrun || e.EventType == SerialError.RXParity)
             {
@@ -426,9 +357,7 @@ namespace DeejNG.Services
             _serialDisconnected = true;
             _isConnected = false;
 
-            // Don't call StatusChanged here - let the MainWindow handle UI updates
             Disconnected?.Invoke();
-
             ClosePort();
         }
 
@@ -443,8 +372,8 @@ namespace DeejNG.Services
 
                     if (_serialPort.IsOpen)
                     {
-                        _serialPort.DiscardInBuffer();
-                        _serialPort.DiscardOutBuffer();
+                        try { _serialPort.DiscardInBuffer(); } catch { }
+                        try { _serialPort.DiscardOutBuffer(); } catch { }
                         _serialPort.Close();
                     }
 
@@ -463,7 +392,7 @@ namespace DeejNG.Services
         public void Dispose()
         {
             ClosePort();
-            _serialBuffer.Clear();
+            _leftover = string.Empty;
         }
     }
 }
