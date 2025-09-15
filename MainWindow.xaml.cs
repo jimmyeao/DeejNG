@@ -531,7 +531,6 @@ namespace DeejNG
                     }
                     else if (string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
                     {
-                        
                         _audioService.ApplyVolumeToCurrent(level, ctrl.IsMuted);
                     }
                     else
