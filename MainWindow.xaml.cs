@@ -247,6 +247,17 @@ namespace DeejNG
                         return "System";
                     if (name.Equals("unmapped", StringComparison.OrdinalIgnoreCase))
                         return "Unmapped";
+                    if (name.Equals("current", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var label = "Current";
+                        var focusTarget = AudioUtilities.GetCurrentFocusTarget();
+                        if (focusTarget != "")
+                        {
+                            label += $" ({char.ToUpper(focusTarget[0]) + focusTarget[1..].ToLower()})";
+                        }
+
+                        return label;
+                    }
 
                     // For regular app names, return the full name (wrapping will handle display)
                     return char.ToUpper(name[0]) + name.Substring(1).ToLower();
@@ -507,9 +518,21 @@ namespace DeejNG
 
                             var mappedApps = GetAllMappedApplications();
                             mappedApps.Remove("unmapped");
-
+                            if (mappedApps.Remove("current"))
+                            {
+                                var focusTarget = AudioUtilities.GetCurrentFocusTarget();
+                                if (focusTarget != "")
+                                {
+                                    mappedApps.Add(focusTarget);
+                                }
+                            }
                             _audioService.ApplyVolumeToUnmappedApplications(level, ctrl.IsMuted, mappedApps);
                         }
+                    }
+                    else if (string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
+                    {
+                        
+                        _audioService.ApplyVolumeToCurrent(level, ctrl.IsMuted);
                     }
                     else
                     {

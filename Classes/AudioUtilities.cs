@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using NAudio.CoreAudioApi;
 
 namespace DeejNG.Classes
@@ -29,6 +30,11 @@ namespace DeejNG.Classes
         // Timestamp of the last time the process cache was cleaned
         private static DateTime _lastProcessCacheCleanup = DateTime.MinValue;
 
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
         #endregion Private Fields
 
         #region Public Methods
@@ -99,7 +105,19 @@ namespace DeejNG.Classes
             _processNameCache[processId] = processName;
             return processName;
         }
+        
+        public static string GetCurrentFocusTarget()
+        {
+            IntPtr hWnd = GetForegroundWindow();
+            if (hWnd == IntPtr.Zero)
+            {
+                return "";
+            }
 
+            GetWindowThreadProcessId(hWnd, out uint processId);
+            return GetProcessNameSafely((int)processId);
+        }
+        
         #endregion Public Methods
 
         #region Private Methods
