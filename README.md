@@ -35,6 +35,7 @@ Configurable transpartent overaly with adjustable time out
 - Each slider is mapped to one or more **targets**:
   - System audio
   - Specific applications (by executable name)
+  - Current application (by focused window)
   - Input devices (microphones)
   - Unmapped sessions (everything else)
 - Volume data is received via serial (USB COM port).

@@ -179,7 +179,7 @@ namespace DeejNG.Dialogs
 
         /// <summary>
         /// Loads all current audio sessions and wraps them in SelectableSession objects for display.
-        /// Adds special entries for "System" and "Unmapped Applications", and pre-selects any sessions
+        /// Adds special entries for "System", "Unmapped Applications" and "Currently Focused Application" and pre-selects any sessions
         /// that match the provided names.
         /// </summary>
         /// <param name="selectedNames">A set of target names that should be pre-selected in the list.</param>
@@ -206,6 +206,18 @@ namespace DeejNG.Dialogs
                 IsOutputDevice = false
             };
             AvailableSessions.Add(unmappedSession);
+
+
+            // Add "Currently Focused Application" as dynamic currently focused window session
+            var currentSession = new SelectableSession
+            {
+                Id = "current",
+                FriendlyName = "Currently Focused Application",
+                IsSelected = selectedNames.Contains("current"),
+                IsInputDevice = false,
+                IsOutputDevice = false
+            };
+            AvailableSessions.Add(currentSession);
 
             try
             {

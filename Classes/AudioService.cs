@@ -306,6 +306,21 @@ namespace DeejNG.Services
 #endif
             }
         }
+        
+        /// <summary>
+        /// Applies the specified volume and mute settings to all audio sessions that are
+        /// mapped to the currently focused window's application.
+        /// </summary>
+        /// <param name="level">Volume level (0.0 to 1.0).</param>
+        /// <param name="isMuted">Whether the session should be muted.</param>
+        public void ApplyVolumeToCurrent(float level, bool isMuted)
+        {
+            var currentTarget = AudioUtilities.GetCurrentFocusTarget();
+            if (currentTarget != "")
+            {
+                ApplyVolumeToTarget(currentTarget, level, isMuted);
+            }
+        }
 
 
         /// <summary>
