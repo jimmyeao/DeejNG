@@ -21,6 +21,7 @@ namespace DeejNG.Core.Configuration
             // Register services
             Register<IOverlayService>(new OverlayService());
             Register<ISystemIntegrationService>(new SystemIntegrationService());
+            Register<IPowerManagementService>(new PowerManagementService());
 
             _isConfigured = true;
         }

@@ -1,5 +1,6 @@
 using DeejNG.Classes;
 using DeejNG.Models;
+using DeejNG.Core.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -37,9 +38,13 @@ namespace DeejNG.Services
 #if DEBUG
                     Debug.WriteLine($"[Settings] Loaded from disk - OverlayEnabled: {AppSettings.OverlayEnabled}");
                     Debug.WriteLine($"[Settings] Loaded from disk - OverlayPosition: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
+                    Debug.WriteLine($"[Settings] Loaded from disk - OverlayScreen: {AppSettings.OverlayScreenDevice}");
                     Debug.WriteLine($"[Settings] Loaded from disk - OverlayOpacity: {AppSettings.OverlayOpacity}");
                     Debug.WriteLine($"[Settings] Loaded from disk - OverlayTimeoutSeconds: {AppSettings.OverlayTimeoutSeconds}");
 #endif
+
+                    // Validate and correct overlay position for current display configuration
+                    ValidateAndCorrectOverlayPosition();
 
                     return AppSettings;
                 }
@@ -99,6 +104,8 @@ namespace DeejNG.Services
 
 #if DEBUG
                     Debug.WriteLine($"[Settings] Saved successfully with {AppSettings.SliderTargets?.Count ?? 0} slider configurations and overlay settings");
+                    Debug.WriteLine($"[Settings] Overlay position saved: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
+                    Debug.WriteLine($"[Settings] Overlay screen: {AppSettings.OverlayScreenDevice} - {AppSettings.OverlayScreenBounds}");
 #endif
 
                     SettingsChanged?.Invoke(AppSettings);
@@ -150,6 +157,99 @@ namespace DeejNG.Services
             }
         }
 
+        /// <summary>
+        /// Updates overlay position and screen information in settings
+        /// </summary>
+        public void UpdateOverlayPosition(double x, double y)
+        {
+            try
+            {
+                AppSettings.OverlayX = x;
+                AppSettings.OverlayY = y;
+                
+                // Capture screen information for multi-monitor support
+                var screenInfo = ScreenPositionManager.GetScreenInfo(x, y);
+                AppSettings.OverlayScreenDevice = screenInfo.DeviceName;
+                AppSettings.OverlayScreenBounds = screenInfo.Bounds;
+
+#if DEBUG
+                Debug.WriteLine($"[Settings] Updated overlay position: ({x}, {y})");
+                Debug.WriteLine($"[Settings] Screen: {screenInfo.DeviceName} - {screenInfo.Bounds}");
+#endif
+
+                // Save will be triggered by the debounced timer in MainWindow
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                Debug.WriteLine($"[ERROR] Error updating overlay position: {ex.Message}");
+#endif
+            }
+        }
+
+        /// <summary>
+        /// Validates and corrects overlay position for current display configuration
+        /// </summary>
+        private void ValidateAndCorrectOverlayPosition()
+        {
+        try
+        {
+        // If screen device info is missing but we have a position, capture it now
+        if (string.IsNullOrEmpty(AppSettings.OverlayScreenDevice) && 
+                (AppSettings.OverlayX != 0 || AppSettings.OverlayY != 0))
+        {
+#if DEBUG
+                Debug.WriteLine($"[Settings] Screen device info missing, capturing for position ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
+#endif
+        var screenInfo = ScreenPositionManager.GetScreenInfo(AppSettings.OverlayX, AppSettings.OverlayY);
+        AppSettings.OverlayScreenDevice = screenInfo.DeviceName;
+                AppSettings.OverlayScreenBounds = screenInfo.Bounds;
+                
+        // Save immediately so we have it next time
+        SaveSettings(AppSettings);
+#if DEBUG
+        Debug.WriteLine($"[Settings] Captured and saved screen info: Device={screenInfo.DeviceName}, Bounds={screenInfo.Bounds}");
+#endif
+        return; // No validation needed, we just captured current state
+        }
+
+        double correctedX, correctedY;
+        bool needsCorrection = ScreenPositionManager.ValidateAndCorrectPosition(AppSettings, out correctedX, out correctedY);
+
+        if (needsCorrection)
+        {
+#if DEBUG
+        Debug.WriteLine($"[Settings] Display configuration changed, position corrected:");
+                Debug.WriteLine($"[Settings]   Old: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
+            Debug.WriteLine($"[Settings]   New: ({correctedX}, {correctedY})");
+#endif
+
+                AppSettings.OverlayX = correctedX;
+                AppSettings.OverlayY = correctedY;
+
+                // Update screen info for corrected position
+                var screenInfo = ScreenPositionManager.GetScreenInfo(correctedX, correctedY);
+                    AppSettings.OverlayScreenDevice = screenInfo.DeviceName;
+                AppSettings.OverlayScreenBounds = screenInfo.Bounds;
+
+                // Save corrected position
+                SaveSettings(AppSettings);
+            }
+            else
+            {
+#if DEBUG
+                Debug.WriteLine($"[Settings] Overlay position validated successfully");
+#endif
+            }
+        }
+        catch (Exception ex)
+        {
+#if DEBUG
+            Debug.WriteLine($"[ERROR] Error validating overlay position: {ex.Message}");
+#endif
+        }
+    }
+
         public bool IsPositionValid(double x, double y)
         {
             // Use virtual screen bounds to support multi-monitor setups
@@ -180,20 +280,8 @@ namespace DeejNG.Services
             Debug.WriteLine($"[Settings] Initial overlay position from file: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
 #endif
 
-            if (!IsPositionValid(AppSettings.OverlayX, AppSettings.OverlayY))
-            {
-#if DEBUG
-                Debug.WriteLine($"[Settings] Position ({AppSettings.OverlayX}, {AppSettings.OverlayY}) is outside virtual screen bounds, resetting to default");
-#endif
-                AppSettings.OverlayX = 100;
-                AppSettings.OverlayY = 100;
-            }
-            else
-            {
-#if DEBUG
-                Debug.WriteLine($"[Settings] Position ({AppSettings.OverlayX}, {AppSettings.OverlayY}) is valid for multi-monitor setup");
-#endif
-            }
+            // Use the new validation that handles multi-monitor scenarios
+            ValidateAndCorrectOverlayPosition();
 
             if (AppSettings.OverlayOpacity <= 0 || AppSettings.OverlayOpacity > 1)
             {
@@ -232,7 +320,9 @@ namespace DeejNG.Services
                 OverlayTimeoutSeconds = AppSettings.OverlayTimeoutSeconds,
                 OverlayX = AppSettings.OverlayX,
                 OverlayY = AppSettings.OverlayY,
-                OverlayTextColor = AppSettings.OverlayTextColor
+                OverlayTextColor = AppSettings.OverlayTextColor,
+                OverlayScreenDevice = AppSettings.OverlayScreenDevice,
+                OverlayScreenBounds = AppSettings.OverlayScreenBounds
             };
         }
     }

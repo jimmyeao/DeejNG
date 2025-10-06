@@ -12,6 +12,7 @@ namespace DeejNG.Services
         private DispatcherTimer _serialReconnectTimer;
         private DispatcherTimer _serialWatchdogTimer;
         private DispatcherTimer _positionSaveTimer;
+        private DispatcherTimer _periodicPositionSaveTimer;
 
         public event EventHandler MeterUpdate;
         public event EventHandler SessionCacheUpdate;
@@ -19,6 +20,7 @@ namespace DeejNG.Services
         public event EventHandler SerialReconnectAttempt;
         public event EventHandler SerialWatchdogCheck;
         public event EventHandler PositionSave;
+        public event EventHandler PeriodicPositionSave;
 
         public bool IsMetersRunning => _meterTimer?.IsEnabled == true;
         public bool IsSerialReconnectRunning => _serialReconnectTimer?.IsEnabled == true;
@@ -70,6 +72,13 @@ namespace DeejNG.Services
                 _positionSaveTimer.Stop();
                 PositionSave?.Invoke(s, e);
             };
+
+            // Periodic position save timer - force save every 5 seconds if dirty
+            _periodicPositionSaveTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(5)
+            };
+            _periodicPositionSaveTimer.Tick += (s, e) => PeriodicPositionSave?.Invoke(s, e);
         }
 
         public void StartMeters()
@@ -141,6 +150,16 @@ namespace DeejNG.Services
             _positionSaveTimer?.Start();
         }
 
+        public void StartPeriodicPositionSave()
+        {
+            _periodicPositionSaveTimer?.Start();
+        }
+
+        public void StopPeriodicPositionSave()
+        {
+            _periodicPositionSaveTimer?.Stop();
+        }
+
         public void SetSerialReconnectInterval(TimeSpan interval)
         {
             if (_serialReconnectTimer != null)
@@ -165,6 +184,7 @@ namespace DeejNG.Services
             StopSerialReconnect();
             StopSerialWatchdog();
             _positionSaveTimer?.Stop();
+            _periodicPositionSaveTimer?.Stop();
         }
 
         public void Dispose()

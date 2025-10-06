@@ -1,5 +1,6 @@
 using DeejNG;
 using DeejNG.Classes;
+using DeejNG.Core.Helpers;
 using DeejNG.Core.Interfaces;
 using DeejNG.Views;
 using System;
@@ -115,7 +116,13 @@ namespace DeejNG.Core.Services
                 }
             }
 
+#if DEBUG
+            var subscriberCount = PositionChanged?.GetInvocationList()?.Length ?? 0;
+            Debug.WriteLine($"[OverlayService] About to fire PositionChanged event, subscriber count: {subscriberCount}");
+#endif
+            
             PositionChanged?.Invoke(this, new OverlayPositionChangedEventArgs { X = X, Y = Y });
+            
 #if DEBUG
             Debug.WriteLine($"[OverlayService] Position updated: X={X}, Y={Y}");
 #endif
@@ -128,12 +135,23 @@ namespace DeejNG.Core.Services
             TimeoutSeconds = settings.OverlayTimeoutSeconds;
             TextColorMode = settings.OverlayTextColor ?? "Auto";
             
-            // Always update position from settings (don't validate, let FloatingOverlay handle clamping)
-            X = settings.OverlayX;
-            Y = settings.OverlayY;
+            // MULTI-MONITOR FIX: Validate and correct position for current display configuration
+            double validatedX, validatedY;
+            bool positionCorrected = ScreenPositionManager.ValidateAndCorrectPosition(settings, out validatedX, out validatedY);
+            
+            X = validatedX;
+            Y = validatedY;
             
 #if DEBUG
-            Debug.WriteLine($"[OverlayService] Position loaded from settings: X={X}, Y={Y}");
+            if (positionCorrected)
+            {
+                Debug.WriteLine($"[OverlayService] Position corrected for display changes: ({settings.OverlayX}, {settings.OverlayY}) -> ({X}, {Y})");
+                Debug.WriteLine(ScreenPositionManager.GetScreenDiagnostics());
+            }
+            else
+            {
+                Debug.WriteLine($"[OverlayService] Position validated successfully: X={X}, Y={Y}");
+            }
 #endif
 
             lock (_overlayLock)
@@ -141,6 +159,13 @@ namespace DeejNG.Core.Services
                 if (_overlay != null)
                 {
                     _overlay.UpdateSettings(settings);
+                    
+                    // CRITICAL: Also apply validated position directly to existing overlay
+                    _overlay.Left = X;
+                    _overlay.Top = Y;
+#if DEBUG
+                    Debug.WriteLine($"[OverlayService] Applied validated position to existing overlay: ({X}, {Y})");
+#endif
                 }
             }
 
@@ -186,25 +211,18 @@ namespace DeejNG.Core.Services
 
                 _overlay = new FloatingOverlay(settings, parentWindow);
                 
-                // POSITION FIX: Ensure position is applied after creation
-                // Apply saved position unless both X and Y are the default (100, 100)
-                if (!(X == 100 && Y == 100))
+                // Wire up position change events
+                _overlay.LocationChanged += OnOverlayLocationChanged;
+                
+                // CRITICAL: Apply position after window is loaded to ensure it sticks
+                _overlay.Loaded += (s, e) =>
                 {
                     _overlay.Left = X;
                     _overlay.Top = Y;
 #if DEBUG
-                    Debug.WriteLine($"[OverlayService] Applied saved position to overlay: ({X}, {Y})");
+                    Debug.WriteLine($"[OverlayService] Applied position after Loaded event: ({X}, {Y})");
 #endif
-                }
-                else
-                {
-#if DEBUG
-                    Debug.WriteLine($"[OverlayService] Using overlay default position (no saved position)");
-#endif
-                }
-                
-                // Wire up position change events
-                _overlay.LocationChanged += OnOverlayLocationChanged;
+                };
                 
 #if DEBUG
                 Debug.WriteLine($"[OverlayService] Overlay created with parent: {(parentWindow != null ? "MainWindow" : "standalone")}");

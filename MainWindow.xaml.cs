@@ -78,6 +78,7 @@ namespace DeejNG
         private readonly TimerCoordinator _timerCoordinator;
         private readonly IOverlayService _overlayService;
         private readonly ISystemIntegrationService _systemIntegrationService;
+        private readonly IPowerManagementService _powerManagementService;
 
         #endregion Private Fields
 
@@ -99,6 +100,12 @@ namespace DeejNG
             _timerCoordinator = new TimerCoordinator();
             _overlayService = ServiceLocator.Get<IOverlayService>();
             _systemIntegrationService = ServiceLocator.Get<ISystemIntegrationService>();
+            _powerManagementService = ServiceLocator.Get<IPowerManagementService>();
+
+            // Wire up power management events
+            _powerManagementService.SystemSuspending += OnSystemSuspending;
+            _powerManagementService.SystemResuming += OnSystemResuming;
+            _powerManagementService.SystemResumed += OnSystemResumed;
 
             _audioService = new AudioService();
 
@@ -356,15 +363,179 @@ namespace DeejNG
 
         #region Protected Methods
 
+        #region Power Management Event Handlers
+
+        private void OnSystemSuspending(object sender, EventArgs e)
+        {
+#if DEBUG
+            Debug.WriteLine("[Power] System suspending - preparing for sleep");
+#endif
+            
+            // Stop timers to prevent errors during sleep
+            _timerCoordinator.StopMeters();
+            _timerCoordinator.StopSessionCache();
+            
+            // Force save overlay position and settings before sleep
+            if (_settingsManager?.AppSettings != null)
+            {
+                try
+                {
+                    _settingsManager.SaveSettings(_settingsManager.AppSettings);
+#if DEBUG
+                    Debug.WriteLine("[Power] Settings saved before sleep");
+#endif
+                }
+                catch (Exception ex)
+                {
+#if DEBUG
+                    Debug.WriteLine($"[Power] Error saving settings before sleep: {ex.Message}");
+#endif
+                }
+            }
+            
+            // Hide overlay to prevent positioning issues
+            _overlayService?.HideOverlay();
+        }
+
+        private void OnSystemResuming(object sender, EventArgs e)
+        {
+#if DEBUG
+            Debug.WriteLine("[Power] System resuming - entering stabilization");
+#endif
+            
+            // Prevent UI operations during early resume
+            _allowVolumeApplication = false;
+        }
+
+        private void OnSystemResumed(object sender, EventArgs e)
+        {
+#if DEBUG
+            Debug.WriteLine("[Power] System resume stabilized - reinitializing");
+#endif
+            
+            // Run reinit on UI thread with background priority to avoid focus stealing
+            Dispatcher.BeginInvoke(() =>
+            {
+                try
+                {
+                    // Refresh audio device references
+                    RefreshAudioDevices();
+                    
+                    // Restart timers
+                    _timerCoordinator.StartMeters();
+                    _timerCoordinator.StartSessionCache();
+                    
+                    // Reconnect serial if it was connected before
+                    if (!_serialManager.IsConnected && _serialManager.ShouldAttemptReconnect())
+                    {
+#if DEBUG
+                        Debug.WriteLine("[Power] Starting serial reconnection after resume");
+#endif
+                        _timerCoordinator.StartSerialReconnect();
+                    }
+                    
+                    // Force session cache update
+                    UpdateSessionCache();
+                    
+                    // Re-sync mute states
+                    _hasSyncedMuteStates = false;
+                    SyncMuteStates();
+                    
+                    // Re-enable volume application after short delay
+                    var enableTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                    enableTimer.Tick += (s, args) =>
+                    {
+                        enableTimer.Stop();
+                        _allowVolumeApplication = true;
+#if DEBUG
+                        Debug.WriteLine("[Power] Volume application re-enabled");
+#endif
+                    };
+                    enableTimer.Start();
+                    
+#if DEBUG
+                    Debug.WriteLine("[Power] Reinitialization complete");
+#endif
+                }
+                catch (Exception ex)
+                {
+#if DEBUG
+                    Debug.WriteLine($"[Power] Error during reinitialization: {ex.Message}");
+#endif
+                }
+            }, DispatcherPriority.Background);
+        }
+
+        private void RefreshAudioDevices()
+        {
+            try
+            {
+                // Refresh default audio device
+                _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                _systemVolume = _audioDevice.AudioEndpointVolume;
+                
+                // Re-register volume notification
+                _systemVolume.OnVolumeNotification -= AudioEndpointVolume_OnVolumeNotification;
+                _systemVolume.OnVolumeNotification += AudioEndpointVolume_OnVolumeNotification;
+                
+                // Refresh device caches
+                _deviceManager.RefreshCaches();
+                
+                // Clear cached sessions
+                _sessionIdCache.Clear();
+                _cachedSessionsForMeters = null;
+                _cachedAudioDevice = null;
+                
+#if DEBUG
+                Debug.WriteLine("[Power] Audio devices refreshed");
+#endif
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                Debug.WriteLine($"[Power] Error refreshing audio devices: {ex.Message}");
+#endif
+            }
+        }
+
+        #endregion Power Management Event Handlers
+
         protected override void OnClosed(EventArgs e)
         {
             _isClosing = true;
 
+            // Force save settings (including overlay position) before shutdown
+            if (_settingsManager?.AppSettings != null)
+            {
+                try
+                {
+                    _settingsManager.SaveSettings(_settingsManager.AppSettings);
+#if DEBUG
+                    Debug.WriteLine("[Shutdown] Settings force saved");
+#endif
+                }
+                catch (Exception ex)
+                {
+#if DEBUG
+                    Debug.WriteLine($"[Shutdown] Error force saving settings: {ex.Message}");
+#endif
+                }
+            }
+
             // Stop all timers first
             _timerCoordinator.StopAll();
 
-            // Dispose overlay service
+            // Unsubscribe from power management events
+            if (_powerManagementService != null)
+            {
+                _powerManagementService.SystemSuspending -= OnSystemSuspending;
+                _powerManagementService.SystemResuming -= OnSystemResuming;
+                _powerManagementService.SystemResumed -= OnSystemResumed;
+            }
+
+            // Dispose services
             _overlayService?.Dispose();
+            _powerManagementService?.Dispose();
 
             // Clean up all registered event handlers
             foreach (var target in _registeredHandlers.Keys.ToList())
@@ -558,6 +729,35 @@ namespace DeejNG
                     systemControl.SetMuted(data.Muted);
                 }
             });
+        }
+        public void SaveOverlayPosition(double x, double y)
+        {
+#if DEBUG
+            Debug.WriteLine($"[MainWindow] SaveOverlayPosition called: X={x}, Y={y}");
+#endif
+
+            // Update settings with position AND screen information
+            if (_settingsManager.AppSettings != null)
+            {
+                _settingsManager.AppSettings.OverlayX = x;
+                _settingsManager.AppSettings.OverlayY = y;
+                
+                // Save screen information for multi-monitor support
+                var screenInfo = DeejNG.Core.Helpers.ScreenPositionManager.GetScreenInfo(x, y);
+                _settingsManager.AppSettings.OverlayScreenDevice = screenInfo.DeviceName;
+                _settingsManager.AppSettings.OverlayScreenBounds = screenInfo.Bounds;
+                
+#if DEBUG
+                Debug.WriteLine($"[MainWindow] Screen info captured: Device={screenInfo.DeviceName}, Bounds={screenInfo.Bounds}");
+#endif
+
+                // Save directly to settings.json - no debouncing needed since this only fires on mouse release
+                _settingsManager.SaveSettings(_settingsManager.AppSettings);
+
+#if DEBUG
+                Debug.WriteLine($"[MainWindow] Position and screen info saved to settings.json");
+#endif
+            }
         }
 
         private void CleanupEventHandlers()
@@ -1087,23 +1287,65 @@ namespace DeejNG
             SliderScrollViewer.Visibility = Visibility.Visible;
             StartOnBootCheckBox.IsChecked = _settingsManager.AppSettings.StartOnBoot;
             
-            // Initialize overlay service
+#if DEBUG
+            Debug.WriteLine("[MainWindow] MainWindow_Loaded - starting overlay initialization");
+            Debug.WriteLine($"[MainWindow] Overlay position from settings.json: X={_settingsManager.AppSettings.OverlayX}, Y={_settingsManager.AppSettings.OverlayY}");
+            Debug.WriteLine($"[MainWindow] Overlay screen: Device={_settingsManager.AppSettings.OverlayScreenDevice}, Bounds={_settingsManager.AppSettings.OverlayScreenBounds}");
+#endif
+            
+            // Initialize overlay service FIRST
             _overlayService.Initialize();
+            
+            // CRITICAL: Subscribe to PositionChanged event BEFORE calling UpdateSettings
+            // This ensures the event is wired up before any overlay is created
+#if DEBUG
+            Debug.WriteLine("[MainWindow] Subscribing to PositionChanged event");
+#endif
             _overlayService.PositionChanged += OnOverlayPositionChanged;
+            
+#if DEBUG
+            Debug.WriteLine($"[MainWindow] Calling UpdateSettings with position X={_settingsManager.AppSettings.OverlayX}, Y={_settingsManager.AppSettings.OverlayY}");
+#endif
+            
+            // UpdateSettings will use the screen device and bounds from AppSettings for multi-monitor support
+            _overlayService.UpdateSettings(_settingsManager.AppSettings);
+            
+#if DEBUG
+            Debug.WriteLine("[MainWindow] MainWindow_Loaded complete");
+#endif
         }
 
         private void OnOverlayPositionChanged(object sender, OverlayPositionChangedEventArgs e)
         {
+#if DEBUG
+            Debug.WriteLine($"[MainWindow] OnOverlayPositionChanged called: X={e.X}, Y={e.Y}");
+#endif
+            
             if (_settingsManager.AppSettings != null)
             {
                 _settingsManager.AppSettings.OverlayX = e.X;
                 _settingsManager.AppSettings.OverlayY = e.Y;
                 
-                // Debounce saves using timer coordinator
+                // Save screen information for multi-monitor support
+                var screenInfo = DeejNG.Core.Helpers.ScreenPositionManager.GetScreenInfo(e.X, e.Y);
+                _settingsManager.AppSettings.OverlayScreenDevice = screenInfo.DeviceName;
+                _settingsManager.AppSettings.OverlayScreenBounds = screenInfo.Bounds;
+                
+#if DEBUG
+                Debug.WriteLine($"[MainWindow] Screen info captured: Device={screenInfo.DeviceName}, Bounds={screenInfo.Bounds}");
+#endif
+                
+                // Trigger debounced save to settings.json (includes position AND screen info)
                 _timerCoordinator.TriggerPositionSave();
                 
 #if DEBUG
-                Debug.WriteLine($"[Overlay] Position updated via service: X={e.X}, Y={e.Y}");
+                Debug.WriteLine($"[Overlay] Position and screen info queued for save to settings.json: X={e.X}, Y={e.Y}");
+#endif
+            }
+            else
+            {
+#if DEBUG
+                Debug.WriteLine("[MainWindow] AppSettings is null, cannot save position");
 #endif
             }
         }

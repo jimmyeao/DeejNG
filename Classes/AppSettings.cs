@@ -96,6 +96,18 @@ namespace DeejNG.Classes
         public double OverlayY { get; set; }
 
         /// <summary>
+        /// Gets or sets the device name of the screen the overlay was on.
+        /// Used to restore overlay to the correct monitor in multi-screen setups.
+        /// </summary>
+        public string OverlayScreenDevice { get; set; }
+
+        /// <summary>
+        /// Gets or sets the working area bounds of the screen the overlay was on.
+        /// Format: "Left,Top,Width,Height". Used for validation in multi-monitor scenarios.
+        /// </summary>
+        public string OverlayScreenBounds { get; set; }
+
+        /// <summary>
         /// Gets or sets the opacity of the overlay.
         /// </summary>
         public double OverlayOpacity { get; set; } = 0.85;

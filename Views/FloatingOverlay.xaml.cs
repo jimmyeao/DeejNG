@@ -46,6 +46,10 @@ namespace DeejNG.Views
         private MainWindow _parentWindow;
         private string _textColorMode = "Auto";
         private List<float> _volumes = new();
+        private Point _dragStartPosition;
+        private double _initialX = 0;
+        private double _initialY = 0;
+        private bool _hasAppliedInitialPosition = false;
         // Win32 API imports
         [DllImport("user32.dll")]
         private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
@@ -64,6 +68,8 @@ namespace DeejNG.Views
         {
             InitializeComponent();
 
+            _parentWindow = parentWindow; // Store parent reference
+
             // Essential focus prevention (minimal overhead)
             this.ShowActivated = false;
             this.Focusable = false;
@@ -76,7 +82,13 @@ namespace DeejNG.Views
             this.ShowInTaskbar = false;
             this.Owner = parentWindow;
 
-            SetPrecisePosition(settings.OverlayX, settings.OverlayY);
+            // Store initial position to apply after window is fully initialized
+            _initialX = settings.OverlayX;
+            _initialY = settings.OverlayY;
+#if DEBUG
+            Debug.WriteLine($"[Overlay] Constructor: Stored initial position X={_initialX}, Y={_initialY}");
+#endif
+            
             OverlayOpacity = settings.OverlayOpacity;
             _textColorMode = settings.OverlayTextColor ?? "Auto";
             SetupAutoCloseTimer(settings.OverlayTimeoutSeconds);
@@ -182,9 +194,13 @@ namespace DeejNG.Views
             _textColorMode = settings.OverlayTextColor ?? "Auto";
 
             // If not currently being dragged and valid position is set, reposition the overlay
-            if (!_isDragging && settings.OverlayX != 0 && settings.OverlayY != 0)
+            if (!_isDragging && (settings.OverlayX != 0 || settings.OverlayY != 0))
             {
+#if DEBUG
+                Debug.WriteLine($"[Overlay] UpdateSettings: Applying position X={settings.OverlayX}, Y={settings.OverlayY}");
+#endif
                 SetPrecisePosition(settings.OverlayX, settings.OverlayY);
+                _hasAppliedInitialPosition = true; // Mark as applied so OnSourceInitialized doesn't override it
             }
 
             // Store whether overlay was visible before timer update
@@ -292,11 +308,29 @@ namespace DeejNG.Views
                 exStyle |= WS_EX_NOACTIVATE;
                 SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
 
+#if DEBUG
                 Debug.WriteLine("[Overlay] Applied WS_EX_NOACTIVATE");
+#endif
             }
             catch (Exception ex)
             {
+#if DEBUG
                 Debug.WriteLine($"[Overlay] Error setting window styles: {ex.Message}");
+#endif
+            }
+            
+            // CRITICAL FIX: Apply the initial position NOW, after window is fully initialized
+            // This ensures the position sticks even when starting minimized
+            if (!_hasAppliedInitialPosition && (_initialX != 0 || _initialY != 0))
+            {
+#if DEBUG
+                Debug.WriteLine($"[Overlay] OnSourceInitialized: Applying initial position X={_initialX}, Y={_initialY}");
+#endif
+                SetPrecisePosition(_initialX, _initialY);
+                _hasAppliedInitialPosition = true;
+#if DEBUG
+                Debug.WriteLine($"[Overlay] OnSourceInitialized: Position applied. Actual: Left={this.Left}, Top={this.Top}");
+#endif
             }
         }
 
@@ -817,7 +851,8 @@ namespace DeejNG.Views
                 try
                 {
                     _isDragging = true;
-                    this.DragMove(); // Initiates drag movement
+                    _dragStartPosition = new Point(this.Left, this.Top);
+                    this.DragMove();
                 }
                 catch (Exception ex)
                 {
@@ -827,6 +862,55 @@ namespace DeejNG.Views
                 {
                     _isDragging = false;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Saves the overlay position when the user releases the mouse button after dragging.
+        /// </summary>
+        private void Window_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == MouseButton.Left)
+            {
+                var currentPosition = new Point(this.Left, this.Top);
+                
+                // Only save if position actually changed
+                if (Math.Abs(currentPosition.X - _dragStartPosition.X) > 0.1 || 
+                    Math.Abs(currentPosition.Y - _dragStartPosition.Y) > 0.1)
+                {
+                    var preciseX = Math.Round(this.Left, 1);
+                    var preciseY = Math.Round(this.Top, 1);
+
+#if DEBUG
+                    Debug.WriteLine($"[Overlay] Mouse released at position: ({preciseX}, {preciseY})");
+                    Debug.WriteLine($"[Overlay] Parent window is null: {_parentWindow == null}");
+                    if (_parentWindow != null)
+                    {
+                        Debug.WriteLine($"[Overlay] Calling MainWindow.UpdateOverlayPosition({preciseX}, {preciseY})");
+                    }
+#endif
+
+                    // FIXED: Go through UpdateOverlayPosition to ensure event chain fires
+                    if (_parentWindow != null)
+                    {
+                        _parentWindow.UpdateOverlayPosition(preciseX, preciseY);
+#if DEBUG
+                        Debug.WriteLine("[Overlay] UpdateOverlayPosition call completed");
+#endif
+                    }
+                    else
+                    {
+#if DEBUG
+                        Debug.WriteLine("[Overlay] ERROR: Cannot save position - parent window is null!");
+#endif
+                    }
+                }
+#if DEBUG
+                else
+                {
+                    Debug.WriteLine($"[Overlay] Mouse released but position unchanged - skipping save");
+                }
+#endif
             }
         }
 
