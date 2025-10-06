@@ -4,16 +4,17 @@ namespace DeejNG.Infrastructure.System
 {
     public interface ISystemIntegrationService
     {
-        /// <summary>
-        /// Enables the application to start with Windows
-        /// </summary>
-        void EnableStartup();
+        #region Public Methods
 
         /// <summary>
         /// Disables the application from starting with Windows
         /// </summary>
         void DisableStartup();
 
+        /// <summary>
+        /// Enables the application to start with Windows
+        /// </summary>
+        void EnableStartup();
         /// <summary>
         /// Checks if the application is currently set to start with Windows
         /// </summary>
@@ -24,5 +25,7 @@ namespace DeejNG.Infrastructure.System
         /// Sets the display icon for the application in Programs and Features
         /// </summary>
         void SetDisplayIcon();
+
+        #endregion Public Methods
     }
 }

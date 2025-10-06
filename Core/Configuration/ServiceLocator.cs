@@ -11,8 +11,14 @@ namespace DeejNG.Core.Configuration
     /// </summary>
     public static class ServiceLocator
     {
+        #region Private Fields
+
         private static readonly Dictionary<Type, object> _services = new();
         private static bool _isConfigured = false;
+
+        #endregion Private Fields
+
+        #region Public Methods
 
         public static void Configure()
         {
@@ -24,20 +30,6 @@ namespace DeejNG.Core.Configuration
             Register<IPowerManagementService>(new PowerManagementService());
 
             _isConfigured = true;
-        }
-
-        public static void Register<TInterface>(object implementation)
-        {
-            _services[typeof(TInterface)] = implementation;
-        }
-
-        public static T Get<T>()
-        {
-            if (_services.TryGetValue(typeof(T), out var service))
-            {
-                return (T)service;
-            }
-            throw new InvalidOperationException($"Service of type {typeof(T).Name} not registered");
         }
 
         public static void Dispose()
@@ -52,5 +44,21 @@ namespace DeejNG.Core.Configuration
             _services.Clear();
             _isConfigured = false;
         }
+
+        public static T Get<T>()
+        {
+            if (_services.TryGetValue(typeof(T), out var service))
+            {
+                return (T)service;
+            }
+            throw new InvalidOperationException($"Service of type {typeof(T).Name} not registered");
+        }
+
+        public static void Register<TInterface>(object implementation)
+        {
+            _services[typeof(TInterface)] = implementation;
+        }
+
+        #endregion Public Methods
     }
 }
