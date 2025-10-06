@@ -50,6 +50,7 @@ namespace DeejNG.Views
         private double _initialX = 0;
         private double _initialY = 0;
         private bool _hasAppliedInitialPosition = false;
+        private bool _isInitializing = true;
         // Win32 API imports
         [DllImport("user32.dll")]
         private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
@@ -98,6 +99,15 @@ namespace DeejNG.Views
         }
 
         #endregion Public Constructors
+
+        #region Public Events
+
+        /// <summary>
+        /// Event raised when the overlay position changes (after drag)
+        /// </summary>
+        public event EventHandler<OverlayPositionEventArgs> OverlayPositionChanged;
+
+        #endregion Public Events
 
         #region Public Properties
 
@@ -194,13 +204,19 @@ namespace DeejNG.Views
             _textColorMode = settings.OverlayTextColor ?? "Auto";
 
             // If not currently being dragged and valid position is set, reposition the overlay
-            if (!_isDragging && (settings.OverlayX != 0 || settings.OverlayY != 0))
+            // BUT: Don't apply position during initialization - OnSourceInitialized handles that
+            if (!_isDragging && !_isInitializing && (settings.OverlayX != 0 || settings.OverlayY != 0))
             {
 #if DEBUG
                 Debug.WriteLine($"[Overlay] UpdateSettings: Applying position X={settings.OverlayX}, Y={settings.OverlayY}");
 #endif
                 SetPrecisePosition(settings.OverlayX, settings.OverlayY);
-                _hasAppliedInitialPosition = true; // Mark as applied so OnSourceInitialized doesn't override it
+            }
+            else if (_isInitializing)
+            {
+#if DEBUG
+                Debug.WriteLine($"[Overlay] UpdateSettings: Skipping position application during initialization (will be applied in OnSourceInitialized)");
+#endif
             }
 
             // Store whether overlay was visible before timer update
@@ -329,9 +345,21 @@ namespace DeejNG.Views
                 SetPrecisePosition(_initialX, _initialY);
                 _hasAppliedInitialPosition = true;
 #if DEBUG
-                Debug.WriteLine($"[Overlay] OnSourceInitialized: Position applied. Actual: Left={this.Left}, Top={this.Top}");
+                Debug.WriteLine($"[Overlay] OnSourceInitialized: Position applied successfully. Window: Left={this.Left}, Top={this.Top}");
 #endif
             }
+            else
+            {
+#if DEBUG
+                Debug.WriteLine($"[Overlay] OnSourceInitialized: Skipping position application (already applied: {_hasAppliedInitialPosition}, initial: {_initialX}, {_initialY})");
+#endif
+            }
+            
+            // CRITICAL: Clear initialization flag to allow position updates from now on
+            _isInitializing = false;
+#if DEBUG
+            Debug.WriteLine("[Overlay] Initialization complete - position updates now enabled");
+#endif
         }
 
         #endregion Protected Methods
@@ -831,13 +859,33 @@ namespace DeejNG.Views
         /// </summary>
         private void Window_LocationChanged(object sender, EventArgs e)
         {
-            if (!_isUpdatingSettings && this.IsLoaded && Application.Current.MainWindow is MainWindow mainWindow)
+            // CRITICAL: Don't fire position updates during initialization
+            // This prevents feedback loops when OnSourceInitialized sets the position
+            if (_isInitializing)
+            {
+#if DEBUG
+                Debug.WriteLine($"[Overlay] LocationChanged suppressed during initialization: ({this.Left}, {this.Top})");
+#endif
+                return;
+            }
+            
+            if (!_isUpdatingSettings && this.IsLoaded)
             {
                 var preciseX = Math.Round(this.Left, 1);
                 var preciseY = Math.Round(this.Top, 1);
 
-                // Notify main window of new position
-                mainWindow.UpdateOverlayPosition(preciseX, preciseY);
+                // Fire event for OverlayService to handle (works regardless of parent window state)
+                OverlayPositionChanged?.Invoke(this, new OverlayPositionEventArgs 
+                { 
+                    X = preciseX, 
+                    Y = preciseY 
+                });
+                
+                // Also notify MainWindow directly if available (legacy support)
+                if (Application.Current.MainWindow is MainWindow mainWindow)
+                {
+                    mainWindow.UpdateOverlayPosition(preciseX, preciseY);
+                }
             }
         }
 
@@ -884,24 +932,24 @@ namespace DeejNG.Views
 #if DEBUG
                     Debug.WriteLine($"[Overlay] Mouse released at position: ({preciseX}, {preciseY})");
                     Debug.WriteLine($"[Overlay] Parent window is null: {_parentWindow == null}");
-                    if (_parentWindow != null)
-                    {
-                        Debug.WriteLine($"[Overlay] Calling MainWindow.UpdateOverlayPosition({preciseX}, {preciseY})");
-                    }
 #endif
 
-                    // FIXED: Go through UpdateOverlayPosition to ensure event chain fires
+                    // FIXED: Fire event for OverlayService to handle (works regardless of parent window state)
+                    OverlayPositionChanged?.Invoke(this, new OverlayPositionEventArgs 
+                    { 
+                        X = preciseX, 
+                        Y = preciseY 
+                    });
+#if DEBUG
+                    Debug.WriteLine("[Overlay] OverlayPositionChanged event fired");
+#endif
+
+                    // Also try direct call if parent window is available (legacy support)
                     if (_parentWindow != null)
                     {
                         _parentWindow.UpdateOverlayPosition(preciseX, preciseY);
 #if DEBUG
-                        Debug.WriteLine("[Overlay] UpdateOverlayPosition call completed");
-#endif
-                    }
-                    else
-                    {
-#if DEBUG
-                        Debug.WriteLine("[Overlay] ERROR: Cannot save position - parent window is null!");
+                        Debug.WriteLine("[Overlay] UpdateOverlayPosition called on parent window");
 #endif
                     }
                 }
@@ -918,5 +966,14 @@ namespace DeejNG.Views
         #endregion Private Methods
 
       
+    }
+
+    /// <summary>
+    /// Event args for overlay position changes
+    /// </summary>
+    public class OverlayPositionEventArgs : EventArgs
+    {
+        public double X { get; set; }
+        public double Y { get; set; }
     }
 }

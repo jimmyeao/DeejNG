@@ -176,6 +176,24 @@ namespace DeejNG
             IconHandler.AddIconToRemovePrograms("DeejNG");
             _systemIntegrationService.SetDisplayIcon();
 
+            // CRITICAL: Initialize overlay and subscribe to events BEFORE potentially hiding the window
+            // This ensures the subscription happens even when starting minimized
+#if DEBUG
+            Debug.WriteLine("[MainWindow] Initializing overlay service in constructor");
+            Debug.WriteLine($"[MainWindow] Overlay position from settings: X={_settingsManager.AppSettings.OverlayX}, Y={_settingsManager.AppSettings.OverlayY}");
+#endif
+            
+            _overlayService.Initialize();
+            
+            // Subscribe to PositionChanged event
+            _overlayService.PositionChanged += OnOverlayPositionChanged;
+#if DEBUG
+            Debug.WriteLine("[MainWindow] Subscribed to OverlayService.PositionChanged in constructor");
+#endif
+            
+            // Update overlay with settings
+            _overlayService.UpdateSettings(_settingsManager.AppSettings);
+
             _isInitializing = false;
             if (_settingsManager.AppSettings.StartMinimized)
             {
@@ -1288,30 +1306,7 @@ namespace DeejNG
             StartOnBootCheckBox.IsChecked = _settingsManager.AppSettings.StartOnBoot;
             
 #if DEBUG
-            Debug.WriteLine("[MainWindow] MainWindow_Loaded - starting overlay initialization");
-            Debug.WriteLine($"[MainWindow] Overlay position from settings.json: X={_settingsManager.AppSettings.OverlayX}, Y={_settingsManager.AppSettings.OverlayY}");
-            Debug.WriteLine($"[MainWindow] Overlay screen: Device={_settingsManager.AppSettings.OverlayScreenDevice}, Bounds={_settingsManager.AppSettings.OverlayScreenBounds}");
-#endif
-            
-            // Initialize overlay service FIRST
-            _overlayService.Initialize();
-            
-            // CRITICAL: Subscribe to PositionChanged event BEFORE calling UpdateSettings
-            // This ensures the event is wired up before any overlay is created
-#if DEBUG
-            Debug.WriteLine("[MainWindow] Subscribing to PositionChanged event");
-#endif
-            _overlayService.PositionChanged += OnOverlayPositionChanged;
-            
-#if DEBUG
-            Debug.WriteLine($"[MainWindow] Calling UpdateSettings with position X={_settingsManager.AppSettings.OverlayX}, Y={_settingsManager.AppSettings.OverlayY}");
-#endif
-            
-            // UpdateSettings will use the screen device and bounds from AppSettings for multi-monitor support
-            _overlayService.UpdateSettings(_settingsManager.AppSettings);
-            
-#if DEBUG
-            Debug.WriteLine("[MainWindow] MainWindow_Loaded complete");
+            Debug.WriteLine("[MainWindow] MainWindow_Loaded - overlay already initialized in constructor");
 #endif
         }
 

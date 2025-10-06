@@ -71,15 +71,6 @@ namespace DeejNG.Services
 
         public void SaveSettings(AppSettings newSettings)
         {
-            // Prevent too frequent saves
-            if ((DateTime.Now - _lastSettingsSave).TotalMilliseconds < 500)
-            {
-#if DEBUG
-                Debug.WriteLine("[Settings] Skipping save - too frequent");
-#endif
-                return;
-            }
-
             lock (_settingsLock)
             {
                 try
@@ -103,9 +94,11 @@ namespace DeejNG.Services
                     _lastSettingsSave = DateTime.Now;
 
 #if DEBUG
-                    Debug.WriteLine($"[Settings] Saved successfully with {AppSettings.SliderTargets?.Count ?? 0} slider configurations and overlay settings");
-                    Debug.WriteLine($"[Settings] Overlay position saved: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
-                    Debug.WriteLine($"[Settings] Overlay screen: {AppSettings.OverlayScreenDevice} - {AppSettings.OverlayScreenBounds}");
+                    Debug.WriteLine($"[Settings] ✓ SAVED to {SettingsPath}");
+                    Debug.WriteLine($"[Settings]   Sliders: {AppSettings.SliderTargets?.Count ?? 0}");
+                    Debug.WriteLine($"[Settings]   Overlay position: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
+                    Debug.WriteLine($"[Settings]   Overlay screen: {AppSettings.OverlayScreenDevice}");
+                    Debug.WriteLine($"[Settings]   Overlay bounds: {AppSettings.OverlayScreenBounds}");
 #endif
 
                     SettingsChanged?.Invoke(AppSettings);
@@ -113,7 +106,7 @@ namespace DeejNG.Services
                 catch (Exception ex)
                 {
 #if DEBUG
-                    Debug.WriteLine($"[ERROR] Failed to save settings: {ex.Message}");
+                    Debug.WriteLine($"[ERROR] ✗ FAILED to save settings: {ex.Message}");
 #endif
                 }
             }
@@ -189,66 +182,71 @@ namespace DeejNG.Services
 
         /// <summary>
         /// Validates and corrects overlay position for current display configuration
+        /// NOTE: This only corrects the position IN MEMORY for display purposes.
+        /// It does NOT save to disk - the user's saved position is the source of truth.
         /// </summary>
         private void ValidateAndCorrectOverlayPosition()
         {
-        try
-        {
-        // If screen device info is missing but we have a position, capture it now
-        if (string.IsNullOrEmpty(AppSettings.OverlayScreenDevice) && 
-                (AppSettings.OverlayX != 0 || AppSettings.OverlayY != 0))
-        {
+            try
+            {
+                // If screen device info is missing but we have a position, capture it now
+                if (string.IsNullOrEmpty(AppSettings.OverlayScreenDevice) && 
+                    (AppSettings.OverlayX != 0 || AppSettings.OverlayY != 0))
+                {
 #if DEBUG
-                Debug.WriteLine($"[Settings] Screen device info missing, capturing for position ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
+                    Debug.WriteLine($"[Settings] Screen device info missing, capturing for position ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
 #endif
-        var screenInfo = ScreenPositionManager.GetScreenInfo(AppSettings.OverlayX, AppSettings.OverlayY);
-        AppSettings.OverlayScreenDevice = screenInfo.DeviceName;
-                AppSettings.OverlayScreenBounds = screenInfo.Bounds;
-                
-        // Save immediately so we have it next time
-        SaveSettings(AppSettings);
-#if DEBUG
-        Debug.WriteLine($"[Settings] Captured and saved screen info: Device={screenInfo.DeviceName}, Bounds={screenInfo.Bounds}");
-#endif
-        return; // No validation needed, we just captured current state
-        }
-
-        double correctedX, correctedY;
-        bool needsCorrection = ScreenPositionManager.ValidateAndCorrectPosition(AppSettings, out correctedX, out correctedY);
-
-        if (needsCorrection)
-        {
-#if DEBUG
-        Debug.WriteLine($"[Settings] Display configuration changed, position corrected:");
-                Debug.WriteLine($"[Settings]   Old: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
-            Debug.WriteLine($"[Settings]   New: ({correctedX}, {correctedY})");
-#endif
-
-                AppSettings.OverlayX = correctedX;
-                AppSettings.OverlayY = correctedY;
-
-                // Update screen info for corrected position
-                var screenInfo = ScreenPositionManager.GetScreenInfo(correctedX, correctedY);
+                    var screenInfo = ScreenPositionManager.GetScreenInfo(AppSettings.OverlayX, AppSettings.OverlayY);
                     AppSettings.OverlayScreenDevice = screenInfo.DeviceName;
-                AppSettings.OverlayScreenBounds = screenInfo.Bounds;
+                    AppSettings.OverlayScreenBounds = screenInfo.Bounds;
+                    
+                    // IMPORTANT: Don't save here! Just capture for next time user moves overlay
+#if DEBUG
+                    Debug.WriteLine($"[Settings] Captured screen info (not saved): Device={screenInfo.DeviceName}, Bounds={screenInfo.Bounds}");
+#endif
+                    return;
+                }
 
-                // Save corrected position
-                SaveSettings(AppSettings);
+                double correctedX, correctedY;
+                bool needsCorrection = ScreenPositionManager.ValidateAndCorrectPosition(AppSettings, out correctedX, out correctedY);
+
+                if (needsCorrection)
+                {
+#if DEBUG
+                    Debug.WriteLine($"[Settings] Display configuration may have changed:");
+                    Debug.WriteLine($"[Settings]   Saved: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
+                    Debug.WriteLine($"[Settings]   Corrected (for display): ({correctedX}, {correctedY})");
+#endif
+
+                    // Update position IN MEMORY ONLY for display purposes
+                    AppSettings.OverlayX = correctedX;
+                    AppSettings.OverlayY = correctedY;
+
+                    // Update screen info for corrected position
+                    var screenInfo = ScreenPositionManager.GetScreenInfo(correctedX, correctedY);
+                    AppSettings.OverlayScreenDevice = screenInfo.DeviceName;
+                    AppSettings.OverlayScreenBounds = screenInfo.Bounds;
+
+                    // CRITICAL FIX: DO NOT SAVE! Let the overlay be shown at corrected position.
+                    // If user moves it, THEN it will be saved.
+#if DEBUG
+                    Debug.WriteLine($"[Settings] Position corrected in memory only (not saved to disk)");
+#endif
+                }
+                else
+                {
+#if DEBUG
+                    Debug.WriteLine($"[Settings] Overlay position validated successfully: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
+#endif
+                }
             }
-            else
+            catch (Exception ex)
             {
 #if DEBUG
-                Debug.WriteLine($"[Settings] Overlay position validated successfully");
+                Debug.WriteLine($"[ERROR] Error validating overlay position: {ex.Message}");
 #endif
             }
         }
-        catch (Exception ex)
-        {
-#if DEBUG
-            Debug.WriteLine($"[ERROR] Error validating overlay position: {ex.Message}");
-#endif
-        }
-    }
 
         public bool IsPositionValid(double x, double y)
         {

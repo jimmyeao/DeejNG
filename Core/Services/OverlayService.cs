@@ -160,11 +160,27 @@ namespace DeejNG.Core.Services
                 {
                     _overlay.UpdateSettings(settings);
                     
-                    // CRITICAL: Also apply validated position directly to existing overlay
-                    _overlay.Left = X;
-                    _overlay.Top = Y;
+                    // CRITICAL: Only apply position if window is fully loaded
+                    // Don't interfere with OnSourceInitialized position application
+                    if (_overlay.IsLoaded)
+                    {
+                        _overlay.Left = X;
+                        _overlay.Top = Y;
 #if DEBUG
-                    Debug.WriteLine($"[OverlayService] Applied validated position to existing overlay: ({X}, {Y})");
+                        Debug.WriteLine($"[OverlayService] Applied validated position to loaded overlay: ({X}, {Y})");
+#endif
+                    }
+                    else
+                    {
+#if DEBUG
+                        Debug.WriteLine($"[OverlayService] Skipping position application - overlay not loaded yet (will be applied in OnSourceInitialized)");
+#endif
+                    }
+                }
+                else
+                {
+#if DEBUG
+                    Debug.WriteLine($"[OverlayService] Overlay not created yet - position will be applied when created: ({X}, {Y})");
 #endif
                 }
             }
@@ -213,16 +229,10 @@ namespace DeejNG.Core.Services
                 
                 // Wire up position change events
                 _overlay.LocationChanged += OnOverlayLocationChanged;
+                _overlay.OverlayPositionChanged += OnOverlayPositionChangedEvent;
                 
-                // CRITICAL: Apply position after window is loaded to ensure it sticks
-                _overlay.Loaded += (s, e) =>
-                {
-                    _overlay.Left = X;
-                    _overlay.Top = Y;
-#if DEBUG
-                    Debug.WriteLine($"[OverlayService] Applied position after Loaded event: ({X}, {Y})");
-#endif
-                };
+                // Position is applied in FloatingOverlay.OnSourceInitialized - don't apply it here
+                // to avoid timing conflicts that cause position to be lost
                 
 #if DEBUG
                 Debug.WriteLine($"[OverlayService] Overlay created with parent: {(parentWindow != null ? "MainWindow" : "standalone")}");
@@ -236,6 +246,14 @@ namespace DeejNG.Core.Services
             {
                 UpdatePosition(_overlay.Left, _overlay.Top);
             }
+        }
+
+        private void OnOverlayPositionChangedEvent(object sender, DeejNG.Views.OverlayPositionEventArgs e)
+        {
+#if DEBUG
+            Debug.WriteLine($"[OverlayService] Received OverlayPositionChanged event: X={e.X}, Y={e.Y}");
+#endif
+            UpdatePosition(e.X, e.Y);
         }
 
         private List<string> GenerateDefaultLabels(int count)
@@ -263,6 +281,7 @@ namespace DeejNG.Core.Services
                     if (_overlay != null)
                     {
                         _overlay.LocationChanged -= OnOverlayLocationChanged;
+                        _overlay.OverlayPositionChanged -= OnOverlayPositionChangedEvent;
                         _overlay.Close();
                         _overlay = null;
                     }
