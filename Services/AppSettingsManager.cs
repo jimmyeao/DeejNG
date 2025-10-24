@@ -140,9 +140,14 @@ namespace DeejNG.Services
         }
 
         // Rename to avoid conflict with DeejNG.Settings class
-        public AppSettings AppSettings { get; private set; } = new AppSettings();
+        public AppSettings AppSettings { get; set; } = new AppSettings();
 
         public event Action<AppSettings> SettingsChanged;
+
+        /// <summary>
+        /// Gets the settings file path (exposed for ProfileManager)
+        /// </summary>
+        public string GetSettingsPath() => SettingsPath;
 
         public AppSettings LoadSettingsFromDisk()
         {
