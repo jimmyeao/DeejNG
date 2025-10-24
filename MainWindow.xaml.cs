@@ -74,6 +74,7 @@ namespace DeejNG
         // New Manager Fields
         private readonly DeviceCacheManager _deviceManager;
         private readonly AppSettingsManager _settingsManager;
+        private readonly ProfileManager _profileManager;
         private readonly SerialConnectionManager _serialManager;
         private readonly TimerCoordinator _timerCoordinator;
         private readonly IOverlayService _overlayService;
@@ -96,6 +97,7 @@ namespace DeejNG
             // Initialize managers
             _deviceManager = new DeviceCacheManager();
             _settingsManager = new AppSettingsManager();
+            _profileManager = new ProfileManager(_settingsManager);
             _serialManager = new SerialConnectionManager();
             _timerCoordinator = new TimerCoordinator();
             _overlayService = ServiceLocator.Get<IOverlayService>();
@@ -109,8 +111,14 @@ namespace DeejNG
 
             _audioService = new AudioService();
 
-            // Load settings but don't auto-connect to serial port yet
+            // Load profiles (includes migration if needed)
+            _profileManager.LoadProfiles();
+
+            // Load settings from active profile but don't auto-connect to serial port yet
             LoadSettingsWithoutSerialConnection();
+
+            // Initialize profile UI
+            LoadProfilesIntoUI();
 
             // Load the saved port name from settings BEFORE populating ports
             LoadSavedPortName();
@@ -364,10 +372,15 @@ namespace DeejNG
             _overlayService.UpdatePosition(x, y);
         }
 
+        public AppSettings GetCurrentSettings()
+        {
+            return _settingsManager?.AppSettings ?? new AppSettings();
+        }
+
         public void UpdateOverlaySettings(AppSettings newSettings)
         {
             _overlayService.UpdateSettings(newSettings);
-            
+
             // Update the settings manager with the new settings
             _settingsManager.AppSettings.OverlayEnabled = newSettings.OverlayEnabled;
             _settingsManager.AppSettings.OverlayOpacity = newSettings.OverlayOpacity;
@@ -375,6 +388,15 @@ namespace DeejNG
             _settingsManager.AppSettings.OverlayTextColor = newSettings.OverlayTextColor;
             _settingsManager.AppSettings.OverlayX = newSettings.OverlayX;
             _settingsManager.AppSettings.OverlayY = newSettings.OverlayY;
+            _settingsManager.AppSettings.OverlayScreenDevice = newSettings.OverlayScreenDevice;
+            _settingsManager.AppSettings.OverlayScreenBounds = newSettings.OverlayScreenBounds;
+
+#if DEBUG
+            Debug.WriteLine($"[Overlay] Settings updated - Opacity: {newSettings.OverlayOpacity}, Position: ({newSettings.OverlayX}, {newSettings.OverlayY})");
+#endif
+
+            // CRITICAL FIX: Save to profile after updating overlay settings
+            SaveSettings();
         }
 
         #endregion Public Methods
@@ -966,7 +988,8 @@ namespace DeejNG
             SliderPanel.Children.Clear();
             _channelControls.Clear();
 
-            var savedSettings = _settingsManager.LoadSettingsFromDisk();
+            // CRITICAL FIX: Load from active profile, not from disk
+            var savedSettings = _profileManager.GetActiveProfileSettings();
             var savedTargetGroups = savedSettings?.SliderTargets ?? new List<List<AudioTarget>>();
 
             _isInitializing = true;
@@ -974,6 +997,12 @@ namespace DeejNG
 
 #if DEBUG
             Debug.WriteLine("[Init] Generating sliders - ALL volume operations DISABLED until first data");
+            Debug.WriteLine($"[Profiles] Loading {savedTargetGroups.Count} slider target groups from profile '{_profileManager.ActiveProfile.Name}'");
+            for (int i = 0; i < savedTargetGroups.Count; i++)
+            {
+                var targets = savedTargetGroups[i];
+                Debug.WriteLine($"[Profiles] Slider {i}: {targets.Count} targets - {string.Join(", ", targets.Select(t => t.Name))}");
+            }
 #endif
 
             for (int i = 0; i < count; i++)
@@ -1228,7 +1257,9 @@ namespace DeejNG
         {
             try
             {
-                var settings = _settingsManager.LoadSettingsFromDisk();
+                // Load settings from the active profile
+                var settings = _profileManager.GetActiveProfileSettings();
+                _settingsManager.AppSettings = settings;
 
                 // Apply UI settings
                 ApplyTheme(settings.IsDarkTheme ? "Dark" : "Light");
@@ -1347,14 +1378,16 @@ namespace DeejNG
 
         private void PositionSaveTimer_Tick(object sender, EventArgs e)
         {
-            // Save to disk on background thread
+            // Save to profile on background thread
             Task.Run(() =>
             {
                 try
                 {
-                    _settingsManager.SaveSettingsAsync(_settingsManager.AppSettings);
+                    // Update active profile with current settings and save
+                    _profileManager.UpdateActiveProfileSettings(_settingsManager.AppSettings);
+                    _profileManager.SaveProfiles();
 #if DEBUG
-                    Debug.WriteLine("[Overlay] Position saved to disk (debounced)");
+                    Debug.WriteLine($"[Overlay] Position saved to profile '{_profileManager.ActiveProfile.Name}' (debounced)");
 #endif
                 }
                 catch (Exception ex)
@@ -1386,9 +1419,20 @@ namespace DeejNG
                     return;
                 }
 
+                var sliderTargets = _channelControls.Select(c => c.AudioTargets ?? new List<AudioTarget>()).ToList();
+
+#if DEBUG
+                Debug.WriteLine($"[Profiles] Saving settings to profile '{_profileManager.ActiveProfile.Name}'");
+                for (int i = 0; i < sliderTargets.Count; i++)
+                {
+                    var targets = sliderTargets[i];
+                    Debug.WriteLine($"[Profiles] Saving Slider {i}: {targets.Count} targets - {string.Join(", ", targets.Select(t => t.Name))}");
+                }
+#endif
+
                 var settings = _settingsManager.CreateSettingsFromUI(
                     _serialManager.CurrentPort,
-                    _channelControls.Select(c => c.AudioTargets ?? new List<AudioTarget>()).ToList(),
+                    sliderTargets,
                     isDarkTheme,
                     InvertSliderCheckBox.IsChecked ?? false,
                     ShowSlidersCheckBox.IsChecked ?? true,
@@ -1397,7 +1441,9 @@ namespace DeejNG
                     DisableSmoothingCheckBox.IsChecked ?? false
                 );
 
-                _settingsManager.SaveSettings(settings);
+                // Update active profile and save
+                _profileManager.UpdateActiveProfileSettings(settings);
+                _profileManager.SaveProfiles();
             }
             catch (Exception ex)
             {
@@ -1959,6 +2005,29 @@ namespace DeejNG
                                     if (peak > highestPeak) highestPeak = peak;
                                     if (!_cachedAudioDevice.AudioEndpointVolume.Mute) allMuted = false;
                                 }
+                                else if (string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // Get the currently focused application
+                                    string currentFocusTarget = AudioUtilities.GetCurrentFocusTarget();
+                                    if (!string.IsNullOrEmpty(currentFocusTarget))
+                                    {
+                                        AudioSessionControl? matchingSession = FindSessionOptimized(sessions, currentFocusTarget.ToLowerInvariant());
+
+                                        if (matchingSession != null)
+                                        {
+                                            try
+                                            {
+                                                float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
+                                                if (peak > highestPeak)
+                                                {
+                                                    highestPeak = peak;
+                                                }
+                                                if (!matchingSession.SimpleAudioVolume.Mute) allMuted = false;
+                                            }
+                                            catch (ArgumentException) { }
+                                        }
+                                    }
+                                }
                                 else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
                                 {
                                     var mappedApps = GetAllMappedApplications();
@@ -2089,6 +2158,9 @@ namespace DeejNG
             {
                 int maxSessions = Math.Min(sessions.Count, 20);
 
+                // Normalize target name for fuzzy matching
+                string cleanedTargetName = Path.GetFileNameWithoutExtension(targetName).ToLowerInvariant();
+
                 for (int i = 0; i < maxSessions; i++)
                 {
                     try
@@ -2100,8 +2172,18 @@ namespace DeejNG
                         if (pid <= 4) continue;
 
                         string processName = AudioUtilities.GetProcessNameSafely(pid);
+                        if (string.IsNullOrEmpty(processName)) continue;
 
-                        if (processName == targetName) return session;
+                        // Normalize process name for fuzzy matching
+                        string cleanedProcessName = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
+
+                        // Use fuzzy matching: exact match OR contains
+                        if (cleanedProcessName.Equals(cleanedTargetName, StringComparison.OrdinalIgnoreCase) ||
+                            cleanedProcessName.Contains(cleanedTargetName, StringComparison.OrdinalIgnoreCase) ||
+                            cleanedTargetName.Contains(cleanedProcessName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return session;
+                        }
                     }
                     catch (ArgumentException) { continue; }
                     catch { continue; }
@@ -2190,6 +2272,202 @@ namespace DeejNG
                 this.Hide();
             }
         }
+
+        #region Profile Management
+
+        /// <summary>
+        /// Loads all profiles into the profile selector ComboBox
+        /// </summary>
+        private void LoadProfilesIntoUI()
+        {
+            try
+            {
+                var profileNames = _profileManager.GetProfileNames();
+
+                ProfileSelector.SelectionChanged -= ProfileSelector_SelectionChanged;
+                ProfileSelector.ItemsSource = profileNames;
+                ProfileSelector.SelectedItem = _profileManager.ActiveProfile.Name;
+                ProfileSelector.SelectionChanged += ProfileSelector_SelectionChanged;
+
+#if DEBUG
+                Debug.WriteLine($"[Profiles] Loaded {profileNames.Count} profiles into UI");
+                Debug.WriteLine($"[Profiles] Active: {_profileManager.ActiveProfile.Name}");
+#endif
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                Debug.WriteLine($"[Profiles] Error loading profiles into UI: {ex.Message}");
+#endif
+            }
+        }
+
+        /// <summary>
+        /// Handles profile selection change
+        /// </summary>
+        private void ProfileSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isInitializing || ProfileSelector.SelectedItem == null)
+                return;
+
+            string selectedProfile = ProfileSelector.SelectedItem.ToString();
+
+#if DEBUG
+            Debug.WriteLine($"[Profiles] User selected profile: {selectedProfile}");
+#endif
+
+            // CRITICAL FIX: Save current profile's settings before switching
+            SaveSettings();
+
+            if (_profileManager.SwitchToProfile(selectedProfile))
+            {
+                // Reload settings from the new profile
+                LoadSettingsWithoutSerialConnection();
+
+                // Update serial port if it changed
+                string newPort = _profileManager.GetActiveProfileSettings().PortName;
+                if (!string.IsNullOrEmpty(newPort))
+                {
+                    ComPortSelector.SelectedItem = newPort;
+                }
+
+                ConfirmationDialog.ShowOK("Profile Changed",
+                    $"Switched to profile: {selectedProfile}", this);
+            }
+        }
+
+        /// <summary>
+        /// Creates a new profile
+        /// </summary>
+        private void NewProfile_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Save current profile before creating new one
+                SaveSettings();
+
+                // Prompt for profile name
+                string newName = InputDialog.Show("New Profile", "Enter a name for the new profile:", "", this);
+
+                if (string.IsNullOrWhiteSpace(newName))
+                    return;
+
+                // Ask if they want to copy current settings
+                var result = ConfirmationDialog.ShowYesNoCancel("Copy Settings?",
+                    "Do you want to copy the current profile's settings to the new profile?\n\n" +
+                    "Yes: Copy current settings\n" +
+                    "No: Start with default settings\n" +
+                    "Cancel: Don't create profile",
+                    this);
+
+                if (result == ConfirmationDialog.ButtonResult.Cancel)
+                    return;
+
+                bool copyFromActive = result == ConfirmationDialog.ButtonResult.Yes;
+
+                if (_profileManager.CreateProfile(newName, copyFromActive))
+                {
+                    LoadProfilesIntoUI();
+                    ProfileSelector.SelectedItem = newName;
+
+                    ConfirmationDialog.ShowOK("Success",
+                        $"Profile '{newName}' created successfully!", this);
+                }
+                else
+                {
+                    ConfirmationDialog.ShowOK("Error",
+                        $"Failed to create profile '{newName}'. A profile with this name may already exist.", this);
+                }
+            }
+            catch (Exception ex)
+            {
+                ConfirmationDialog.ShowOK("Error",
+                    $"Error creating profile: {ex.Message}", this);
+            }
+        }
+
+        /// <summary>
+        /// Renames the current profile
+        /// </summary>
+        private void RenameProfile_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string currentName = _profileManager.ActiveProfile.Name;
+                string newName = InputDialog.Show("Rename Profile",
+                    $"Enter a new name for profile '{currentName}':", currentName, this);
+
+                if (string.IsNullOrWhiteSpace(newName) || newName == currentName)
+                    return;
+
+                if (_profileManager.RenameProfile(currentName, newName))
+                {
+                    LoadProfilesIntoUI();
+
+                    ConfirmationDialog.ShowOK("Success",
+                        $"Profile renamed from '{currentName}' to '{newName}'", this);
+                }
+                else
+                {
+                    ConfirmationDialog.ShowOK("Error",
+                        $"Failed to rename profile. A profile named '{newName}' may already exist.", this);
+                }
+            }
+            catch (Exception ex)
+            {
+                ConfirmationDialog.ShowOK("Error",
+                    $"Error renaming profile: {ex.Message}", this);
+            }
+        }
+
+        /// <summary>
+        /// Deletes the current profile
+        /// </summary>
+        private void DeleteProfile_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string currentName = _profileManager.ActiveProfile.Name;
+
+                // Prevent deletion of last profile
+                if (_profileManager.ProfileCollection.Profiles.Count <= 1)
+                {
+                    ConfirmationDialog.ShowOK("Cannot Delete",
+                        "Cannot delete the last profile. At least one profile must exist.", this);
+                    return;
+                }
+
+                var result = ConfirmationDialog.ShowYesNo("Confirm Delete",
+                    $"Are you sure you want to delete profile '{currentName}'?\n\n" +
+                    "This action cannot be undone.", this);
+
+                if (result == ConfirmationDialog.ButtonResult.Yes)
+                {
+                    if (_profileManager.DeleteProfile(currentName))
+                    {
+                        LoadProfilesIntoUI();
+
+                        // Load the new active profile
+                        LoadSettingsWithoutSerialConnection();
+
+                        ConfirmationDialog.ShowOK("Success",
+                            $"Profile '{currentName}' deleted successfully.", this);
+                    }
+                    else
+                    {
+                        ConfirmationDialog.ShowOK("Error",
+                            $"Failed to delete profile '{currentName}'.", this);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ConfirmationDialog.ShowOK("Error",
+                    $"Error deleting profile: {ex.Message}", this);
+            }
+        }
+
+        #endregion Profile Management
 
         #endregion Private Methods
 

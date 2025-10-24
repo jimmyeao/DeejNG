@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(if exist \"C:\\Users\\jimmy\\source\\repos\\DeejNG\\.cursorrules\" type \"C:\\Users\\jimmy\\source\\repos\\DeejNG\\.cursorrules\")",
+      "Bash(dotnet build:*)",
+      "Bash(Select-String -Pattern \"error|Build succeeded|Build FAILED\")",
+      "Bash(Select-Object -First 20)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -48,6 +48,35 @@
 
         </StackPanel>
 
+        <!-- Profile selector row -->
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10,5,10,5" Background="{DynamicResource MaterialDesign.Brush.Card.Background}">
+            <TextBlock Text="Profile:" VerticalAlignment="Center" Margin="5" Style="{DynamicResource MaterialDesignBody2}" />
+            <ComboBox x:Name="ProfileSelector" Width="150" Margin="5,0"
+                      Style="{StaticResource MaterialDesignComboBox}"
+                      SelectionChanged="ProfileSelector_SelectionChanged"/>
+
+            <Button x:Name="NewProfileButton"
+                    Content="New"
+                    Click="NewProfile_Click"
+                    Style="{StaticResource MaterialDesignFlatButton}"
+                    ToolTip="Create a new profile based on current settings"
+                    Margin="5,0"/>
+
+            <Button x:Name="RenameProfileButton"
+                    Content="Rename"
+                    Click="RenameProfile_Click"
+                    Style="{StaticResource MaterialDesignFlatButton}"
+                    ToolTip="Rename the current profile"
+                    Margin="5,0"/>
+
+            <Button x:Name="DeleteProfileButton"
+                    Content="Delete"
+                    Click="DeleteProfile_Click"
+                    Style="{StaticResource MaterialDesignFlatButton}"
+                    ToolTip="Delete the current profile"
+                    Margin="5,0"/>
+        </StackPanel>
+
         <!-- Settings row -->
         <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10,0,10,5">
             <CheckBox x:Name="InvertSliderCheckBox"

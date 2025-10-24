@@ -11,143 +11,16 @@ using System.Threading.Tasks;
 
 namespace DeejNG.Services
 {
-    /// <summary>
-    /// FIXED VERSION: Enhanced for Server 2022 / Windows 10 compatibility
-    /// Key fixes:
-    /// 1. Multiple fallback paths for settings storage
-    /// 2. Write permission testing before using paths
-    /// 3. Better error logging for diagnostics
-    /// 4. Explicit sync/flush for file operations
-    /// </summary>
     public class AppSettingsManager
     {
         private readonly object _settingsLock = new object();
         private DateTime _lastSettingsSave = DateTime.MinValue;
-
-        private string _cachedSettingsPath = null;
-
-        /// <summary>
-        /// Gets the settings file path with fallback options for compatibility with Server OS
-        /// </summary>
-        private string SettingsPath
-        {
-            get
-            {
-                if (_cachedSettingsPath != null)
-                    return _cachedSettingsPath;
-
-                // Try LocalApplicationData first (standard location)
-                string primaryPath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "DeejNG",
-                    "settings.json");
-
-#if DEBUG
-                Debug.WriteLine($"[Settings] Primary path: {primaryPath}");
-#endif
-
-                // Check if primary path is writable
-                if (IsPathWritable(Path.GetDirectoryName(primaryPath)))
-                {
-                    _cachedSettingsPath = primaryPath;
-#if DEBUG
-                    Debug.WriteLine($"[Settings] Using primary path (writable)");
-#endif
-                    return _cachedSettingsPath;
-                }
-
-                // Fallback 1: ApplicationData (Roaming)
-                string fallback1 = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "DeejNG",
-                    "settings.json");
-
-#if DEBUG
-                Debug.WriteLine($"[Settings] Primary path not writable, trying fallback 1: {fallback1}");
-#endif
-
-                if (IsPathWritable(Path.GetDirectoryName(fallback1)))
-                {
-                    _cachedSettingsPath = fallback1;
-#if DEBUG
-                    Debug.WriteLine($"[Settings] Using fallback 1 (Roaming - writable)");
-#endif
-                    return _cachedSettingsPath;
-                }
-
-                // Fallback 2: Current user's Documents folder
-                string fallback2 = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                    "DeejNG",
-                    "settings.json");
-
-#if DEBUG
-                Debug.WriteLine($"[Settings] Fallback 1 not writable, trying fallback 2: {fallback2}");
-#endif
-
-                if (IsPathWritable(Path.GetDirectoryName(fallback2)))
-                {
-                    _cachedSettingsPath = fallback2;
-#if DEBUG
-                    Debug.WriteLine($"[Settings] Using fallback 2 (Documents - writable)");
-#endif
-                    return _cachedSettingsPath;
-                }
-
-                // Last resort: Application directory (might need admin rights but better than nothing)
-                string fallback3 = Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory,
-                    "settings.json");
-
-#if DEBUG
-                Debug.WriteLine($"[Settings] Using last resort fallback 3: {fallback3}");
-#endif
-
-                _cachedSettingsPath = fallback3;
-                return _cachedSettingsPath;
-            }
-        }
-
-        /// <summary>
-        /// Checks if a directory path is writable
-        /// </summary>
-        private bool IsPathWritable(string directoryPath)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(directoryPath))
-                    return false;
-
-                // Try to create directory if it doesn't exist
-                if (!Directory.Exists(directoryPath))
-                {
-                    Directory.CreateDirectory(directoryPath);
-                }
-
-                // Test write access
-                string testFile = Path.Combine(directoryPath, $".write_test_{Guid.NewGuid()}.tmp");
-                File.WriteAllText(testFile, "test");
-                File.Delete(testFile);
-                return true;
-            }
-            catch (Exception ex)
-            {
-#if DEBUG
-                Debug.WriteLine($"[Settings] Path not writable ({directoryPath}): {ex.Message}");
-#endif
-                return false;
-            }
-        }
+        private string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeejNG", "settings.json");
 
         // Rename to avoid conflict with DeejNG.Settings class
-        public AppSettings AppSettings { get; set; } = new AppSettings();
+        public AppSettings AppSettings { get; private set; } = new AppSettings();
 
         public event Action<AppSettings> SettingsChanged;
-
-        /// <summary>
-        /// Gets the settings file path (exposed for ProfileManager)
-        /// </summary>
-        public string GetSettingsPath() => SettingsPath;
 
         public AppSettings LoadSettingsFromDisk()
         {
@@ -186,7 +59,6 @@ namespace DeejNG.Services
             {
 #if DEBUG
                 Debug.WriteLine($"[Settings] Error loading settings: {ex.Message}");
-                Debug.WriteLine($"[Settings] Stack trace: {ex.StackTrace}");
 #endif
             }
 
@@ -216,56 +88,25 @@ namespace DeejNG.Services
                     if (!Directory.Exists(dir) && dir != null)
                     {
                         Directory.CreateDirectory(dir);
-#if DEBUG
-                        Debug.WriteLine($"[Settings] Created directory: {dir}");
-#endif
                     }
 
-                    // FIX: Write with explicit flush for Server 2022 compatibility
-                    using (var fileStream = new FileStream(SettingsPath, FileMode.Create, FileAccess.Write, FileShare.None))
-                    using (var writer = new StreamWriter(fileStream))
-                    {
-                        writer.Write(json);
-                        writer.Flush();
-                        fileStream.Flush(true); // Force OS-level flush
-                    }
+                    File.WriteAllText(SettingsPath, json);
+                    _lastSettingsSave = DateTime.Now;
 
-                    // FIX: Verify the write actually happened
-                    if (File.Exists(SettingsPath))
-                    {
-                        var verifyContent = File.ReadAllText(SettingsPath);
-                        if (verifyContent == json)
-                        {
-                            _lastSettingsSave = DateTime.Now;
 #if DEBUG
-                            Debug.WriteLine($"[Settings] ✓ SAVED and VERIFIED to {SettingsPath}");
-                            Debug.WriteLine($"[Settings]   Sliders: {AppSettings.SliderTargets?.Count ?? 0}");
-                            Debug.WriteLine($"[Settings]   Overlay position: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
-                            Debug.WriteLine($"[Settings]   Overlay screen: {AppSettings.OverlayScreenDevice}");
-                            Debug.WriteLine($"[Settings]   Overlay bounds: {AppSettings.OverlayScreenBounds}");
+                    Debug.WriteLine($"[Settings] ✓ SAVED to {SettingsPath}");
+                    Debug.WriteLine($"[Settings]   Sliders: {AppSettings.SliderTargets?.Count ?? 0}");
+                    Debug.WriteLine($"[Settings]   Overlay position: ({AppSettings.OverlayX}, {AppSettings.OverlayY})");
+                    Debug.WriteLine($"[Settings]   Overlay screen: {AppSettings.OverlayScreenDevice}");
+                    Debug.WriteLine($"[Settings]   Overlay bounds: {AppSettings.OverlayScreenBounds}");
 #endif
-                            SettingsChanged?.Invoke(AppSettings);
-                        }
-                        else
-                        {
-#if DEBUG
-                            Debug.WriteLine($"[Settings] ✗ VERIFICATION FAILED - written content doesn't match!");
-#endif
-                        }
-                    }
-                    else
-                    {
-#if DEBUG
-                        Debug.WriteLine($"[Settings] ✗ File doesn't exist after write!");
-#endif
-                    }
+
+                    SettingsChanged?.Invoke(AppSettings);
                 }
                 catch (Exception ex)
                 {
 #if DEBUG
                     Debug.WriteLine($"[ERROR] ✗ FAILED to save settings: {ex.Message}");
-                    Debug.WriteLine($"[ERROR] Stack trace: {ex.StackTrace}");
-                    Debug.WriteLine($"[ERROR] Settings path: {SettingsPath}");
 #endif
                 }
             }
@@ -318,7 +159,7 @@ namespace DeejNG.Services
             {
                 AppSettings.OverlayX = x;
                 AppSettings.OverlayY = y;
-
+                
                 // Capture screen information for multi-monitor support
                 var screenInfo = ScreenPositionManager.GetScreenInfo(x, y);
                 AppSettings.OverlayScreenDevice = screenInfo.DeviceName;
@@ -349,7 +190,7 @@ namespace DeejNG.Services
             try
             {
                 // If screen device info is missing but we have a position, capture it now
-                if (string.IsNullOrEmpty(AppSettings.OverlayScreenDevice) &&
+                if (string.IsNullOrEmpty(AppSettings.OverlayScreenDevice) && 
                     (AppSettings.OverlayX != 0 || AppSettings.OverlayY != 0))
                 {
 #if DEBUG
@@ -358,7 +199,7 @@ namespace DeejNG.Services
                     var screenInfo = ScreenPositionManager.GetScreenInfo(AppSettings.OverlayX, AppSettings.OverlayY);
                     AppSettings.OverlayScreenDevice = screenInfo.DeviceName;
                     AppSettings.OverlayScreenBounds = screenInfo.Bounds;
-
+                    
                     // IMPORTANT: Don't save here! Just capture for next time user moves overlay
 #if DEBUG
                     Debug.WriteLine($"[Settings] Captured screen info (not saved): Device={screenInfo.DeviceName}, Bounds={screenInfo.Bounds}");
@@ -481,26 +322,6 @@ namespace DeejNG.Services
                 OverlayScreenDevice = AppSettings.OverlayScreenDevice,
                 OverlayScreenBounds = AppSettings.OverlayScreenBounds
             };
-        }
-
-        /// <summary>
-        /// Diagnostic method to help troubleshoot settings issues
-        /// </summary>
-        public string GetDiagnosticInfo()
-        {
-            var info = $"Settings Path: {SettingsPath}\n";
-            info += $"Path Exists: {File.Exists(SettingsPath)}\n";
-            info += $"Path Writable: {IsPathWritable(Path.GetDirectoryName(SettingsPath))}\n";
-            info += $"LocalAppData: {Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)}\n";
-            info += $"AppData (Roaming): {Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)}\n";
-            info += $"Documents: {Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)}\n";
-            info += $"Current Settings:\n";
-            info += $"  Overlay Position: ({AppSettings.OverlayX}, {AppSettings.OverlayY})\n";
-            info += $"  Overlay Screen: {AppSettings.OverlayScreenDevice}\n";
-            info += $"  Overlay Bounds: {AppSettings.OverlayScreenBounds}\n";
-            info += $"OS Version: {Environment.OSVersion}\n";
-            info += $"Is 64-bit: {Environment.Is64BitOperatingSystem}\n";
-            return info;
         }
     }
 }

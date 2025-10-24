@@ -544,24 +544,53 @@ namespace DeejNG.Dialogs
             }
             else if (_audioTargets.Count == 1)
             {
-                TargetTextBox.Text = _audioTargets[0].Name;
-                TargetTextBox.ToolTip = _audioTargets[0].Name;
+                string displayName = FormatDisplayName(_audioTargets[0].Name);
+                TargetTextBox.Text = displayName;
+                TargetTextBox.ToolTip = displayName;
             }
             else
             {
                 // Show count and first app
-                var firstTarget = _audioTargets[0].Name;
+                var firstTarget = FormatDisplayName(_audioTargets[0].Name);
                 TargetTextBox.Text = $"{firstTarget} +{_audioTargets.Count - 1}";
 
                 // Set tooltip to show all targets
                 TargetTextBox.ToolTip = string.Join("\n", _audioTargets.Select(t =>
-                    $"{t.Name} {(t.IsInputDevice ? "(Input)" : (t.IsOutputDevice ? "(Output)" : ""))}"));
+                {
+                    string displayName = FormatDisplayName(t.Name);
+                    string suffix = t.IsInputDevice ? " (Input)" : (t.IsOutputDevice ? " (Output)" : "");
+                    return displayName + suffix;
+                }));
             }
 
             // Reset foreground color (in case it was previously set to indicate disconnection)
             TargetTextBox.Foreground = TryFindResource("MaterialDesign.Brush.Foreground") as Brush ?? Brushes.Black;
 
             UpdateMuteButtonEnabled();
+        }
+
+        /// <summary>
+        /// Formats a target name for display by removing .exe extension and capitalizing
+        /// </summary>
+        private string FormatDisplayName(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                return name;
+
+            // Remove .exe extension if present
+            string displayName = name;
+            if (displayName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            {
+                displayName = displayName.Substring(0, displayName.Length - 4);
+            }
+
+            // Capitalize first letter for nicer display (e.g., "spotify" -> "Spotify")
+            if (displayName.Length > 0)
+            {
+                displayName = char.ToUpper(displayName[0]) + displayName.Substring(1);
+            }
+
+            return displayName;
         }
 
         #endregion Private Methods

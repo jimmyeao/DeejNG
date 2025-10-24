@@ -72,8 +72,23 @@ namespace DeejNG.Services
                         // Get the process name safely
                         string processName = AudioUtilities.GetProcessNameSafely(processId);
 
-                        // Skip if the name is null/empty or it belongs to a mapped app
-                        if (string.IsNullOrEmpty(processName) || mappedApplications.Contains(processName)) continue;
+                        // Skip if the name is null/empty
+                        if (string.IsNullOrEmpty(processName)) continue;
+
+                        // Check if this process matches any mapped application using fuzzy matching
+                        string cleanedProcName = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
+                        bool isMapped = false;
+                        foreach (var mappedApp in mappedApplications)
+                        {
+                            string cleanedMappedApp = Path.GetFileNameWithoutExtension(mappedApp).ToLowerInvariant();
+                            if (IsProcessNameMatch(cleanedProcName, cleanedMappedApp))
+                            {
+                                isMapped = true;
+                                break;
+                            }
+                        }
+
+                        if (isMapped) continue;
 
                         // Apply mute or unmute to the unmapped session
                         session.SimpleAudioVolume.Mute = isMuted;
@@ -176,8 +191,8 @@ namespace DeejNG.Services
                         // Normalize the process name to match against the target
                         string cleanedProcName = Path.GetFileNameWithoutExtension(procName).ToLowerInvariant();
 
-                        // If the process name matches the target executable, apply settings
-                        if (cleanedProcName.Equals(cleanedExecutable, StringComparison.OrdinalIgnoreCase))
+                        // If the process name matches the target executable (exact or fuzzy), apply settings
+                        if (IsProcessNameMatch(cleanedProcName, cleanedExecutable))
                         {
                             session.SimpleAudioVolume.Mute = isMuted;
 
@@ -277,8 +292,23 @@ namespace DeejNG.Services
                         // Resolve the process name safely
                         string processName = AudioUtilities.GetProcessNameSafely(processId);
 
-                        // Skip mapped (known/controlled) applications
-                        if (string.IsNullOrEmpty(processName) || mappedApplications.Contains(processName)) continue;
+                        // Skip if unknown
+                        if (string.IsNullOrEmpty(processName)) continue;
+
+                        // Check if this process matches any mapped application using fuzzy matching
+                        string cleanedProcName = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
+                        bool isMapped = false;
+                        foreach (var mappedApp in mappedApplications)
+                        {
+                            string cleanedMappedApp = Path.GetFileNameWithoutExtension(mappedApp).ToLowerInvariant();
+                            if (IsProcessNameMatch(cleanedProcName, cleanedMappedApp))
+                            {
+                                isMapped = true;
+                                break;
+                            }
+                        }
+
+                        if (isMapped) continue;
 
                         // Apply mute/volume only to unmapped apps
                         session.SimpleAudioVolume.Mute = isMuted;
@@ -407,6 +437,36 @@ namespace DeejNG.Services
         #endregion Public Methods
 
         #region Private Methods
+
+        /// <summary>
+        /// Determines if a process name matches the target using fuzzy matching.
+        /// Handles cases where user specifies partial names (e.g., "spotify" matches "spotify.exe").
+        /// </summary>
+        /// <param name="processName">The actual process name (already cleaned, lowercase)</param>
+        /// <param name="targetName">The target name to match against (already cleaned, lowercase)</param>
+        /// <returns>True if the names match exactly or fuzzily</returns>
+        private bool IsProcessNameMatch(string processName, string targetName)
+        {
+            if (string.IsNullOrEmpty(processName) || string.IsNullOrEmpty(targetName))
+                return false;
+
+            // Exact match
+            if (processName.Equals(targetName, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Check if target contains process name or vice versa
+            // This handles cases like "spotify" matching "spotify" or "spotifywebhelper"
+            if (processName.Contains(targetName, StringComparison.OrdinalIgnoreCase) ||
+                targetName.Contains(processName, StringComparison.OrdinalIgnoreCase))
+            {
+#if DEBUG
+                Debug.WriteLine($"[FuzzyMatch] Matched '{processName}' to target '{targetName}'");
+#endif
+                return true;
+            }
+
+            return false;
+        }
 
         /// <summary>
         /// Refreshes the audio session cache by retrieving active sessions, grouping them by process,
