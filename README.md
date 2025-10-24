@@ -1,7 +1,8 @@
 ![example workflow](https://github.com/jimmyeao/DeejNG/actions/workflows/codeql.yml/badge.svg)
 # DeejNG
 
-<img width="667" height="459" alt="image" src="https://github.com/user-attachments/assets/fdbe1c28-3be5-4c03-a894-2f8d7ebb3296" />
+<img width="667" height="501" alt="image" src="https://github.com/user-attachments/assets/e9bff8ed-f201-4a66-bcea-d858aeb5a4fa" />
+
 
 
 DeejNG is a modern, extensible audio mixer and controller for Windows, built with WPF (.NET 9), NAudio, and SkiaSharp. It allows real-time control over system and app volumes using physical sliders (e.g. Arduino), complete with VU meters, mute toggles, and persistent target mappings. This is meant as a companion app to the hardware, the code for which can be found here https://github.com/omriharel/deej
@@ -9,7 +10,8 @@ DeejNG is a modern, extensible audio mixer and controller for Windows, built wit
 ##  New!
 Configurable transpartent overaly with adjustable time out
 <img width="660" height="175" alt="image" src="https://github.com/user-attachments/assets/ae969b20-cc6d-4325-ba38-d542a2ffc395" />
-
+Profiles - configure multiple profiles for different scenarios
+Add applicaiotn manually by name
 
 ## 🚀 Features
 
@@ -59,7 +61,8 @@ Configurable transpartent overaly with adjustable time out
 - Select from running applications, "System", "Unmapped Applications", or microphones.
 - You can select multiple targets per slider. One slider can control multiple apps or a mic.
 
- <img width="786" height="593" alt="image" src="https://github.com/user-attachments/assets/3f5bce09-0e8b-498c-a69d-1f040545139d" />
+<img width="786" height="676" alt="image" src="https://github.com/user-attachments/assets/1515d3f0-0e0a-44d4-847d-8649523cd6f3" />
+
 
 
 ### 🔇 Mute / Unmute
