@@ -10,7 +10,9 @@ DeejNG is a modern, extensible audio mixer and controller for Windows, built wit
 ##  New!
 Configurable transpartent overaly with adjustable time out
 <img width="660" height="175" alt="image" src="https://github.com/user-attachments/assets/ae969b20-cc6d-4325-ba38-d542a2ffc395" />
+
 Profiles - configure multiple profiles for different scenarios
+
 Add applicaiotn manually by name
 
 ## 🚀 Features
