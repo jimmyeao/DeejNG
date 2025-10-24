@@ -187,6 +187,20 @@ namespace DeejNG.Dialogs
         {
             try
             {
+                // CRITICAL FIX: Load from MainWindow's settings manager which uses the active profile
+                if (_mainWindow != null)
+                {
+                    var settings = _mainWindow.GetCurrentSettings();
+                    if (settings != null)
+                    {
+#if DEBUG
+                        Debug.WriteLine($"[SettingsWindow] Loaded settings from active profile - Opacity: {settings.OverlayOpacity}");
+#endif
+                        return settings;
+                    }
+                }
+
+                // Fallback: Check if the old settings file exists on disk (legacy)
                 if (File.Exists(_settingsPath))
                 {
                     string json = File.ReadAllText(_settingsPath);
@@ -268,22 +282,17 @@ namespace DeejNG.Dialogs
 
             try
             {
-                // Serialize the settings object to a formatted JSON string
-                string json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
-
-                // Ensure the settings directory exists
-                var directoryPath = Path.GetDirectoryName(_settingsPath);
-                if (!string.IsNullOrEmpty(directoryPath))
-                {
-                    Directory.CreateDirectory(directoryPath);
-                }
-
-                // Write the settings JSON to disk
-                File.WriteAllText(_settingsPath, json);
-                Debug.WriteLine($"[Settings] Final save - Text Color: {_settings.OverlayTextColor}");
+#if DEBUG
+                Debug.WriteLine($"[SettingsWindow] Saving overlay settings - Opacity: {_settings.OverlayOpacity}, Enabled: {_settings.OverlayEnabled}");
+#endif
 
                 // Apply the updated settings to the main window and overlay
+                // UpdateOverlaySettings will now save to the active profile
                 _mainWindow?.UpdateOverlaySettings(_settings);
+
+#if DEBUG
+                Debug.WriteLine("[SettingsWindow] Overlay settings saved to profile via UpdateOverlaySettings");
+#endif
             }
             catch (Exception ex)
             {

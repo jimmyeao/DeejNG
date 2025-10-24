@@ -372,10 +372,15 @@ namespace DeejNG
             _overlayService.UpdatePosition(x, y);
         }
 
+        public AppSettings GetCurrentSettings()
+        {
+            return _settingsManager?.AppSettings ?? new AppSettings();
+        }
+
         public void UpdateOverlaySettings(AppSettings newSettings)
         {
             _overlayService.UpdateSettings(newSettings);
-            
+
             // Update the settings manager with the new settings
             _settingsManager.AppSettings.OverlayEnabled = newSettings.OverlayEnabled;
             _settingsManager.AppSettings.OverlayOpacity = newSettings.OverlayOpacity;
@@ -383,6 +388,15 @@ namespace DeejNG
             _settingsManager.AppSettings.OverlayTextColor = newSettings.OverlayTextColor;
             _settingsManager.AppSettings.OverlayX = newSettings.OverlayX;
             _settingsManager.AppSettings.OverlayY = newSettings.OverlayY;
+            _settingsManager.AppSettings.OverlayScreenDevice = newSettings.OverlayScreenDevice;
+            _settingsManager.AppSettings.OverlayScreenBounds = newSettings.OverlayScreenBounds;
+
+#if DEBUG
+            Debug.WriteLine($"[Overlay] Settings updated - Opacity: {newSettings.OverlayOpacity}, Position: ({newSettings.OverlayX}, {newSettings.OverlayY})");
+#endif
+
+            // CRITICAL FIX: Save to profile after updating overlay settings
+            SaveSettings();
         }
 
         #endregion Public Methods
@@ -1364,14 +1378,16 @@ namespace DeejNG
 
         private void PositionSaveTimer_Tick(object sender, EventArgs e)
         {
-            // Save to disk on background thread
+            // Save to profile on background thread
             Task.Run(() =>
             {
                 try
                 {
-                    _settingsManager.SaveSettingsAsync(_settingsManager.AppSettings);
+                    // Update active profile with current settings and save
+                    _profileManager.UpdateActiveProfileSettings(_settingsManager.AppSettings);
+                    _profileManager.SaveProfiles();
 #if DEBUG
-                    Debug.WriteLine("[Overlay] Position saved to disk (debounced)");
+                    Debug.WriteLine($"[Overlay] Position saved to profile '{_profileManager.ActiveProfile.Name}' (debounced)");
 #endif
                 }
                 catch (Exception ex)
