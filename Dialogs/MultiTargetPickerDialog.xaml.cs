@@ -35,6 +35,49 @@ namespace DeejNG.Dialogs
             LoadInputDevices(selectedNames);
             LoadOutputDevices(selectedNames);
 
+            // Separate manually specified apps (not in sessions/devices) and pre-populate the text box
+            var manuallySpecifiedApps = new List<string>();
+            foreach (var target in currentTargets)
+            {
+                // Skip special targets and devices
+                if (target.IsInputDevice || target.IsOutputDevice ||
+                    target.Name.Equals("system", StringComparison.OrdinalIgnoreCase) ||
+                    target.Name.Equals("unmapped", StringComparison.OrdinalIgnoreCase) ||
+                    target.Name.Equals("current", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // Check if this target is in the running sessions list
+                bool foundInSessions = AvailableSessions.Any(s =>
+                    s.Id.Equals(target.Name, StringComparison.OrdinalIgnoreCase));
+
+                // If not found in running sessions, it's a manually specified app
+                if (!foundInSessions)
+                {
+                    // Remove .exe extension for cleaner display
+                    string displayName = target.Name;
+                    if (displayName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    {
+                        displayName = displayName.Substring(0, displayName.Length - 4);
+                    }
+                    manuallySpecifiedApps.Add(displayName);
+
+#if DEBUG
+                    Debug.WriteLine($"[DialogLoad] Found manually specified app: {displayName} (original: {target.Name})");
+#endif
+                }
+            }
+
+            // Populate the manual app name text box with comma-separated list
+            if (manuallySpecifiedApps.Count > 0)
+            {
+                ManualAppNameTextBox.Text = string.Join(", ", manuallySpecifiedApps);
+#if DEBUG
+                Debug.WriteLine($"[DialogLoad] Pre-populated manual apps: {ManualAppNameTextBox.Text}");
+#endif
+            }
+
             // Bind loaded collections to their corresponding list boxes in the UI
             AvailableSessionsListBox.ItemsSource = AvailableSessions;
             InputDevicesListBox.ItemsSource = InputDevices;
@@ -321,6 +364,36 @@ namespace DeejNG.Dialogs
         {
             // Initialize a new list to hold all selected audio targets
             SelectedTargets = new List<AudioTarget>();
+
+            // Add manually specified applications first
+            if (!string.IsNullOrWhiteSpace(ManualAppNameTextBox.Text))
+            {
+                var manualApps = ManualAppNameTextBox.Text
+                    .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(app => app.Trim())
+                    .Where(app => !string.IsNullOrWhiteSpace(app));
+
+                foreach (var appName in manualApps)
+                {
+                    // Normalize the name (add .exe if not present)
+                    string normalizedName = appName;
+                    if (!normalizedName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    {
+                        normalizedName = appName + ".exe";
+                    }
+
+#if DEBUG
+                    Debug.WriteLine($"[ManualTarget] Adding manually specified app: {normalizedName} (original: {appName})");
+#endif
+
+                    SelectedTargets.Add(new AudioTarget
+                    {
+                        Name = normalizedName,
+                        IsInputDevice = false,
+                        IsOutputDevice = false
+                    });
+                }
+            }
 
             // Add selected sessions (e.g., applications) to the target list
             foreach (var session in AvailableSessions.Where(s => s.IsSelected))

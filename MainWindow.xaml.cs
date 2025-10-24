@@ -1989,6 +1989,29 @@ namespace DeejNG
                                     if (peak > highestPeak) highestPeak = peak;
                                     if (!_cachedAudioDevice.AudioEndpointVolume.Mute) allMuted = false;
                                 }
+                                else if (string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // Get the currently focused application
+                                    string currentFocusTarget = AudioUtilities.GetCurrentFocusTarget();
+                                    if (!string.IsNullOrEmpty(currentFocusTarget))
+                                    {
+                                        AudioSessionControl? matchingSession = FindSessionOptimized(sessions, currentFocusTarget.ToLowerInvariant());
+
+                                        if (matchingSession != null)
+                                        {
+                                            try
+                                            {
+                                                float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
+                                                if (peak > highestPeak)
+                                                {
+                                                    highestPeak = peak;
+                                                }
+                                                if (!matchingSession.SimpleAudioVolume.Mute) allMuted = false;
+                                            }
+                                            catch (ArgumentException) { }
+                                        }
+                                    }
+                                }
                                 else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
                                 {
                                     var mappedApps = GetAllMappedApplications();
@@ -2119,6 +2142,9 @@ namespace DeejNG
             {
                 int maxSessions = Math.Min(sessions.Count, 20);
 
+                // Normalize target name for fuzzy matching
+                string cleanedTargetName = Path.GetFileNameWithoutExtension(targetName).ToLowerInvariant();
+
                 for (int i = 0; i < maxSessions; i++)
                 {
                     try
@@ -2130,8 +2156,18 @@ namespace DeejNG
                         if (pid <= 4) continue;
 
                         string processName = AudioUtilities.GetProcessNameSafely(pid);
+                        if (string.IsNullOrEmpty(processName)) continue;
 
-                        if (processName == targetName) return session;
+                        // Normalize process name for fuzzy matching
+                        string cleanedProcessName = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
+
+                        // Use fuzzy matching: exact match OR contains
+                        if (cleanedProcessName.Equals(cleanedTargetName, StringComparison.OrdinalIgnoreCase) ||
+                            cleanedProcessName.Contains(cleanedTargetName, StringComparison.OrdinalIgnoreCase) ||
+                            cleanedTargetName.Contains(cleanedProcessName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return session;
+                        }
                     }
                     catch (ArgumentException) { continue; }
                     catch { continue; }
