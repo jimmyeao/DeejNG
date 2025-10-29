@@ -1,0 +1,31 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Arctic Theme Colors -->
+    <Color x:Key="BackgroundColor">#E0F2FE</Color>
+    <Color x:Key="SurfaceColor">#F0F9FF</Color>
+    <Color x:Key="SurfaceHighlightColor">#BAE6FD</Color>
+    <Color x:Key="PrimaryColor">#0284C7</Color>
+    <Color x:Key="PrimaryDarkColor">#0369A1</Color>
+    <Color x:Key="AccentColor">#0EA5E9</Color>
+    <Color x:Key="TextPrimaryColor">#082F49</Color>
+    <Color x:Key="TextSecondaryColor">#475569</Color>
+    <Color x:Key="BorderColor">#94A3B8</Color>
+    <Color x:Key="ErrorColor">#EF4444</Color>
+    <Color x:Key="WarningColor">#F59E0B</Color>
+    <Color x:Key="SuccessColor">#10B981</Color>
+
+    <!-- Brushes -->
+    <SolidColorBrush x:Key="BackgroundBrush" Color="{StaticResource BackgroundColor}"/>
+    <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}"/>
+    <SolidColorBrush x:Key="SurfaceHighlightBrush" Color="{StaticResource SurfaceHighlightColor}"/>
+    <SolidColorBrush x:Key="PrimaryBrush" Color="{StaticResource PrimaryColor}"/>
+    <SolidColorBrush x:Key="PrimaryDarkBrush" Color="{StaticResource PrimaryDarkColor}"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondaryColor}"/>
+    <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}"/>
+    <SolidColorBrush x:Key="ErrorBrush" Color="{StaticResource ErrorColor}"/>
+    <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}"/>
+    <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}"/>
+</ResourceDictionary>

@@ -1,137 +1,244 @@
-﻿<Window x:Class="DeejNG.MainWindow"
+<Window x:Class="DeejNG.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:tb="http://www.hardcodet.net/taskbar"
-        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         xmlns:local="clr-namespace:DeejNG"
+        xmlns:models="clr-namespace:DeejNG.Models"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
-        Title="DeejNG"       
-        SizeToContent="WidthAndHeight"  
-    TextElement.Foreground="{DynamicResource MaterialDesign.Brush.Foreground}"
-        Background="{DynamicResource MaterialDesign.Brush.Background}"
+        Title="DeejNG"
+        SizeToContent="WidthAndHeight"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        ResizeMode="CanResizeWithGrip"
+        TextElement.Foreground="{DynamicResource TextPrimaryBrush}"
+        Background="{DynamicResource BackgroundBrush}"
         TextElement.FontWeight="Regular"
         TextElement.FontSize="12"
-        FontFamily="{materialDesign:MaterialDesignFont}"
+        FontFamily="Segoe UI"
         TextOptions.TextFormattingMode="Ideal">
-    <DockPanel>
-
-        <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10">
-            <TextBlock Text="COM Port:" VerticalAlignment="Center" Style="{DynamicResource MaterialDesignBody2}" />
-            <ComboBox x:Name="ComPortSelector" Width="100" Margin="5,0" 
-          Style="{StaticResource MaterialDesignComboBox}" 
-          DropDownOpened="ComPortSelector_DropDownOpened"
-          SelectionChanged="ComPortSelector_SelectionChanged"/>
-            <Button x:Name="ConnectButton" Content="Connect" Click="Connect_Click" Style="{StaticResource MaterialDesignFlatButton}" />
-
-
-
-
-
-            <TextBlock x:Name="ConnectionStatus" Text="Disconnected" Margin="10,0,0,0" VerticalAlignment="Center" Style="{DynamicResource MaterialDesignBody2}" />
-            <Button Content="Toggle Theme" Click="ToggleTheme_Click" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10" Style="{DynamicResource MaterialDesignFlatButton}"/>
-
-
-            <Button x:Name="SettingsButton" 
-                Width="30" Height="30" 
-                Style="{StaticResource MaterialDesignIconButton}"
-                Click="SettingsButton_Click"
-                BorderBrush="Transparent">
-                <Viewbox Stretch="Uniform">
-                    <materialDesign:PackIcon Kind="Settings" 
-                                Foreground="{DynamicResource MaterialDesign.Brush.Foreground}" 
-                                RenderTransformOrigin="0.781,0.781" />
-                </Viewbox>
-            </Button>
-
-
-        </StackPanel>
-
-        <!-- Profile selector row -->
-        <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10,5,10,5" Background="{DynamicResource MaterialDesign.Brush.Card.Background}">
-            <TextBlock Text="Profile:" VerticalAlignment="Center" Margin="5" Style="{DynamicResource MaterialDesignBody2}" />
-            <ComboBox x:Name="ProfileSelector" Width="150" Margin="5,0"
-                      Style="{StaticResource MaterialDesignComboBox}"
-                      SelectionChanged="ProfileSelector_SelectionChanged"/>
-
-            <Button x:Name="NewProfileButton"
-                    Content="New"
-                    Click="NewProfile_Click"
-                    Style="{StaticResource MaterialDesignFlatButton}"
-                    ToolTip="Create a new profile based on current settings"
-                    Margin="5,0"/>
-
-            <Button x:Name="RenameProfileButton"
-                    Content="Rename"
-                    Click="RenameProfile_Click"
-                    Style="{StaticResource MaterialDesignFlatButton}"
-                    ToolTip="Rename the current profile"
-                    Margin="5,0"/>
-
-            <Button x:Name="DeleteProfileButton"
-                    Content="Delete"
-                    Click="DeleteProfile_Click"
-                    Style="{StaticResource MaterialDesignFlatButton}"
-                    ToolTip="Delete the current profile"
-                    Margin="5,0"/>
-        </StackPanel>
-
-        <!-- Settings row -->
-        <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="10,0,10,5">
-            <CheckBox x:Name="InvertSliderCheckBox"
-                  Content="Invert Sliders"
-                  Checked="InvertSlider_Checked"
-                  Unchecked="InvertSlider_Unchecked"
-                  Margin="0,0,20,0"
-                  VerticalAlignment="Center"
-                  HorizontalAlignment="Left" />
-
-            <CheckBox x:Name="ShowSlidersCheckBox"
-                  Content="Show Meters"
-                  IsChecked="True"
-                  Checked="ShowSlidersCheckBox_Checked"
-                  Unchecked="ShowSlidersCheckBox_Unchecked"
-                  VerticalAlignment="Center"
-                  HorizontalAlignment="Left" />
-            <CheckBox x:Name="StartOnBootCheckBox"
-                  Content="Start on boot"
-                  Margin="10"
-                  
-                  Checked="StartOnBootCheckBox_Checked"
-                  Unchecked="StartOnBootCheckBox_Unchecked"/>
-            <CheckBox x:Name="StartMinimizedCheckBox"
-                    Content="Start minimized"
-                    Margin="10"
-                    Checked="StartMinimizedCheckBox_Checked"
-                    Unchecked="StartMinimizedCheckBox_Unchecked"/>
-            <CheckBox x:Name="DisableSmoothingCheckBox"
-          Content="Disable Smoothing"
-          Checked="DisableSmoothingCheckBox_Checked"
-          Unchecked="DisableSmoothingCheckBox_Unchecked" />
-
-
-        </StackPanel>
-
-        <!-- Main content area -->
+    <Window.Resources>
+        <shell:WindowChrome x:Key="Chrome" CaptionHeight="0" CornerRadius="8,8,8,8" ResizeBorderThickness="8" GlassFrameThickness="0" UseAeroCaptionButtons="False" />
+    </Window.Resources>
+    <shell:WindowChrome.WindowChrome>
+        <StaticResource ResourceKey="Chrome" />
+    </shell:WindowChrome.WindowChrome>
+    
+    <Border BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Background="{DynamicResource BackgroundBrush}">
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
+                <RowDefinition Height="48"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <ScrollViewer Grid.Row="0"
-                      HorizontalScrollBarVisibility="Auto"
-                      VerticalScrollBarVisibility="Auto"
-                      x:Name="SliderScrollViewer">
-                <StackPanel x:Name="SliderPanel" Orientation="Horizontal" Margin="10">
-                    <!-- Dynamically added user controls (ChannelControl) go here -->
-                </StackPanel>
-            </ScrollViewer>
+            <!-- Title Bar -->
+            <Border Grid.Row="0"
+                    Background="{DynamicResource SurfaceBrush}"
+                    CornerRadius="8,8,0,0"
+                    MouseLeftButtonDown="TitleBar_MouseDown">
+                <Grid x:Name="TitleBarGrid">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                    <!-- App title -->
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0">
+                        <TextBlock Text="🎚️" FontSize="24" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="DeejNG" Style="{StaticResource TitleTextBlock}" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <!-- Window controls -->
+                    <StackPanel Grid.Column="2" 
+                                Orientation="Horizontal" 
+                                HorizontalAlignment="Right" 
+                                VerticalAlignment="Center"
+                                Margin="8,0">
+                        <Button Content="—" 
+                                Style="{StaticResource IconButton}" 
+                                shell:WindowChrome.IsHitTestVisibleInChrome="True" 
+                                ToolTip="Minimize" 
+                                Click="MinButton_Click" 
+                                Margin="4,0"
+                                VerticalAlignment="Center"/>
+                        <Button Content="□" 
+                                Style="{StaticResource IconButton}" 
+                                shell:WindowChrome.IsHitTestVisibleInChrome="True" 
+                                ToolTip="Maximize/Restore" 
+                                Click="MaxButton_Click" 
+                                Margin="4,0"
+                                VerticalAlignment="Center"/>
+                        <Button Content="✕" 
+                                Style="{StaticResource IconButton}" 
+                                shell:WindowChrome.IsHitTestVisibleInChrome="True" 
+                                ToolTip="Close" 
+                                Click="CloseButton_Click" 
+                                Margin="4,0"
+                                VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Toolbar -->
+            <Border Grid.Row="1"
+                    Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="0,1"
+                    Padding="20,12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Left: Profile controls -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal">
+                        <TextBlock Text="Profile:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox x:Name="ProfileSelector" Width="168" Margin="0,0,8,0"
+                                  Style="{StaticResource ModernComboBox}"
+                                  SelectionChanged="ProfileSelector_SelectionChanged"/>
+                        <Button x:Name="NewProfileButton"
+                                Content="New"
+                                Style="{StaticResource ModernButton}"
+                                Click="NewProfile_Click"
+                                ToolTip="Create a new profile"
+                                Margin="0,0,4,0"/>
+                        <Button x:Name="RenameProfileButton"
+                                Content="Rename"
+                                Style="{StaticResource ModernButton}"
+                                Click="RenameProfile_Click"
+                                ToolTip="Rename profile"
+                                Margin="0,0,4,0"/>
+                        <Button x:Name="DeleteProfileButton"
+                                Content="Delete"
+                                Style="{StaticResource ModernButton}"
+                                Click="DeleteProfile_Click"
+                                ToolTip="Delete profile"/>
+                    </StackPanel>
+
+                    <!-- Right: Theme selector and Settings button -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <ComboBox x:Name="ThemeSelector"
+                                  Style="{StaticResource ModernComboBox}"
+                                  ToolTip="Select Theme"
+                                  Width="158"
+                                  SelectionChanged="ThemeSelector_SelectionChanged"
+                                  Margin="0,0,8,0">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Icon}" FontSize="14"/>
+                                        <TextBlock Text="{Binding DisplayName}" Margin="6,0,0,0"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <Button x:Name="SettingsButton" Content="⚙" Style="{StaticResource IconButton}" Click="SettingsButton_Click" ToolTip="Settings"/>
+                    </StackPanel>
+
+                    <!-- Keep hidden COM controls for backend logic -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Visibility="Collapsed">
+                        <ComboBox x:Name="ComPortSelector" Width="160"
+                                  Style="{StaticResource ModernComboBox}"
+                                  DropDownOpened="ComPortSelector_DropDownOpened"
+                                  SelectionChanged="ComPortSelector_SelectionChanged"/>
+                        <Button x:Name="ConnectButton" Content="Connect" Style="{StaticResource ModernButton}" Click="Connect_Click"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Hidden settings bar for logic wiring -->
+            <Border x:Name="SettingsBar" Grid.Row="1" Visibility="Collapsed">
+            <!-- Settings toggles moved to Settings window; keep hidden controls for logic wiring -->
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
+                <ToggleButton x:Name="InvertSliderCheckBox"
+                              Content="Invert Sliders"
+                              Style="{StaticResource SwitchToggleStyle}"
+                              Checked="InvertSlider_Checked"
+                              Unchecked="InvertSlider_Unchecked"/>
+
+                <ToggleButton x:Name="ShowSlidersCheckBox"
+                              Content="Show Meters"
+                              IsChecked="True"
+                              Style="{StaticResource SwitchToggleStyle}"
+                              Checked="ShowSlidersCheckBox_Checked"
+                              Unchecked="ShowSlidersCheckBox_Unchecked"/>
+
+                <ToggleButton x:Name="StartOnBootCheckBox"
+                              Content="Start on boot"
+                              Style="{StaticResource SwitchToggleStyle}"
+                              Checked="StartOnBootCheckBox_Checked"
+                              Unchecked="StartOnBootCheckBox_Unchecked"/>
+
+                <ToggleButton x:Name="StartMinimizedCheckBox"
+                              Content="Start minimized"
+                              Style="{StaticResource SwitchToggleStyle}"
+                              Checked="StartMinimizedCheckBox_Checked"
+                              Unchecked="StartMinimizedCheckBox_Unchecked"/>
+
+                <ToggleButton x:Name="DisableSmoothingCheckBox"
+                              Content="Disable Smoothing"
+                              Style="{StaticResource SwitchToggleStyle}"
+                              Checked="DisableSmoothingCheckBox_Checked"
+                              Unchecked="DisableSmoothingCheckBox_Unchecked"/>
+            </StackPanel>
+        </Border>
+
+            <!-- Main content area - Channels -->
+            <WrapPanel Grid.Row="2"
+                       x:Name="SliderPanel"
+                       Margin="20,20,20,8">
+                <!-- Dynamically added ChannelControl instances -->
+            </WrapPanel>
+
+            <!-- Bottom Status Bar -->
+            <Border Grid.Row="3"
+                    x:Name="StatusBar"
+                    Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="0,1,0,0"
+                    CornerRadius="0,0,8,8"
+                    Padding="20,6">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                    <!-- Connection Status -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" Margin="0,0,8,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{DynamicResource ErrorBrush}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ElementName=ConnectionStatus, Path=Text}" Value="Connected">
+                                            <Setter Property="Fill" Value="{DynamicResource SuccessBrush}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock x:Name="ConnectionStatus" Text="Disconnected" Style="{StaticResource SubtitleTextBlock}" FontSize="12"/>
+                    </StackPanel>
+
+                    <!-- App version -->
+                    <TextBlock x:Name="VersionText" Grid.Column="2" Style="{StaticResource SubtitleTextBlock}" FontSize="10"/>
+                </Grid>
+            </Border>
+
+            <tb:TaskbarIcon x:Name="MyNotifyIcon" TrayMouseDoubleClick="MyNotifyIcon_Click" ToolTipText="DeejNG" Visibility="Visible"/>
         </Grid>
-
-        <tb:TaskbarIcon x:Name="MyNotifyIcon" TrayMouseDoubleClick="MyNotifyIcon_Click" ToolTipText="DeejNG" Visibility="Visible"/>
-
-    </DockPanel>
+    </Border>
 
 
 </Window>

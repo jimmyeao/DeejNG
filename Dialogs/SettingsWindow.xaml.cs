@@ -52,6 +52,21 @@ namespace DeejNG.Dialogs
 
             SetTextColorSelection(_settings.OverlayTextColor); // Set ComboBox for text color
 
+            // Initialize general toggles from main window state (hidden controls)
+            if (_mainWindow != null)
+            {
+                SettingInvertSliders.IsChecked = _mainWindow.InvertSliderCheckBox.IsChecked;
+                SettingShowMeters.IsChecked = _mainWindow.ShowSlidersCheckBox.IsChecked;
+                SettingStartOnBoot.IsChecked = _mainWindow.StartOnBootCheckBox.IsChecked;
+                SettingStartMinimized.IsChecked = _mainWindow.StartMinimizedCheckBox.IsChecked;
+                SettingDisableSmoothing.IsChecked = _mainWindow.DisableSmoothingCheckBox.IsChecked;
+
+                // Initialize COM port controls from main window
+                SettingComPortSelector.ItemsSource = _mainWindow.ComPortSelector.ItemsSource;
+                SettingComPortSelector.SelectedItem = _mainWindow.ComPortSelector.SelectedItem;
+                UpdateConnectButtonState();
+            }
+
             // Wire up real-time control events
             OpacitySlider.ValueChanged += OpacitySlider_ValueChanged;
             AutoCloseCheckBox.Checked += AutoCloseCheckBox_Changed;
@@ -60,6 +75,21 @@ namespace DeejNG.Dialogs
             OverlayEnabledCheckBox.Checked += OverlayEnabledCheckBox_Changed;
             OverlayEnabledCheckBox.Unchecked += OverlayEnabledCheckBox_Changed;
             TextColorComboBox.SelectionChanged += TextColorComboBox_SelectionChanged;
+
+            // Wire general checkbox events -> forward to main window controls to reuse logic and saving
+            SettingInvertSliders.Checked += ForwardGeneralCheckbox;
+            SettingInvertSliders.Unchecked += ForwardGeneralCheckbox;
+            SettingShowMeters.Checked += ForwardGeneralCheckbox;
+            SettingShowMeters.Unchecked += ForwardGeneralCheckbox;
+            SettingStartOnBoot.Checked += ForwardGeneralCheckbox;
+            SettingStartOnBoot.Unchecked += ForwardGeneralCheckbox;
+            SettingStartMinimized.Checked += ForwardGeneralCheckbox;
+            SettingStartMinimized.Unchecked += ForwardGeneralCheckbox;
+            SettingDisableSmoothing.Checked += ForwardGeneralCheckbox;
+            SettingDisableSmoothing.Unchecked += ForwardGeneralCheckbox;
+
+            // Wire COM port selection changes
+            SettingComPortSelector.SelectionChanged += SettingComPortSelector_SelectionChanged;
         }
 
         #endregion
@@ -75,6 +105,64 @@ namespace DeejNG.Dialogs
         }
 
         #endregion
+
+        private void ForwardGeneralCheckbox(object? sender, RoutedEventArgs e)
+        {
+            if (_mainWindow == null) return;
+
+            if (sender == SettingInvertSliders)
+                _mainWindow.InvertSliderCheckBox.IsChecked = SettingInvertSliders.IsChecked;
+            else if (sender == SettingShowMeters)
+                _mainWindow.ShowSlidersCheckBox.IsChecked = SettingShowMeters.IsChecked;
+            else if (sender == SettingStartOnBoot)
+                _mainWindow.StartOnBootCheckBox.IsChecked = SettingStartOnBoot.IsChecked;
+            else if (sender == SettingStartMinimized)
+                _mainWindow.StartMinimizedCheckBox.IsChecked = SettingStartMinimized.IsChecked;
+            else if (sender == SettingDisableSmoothing)
+                _mainWindow.DisableSmoothingCheckBox.IsChecked = SettingDisableSmoothing.IsChecked;
+        }
+
+        private void SettingComPortSelector_DropDownOpened(object sender, EventArgs e)
+        {
+            if (_mainWindow != null)
+            {
+                // Refresh ports in main window and sync to settings
+                var selectedPort = SettingComPortSelector.SelectedItem;
+                _mainWindow.ComPortSelector.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                
+                // Sync the updated list back to settings window
+                SettingComPortSelector.ItemsSource = _mainWindow.ComPortSelector.ItemsSource;
+                SettingComPortSelector.SelectedItem = selectedPort;
+            }
+        }
+
+        private void SettingComPortSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_mainWindow != null && SettingComPortSelector.SelectedItem != null)
+            {
+                _mainWindow.ComPortSelector.SelectedItem = SettingComPortSelector.SelectedItem;
+                UpdateConnectButtonState();
+            }
+        }
+
+        private void SettingConnect_Click(object sender, RoutedEventArgs e)
+        {
+            if (_mainWindow != null)
+            {
+                // Forward the click to the main window's connect button
+                _mainWindow.ConnectButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                UpdateConnectButtonState();
+            }
+        }
+
+        private void UpdateConnectButtonState()
+        {
+            if (_mainWindow != null)
+            {
+                SettingConnectButton.Content = _mainWindow.ConnectButton.Content;
+                SettingConnectButton.IsEnabled = _mainWindow.ConnectButton.IsEnabled;
+            }
+        }
 
         #region Private Methods
 
@@ -373,5 +461,18 @@ namespace DeejNG.Dialogs
         }
 
         #endregion
+
+        private void TitleBar_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
+            {
+                try { DragMove(); } catch { }
+            }
+        }
+
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
+        }
     }
 }

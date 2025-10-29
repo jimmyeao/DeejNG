@@ -27,10 +27,19 @@ namespace DeejNG.Dialogs
             CancelButton.Visibility = showCancel ? Visibility.Visible : Visibility.Collapsed;
             NoButton.Visibility = showNo ? Visibility.Visible : Visibility.Collapsed;
 
-            // If only showing OK, change Yes to OK
+            // If only showing OK, change Yes to OK and center the button panel
             if (!showNo && !showCancel)
             {
                 YesButton.Content = "OK";
+                ButtonPanel.HorizontalAlignment = HorizontalAlignment.Center;
+            }
+        }
+
+        private void TitleBar_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
+            {
+                DragMove();
             }
         }
 

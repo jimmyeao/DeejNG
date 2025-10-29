@@ -1,51 +1,87 @@
 ﻿<Window x:Class="DeejNG.Dialogs.InputDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         Title="Input Dialog"
-        Height="231" Width="450"
+        Height="260" Width="450"
+        WindowStyle="None"
+        AllowsTransparency="True"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
-        Background="{DynamicResource MaterialDesign.Brush.Background}"
-        TextElement.Foreground="{DynamicResource MaterialDesign.Brush.Foreground}"
+        Background="Transparent"
+        TextElement.Foreground="{DynamicResource TextPrimaryBrush}"
         TextElement.FontWeight="Regular"
         TextElement.FontSize="14"
-        FontFamily="{materialDesign:MaterialDesignFont}">
-    <Grid Margin="20">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/Themes/Styles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+    <Border BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Background="{DynamicResource BackgroundBrush}" Margin="0,0,0,35">
+        <Grid Margin="0,0,0,28">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="48"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0"
-                   x:Name="PromptTextBlock"
-                   Text="Enter value:"
-                   Margin="0,0,0,20"
-                   TextWrapping="Wrap"
-                   Style="{StaticResource MaterialDesignBody1TextBlock}"/>
+            <!-- Title Bar -->
+            <Border Grid.Row="0"
+                Background="{DynamicResource SurfaceBrush}"
+                CornerRadius="8,8,0,0"
+                MouseLeftButtonDown="TitleBar_MouseDown">
+                <Grid>
+                    <TextBlock Text="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=Title}" 
+                           Style="{StaticResource TitleTextBlock}" 
+                           VerticalAlignment="Center"
+                           Margin="20,0"/>
+                </Grid>
+            </Border>
 
-        <TextBox Grid.Row="1"
-                 x:Name="InputTextBox"
-                 materialDesign:HintAssist.Hint="Enter text here"
-                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                 VerticalAlignment="Top"
-                 Margin="0,0,0,20"/>
+            <!-- Content -->
+            <StackPanel Grid.Row="1" Margin="20,20,20,40">
+                <TextBlock x:Name="PromptTextBlock"
+                       Text="Enter value:"
+                       Style="{StaticResource LabelTextBlock}"
+                       Margin="0,0,0,12"
+                       TextWrapping="Wrap"/>
 
-        <StackPanel Grid.Row="2"
-                    Orientation="Horizontal"
-                    HorizontalAlignment="Right">
-            <Button Content="OK"
-                    IsDefault="True"
-                    Click="OkButton_Click"
-                    Style="{StaticResource MaterialDesignFlatButton}"
-                    Margin="0,0,10,0"
-                    Width="80"/>
-            <Button Content="Cancel"
-                    IsCancel="True"
-                    Click="CancelButton_Click"
-                    Style="{StaticResource MaterialDesignFlatButton}"
-                    Width="80"/>
-        </StackPanel>
-    </Grid>
+                <TextBox x:Name="InputTextBox"
+                     ToolTip="Enter text here"
+                     Background="{DynamicResource SurfaceBrush}"
+                     Foreground="{DynamicResource TextPrimaryBrush}"
+                     BorderBrush="{DynamicResource BorderBrush}"
+                     BorderThickness="1"
+                     Padding="8,6"
+                     FontSize="{DynamicResource FontSizeNormal}"/>
+            </StackPanel>
+
+            <!-- Action Buttons -->
+            <Border Grid.Row="1"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,1,0,0"
+                CornerRadius="0,0,8,8"
+                Padding="20,12" Margin="0,107,0,-28" Grid.RowSpan="2">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="OK"
+                        IsDefault="True"
+                        Style="{StaticResource ModernButton}"
+                        Click="OkButton_Click"
+                        Margin="0,0,10,0"
+                        Width="80"/>
+                    <Button Content="Cancel"
+                        IsCancel="True"
+                        Style="{StaticResource ModernButton}"
+                        Click="CancelButton_Click"
+                        Width="80"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Border>
 </Window>

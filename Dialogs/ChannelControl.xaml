@@ -3,49 +3,53 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
              xmlns:skia="clr-namespace:SkiaSharp.Views.WPF;assembly=SkiaSharp.Views.WPF"
              mc:Ignorable="d"
-             Width="129" Height="292"
-             TextElement.Foreground="{DynamicResource MaterialDesign.Brush.Foreground}"
-             Background="{DynamicResource MaterialDesign.Brush.Background}"
-             TextElement.FontWeight="Regular"
-             TextElement.FontSize="12"
-             FontFamily="{materialDesign:MaterialDesignFont}"
+             Width="146" Height="313"
+             TextElement.Foreground="{DynamicResource TextPrimaryBrush}"
+            Background="Transparent"
+            TextElement.FontWeight="Regular"
+            TextElement.FontSize="12"
+            FontFamily="Segoe UI"
              TextOptions.TextFormattingMode="Ideal"
              TextOptions.TextRenderingMode="Auto">
 
     <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/Themes/Styles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            
         <!-- Mute Button Style -->
         <Style x:Key="MixerMuteButtonStyle" TargetType="ToggleButton" BasedOn="{x:Null}">
-            <Setter Property="Background" Value="#333" />
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="8,4" />
             <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="BorderBrush" Value="#666" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
                         <Border Background="{TemplateBinding Background}"
-                        BorderBrush="{TemplateBinding BorderBrush}"
-                        BorderThickness="{TemplateBinding BorderThickness}"
-                        CornerRadius="3"
-                        Padding="{TemplateBinding Padding}">
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center"
-                                      VerticalAlignment="Center"
-                                      RecognizesAccessKey="True"/>
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#555" />
+                    <Setter Property="Background" Value="{DynamicResource SurfaceHighlightBrush}" />
                 </Trigger>
                 <Trigger Property="IsChecked" Value="True">
-                    <Setter Property="Background" Value="Red" />
+                    <Setter Property="Background" Value="#D13438" />
                     <Setter Property="Foreground" Value="White" />
                     <Setter Property="Content" Value="Unmute" />
                 </Trigger>
@@ -65,7 +69,7 @@
                     <ControlTemplate TargetType="Slider">
                         <Grid Width="30" Background="Transparent">
                             <!-- Track background -->
-                            <Rectangle Fill="#444"
+                            <Rectangle Fill="{DynamicResource BorderBrush}"
                                Width="3"
                                HorizontalAlignment="Center"
                                VerticalAlignment="Stretch"
@@ -91,8 +95,8 @@
 
                                 <Track.Thumb>
                                     <Thumb Width="22" Height="12"
-                                   Background="#aaa"
-                                   BorderBrush="#444" 
+                                   Background="{DynamicResource PrimaryBrush}"
+                                   BorderBrush="{DynamicResource BorderBrush}" 
                                    BorderThickness="1"
                                    Cursor="Hand"
                                    SnapsToDevicePixels="True"
@@ -129,27 +133,29 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        </ResourceDictionary>
     </UserControl.Resources>
 
-    <Border BorderThickness="1" BorderBrush="Gray" Margin="5" Padding="5" CornerRadius="4">
+    <Border Style="{StaticResource Card}" Margin="6,6,6,0">
         <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
 
-            <TextBox x:Name="TargetTextBox"
-                     Margin="0,0,0,10"
-                     Width="95"
-                     HorizontalAlignment="Center"
-                     TextAlignment="Center"
-                     IsReadOnly="True"
-                     Style="{DynamicResource MaterialDesignOutlinedTextBox}"
-                     Foreground="{DynamicResource MaterialDesign.Brush.Foreground}" />
+            <TextBlock x:Name="TargetTextBox"
+                       Margin="0,0,0,12"
+                       Width="120"
+                       HorizontalAlignment="Center"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"
+                       FontWeight="SemiBold"
+                       TextTrimming="CharacterEllipsis"
+                       Foreground="{DynamicResource TextPrimaryBrush}" Height="39" FontSize="11" />
 
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="40"/>
-                    <ColumnDefinition Width="10"/>
-                    <ColumnDefinition Width="20"/>
-                    <ColumnDefinition Width="10"/>
-                    <ColumnDefinition Width="20"/>
+                    <ColumnDefinition Width="34"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="18"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="18"/>
                 </Grid.ColumnDefinitions>
 
                 <Grid Grid.ColumnSpan="5"
@@ -157,9 +163,9 @@
                       VerticalAlignment="Bottom"
                       x:Name="MeterHeightGrid">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="40"/>
-                        <ColumnDefinition Width="10"/>
-                        <ColumnDefinition Width="20"/>
+                        <ColumnDefinition Width="34"/>
+                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition Width="18"/>
                     </Grid.ColumnDefinitions>
 
                     <!-- Volume Slider -->
@@ -178,24 +184,23 @@
                     <!-- SkiaSharp Meter Canvas -->
                     <skia:SKElement x:Name="SkiaCanvas"
                                     Grid.Column="2"
-                                    VerticalAlignment="Stretch"
-                                    HorizontalAlignment="Stretch"
-                                    PaintSurface="SkiaCanvas_PaintSurface"/>
+                                    PaintSurface="SkiaCanvas_PaintSurface" Margin="0,0,-5,0"/>
                 </Grid>
 
                 <!-- dB Labels -->
                 <StackPanel HorizontalAlignment="Left" Margin="35,0,0,8" Grid.ColumnSpan="2">
-                    <TextBlock Text="0" FontSize="8" Style="{DynamicResource MaterialDesignTextBlock}"/>
-                    <TextBlock Text="-6" FontSize="8" Margin="0,30,0,0" Style="{DynamicResource MaterialDesignTextBlock}"/>
-                    <TextBlock Text="-12" FontSize="8" Margin="0,30,0,0" Style="{DynamicResource MaterialDesignTextBlock}"/>
-                    <TextBlock Text="-18" FontSize="8" Margin="0,30,0,0" Style="{DynamicResource MaterialDesignTextBlock}"/>
+                    <TextBlock Text="0" FontSize="8" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    <TextBlock Text="-6" FontSize="8" Margin="0,24,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    <TextBlock Text="-12" FontSize="8" Margin="0,24,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    <TextBlock Text="-18" FontSize="8" Margin="0,24,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
                 </StackPanel>
 
             </Grid>
 
             <ToggleButton x:Name="MuteButton"
-                          Content="Mute"
-                          Margin="0,5,0,0"
+                          Content="M"
+                          Width="60"
+                          Margin="0,8,0,0"
                           HorizontalAlignment="Center"
                           Checked="MuteButton_Checked"
                           Unchecked="MuteButton_Unchecked"

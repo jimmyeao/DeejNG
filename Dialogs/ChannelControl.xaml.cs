@@ -204,7 +204,7 @@ namespace DeejNG.Dialogs
                 UpdateAudioMeter(0);
 
                 // Visual indicator
-                TargetTextBox.Foreground = Brushes.Gray;
+                TargetTextBox.Foreground = TryFindResource("TextSecondaryBrush") as Brush ?? Brushes.Gray;
                 TargetTextBox.ToolTip = $"{TargetTextBox.Text} (Expired)";
             }
         }
@@ -214,8 +214,9 @@ namespace DeejNG.Dialogs
         /// </summary>
         public void ResetConnectionState()
         {
-            // Reset any disconnected/expired visual indicators
-            TargetTextBox.Foreground = TryFindResource("MaterialDesign.Brush.Foreground") as Brush ?? Brushes.Black;
+            // Reset any disconnected/expired visual indicators by clearing the local value
+            // This allows the XAML binding to take over again
+            TargetTextBox.ClearValue(TextBlock.ForegroundProperty);
             if (TargetTextBox.ToolTip is string tooltip &&
                 (tooltip.EndsWith("(Disconnected)") || tooltip.EndsWith("(Expired)")))
             {
@@ -465,54 +466,92 @@ namespace DeejNG.Dialogs
             var info = e.Info;
             canvas.Clear(SKColors.Transparent);
 
-            int segmentCount = 20;
+            var width = info.Width;
+            var height = info.Height;
 
-            // Only recalculate rectangles if canvas size changed
-            if (!_segmentRectsCalculated || _lastCanvasWidth != info.Width || _lastCanvasHeight != info.Height)
+            if (width <= 0 || height <= 0)
+                return;
+
+            // Draw background with rounded corners using theme color
+            var surfaceColor = TryFindResource("SurfaceColor") as Color? ?? Color.FromRgb(54, 54, 80);
+            _basePaint.Color = new SKColor(surfaceColor.R, surfaceColor.G, surfaceColor.B);
+            var bgRect = new SKRoundRect(new SKRect(0, 0, width, height), 8, 8);
+            canvas.DrawRoundRect(bgRect, _basePaint);
+
+            // Calculate level height
+            var levelHeight = height * Math.Clamp(_meterLevel, 0f, 1f);
+
+            if (levelHeight > 0)
             {
-                RecalculateSegmentRects(info, segmentCount);
-                _lastCanvasWidth = info.Width;
-                _lastCanvasHeight = info.Height;
-                _segmentRectsCalculated = true;
+                // Get color based on level (green -> yellow -> red)
+                SKColor levelColor = GetColorForLevel(_meterLevel);
+
+                // Draw level indicator with rounded corners
+                _basePaint.Color = levelColor;
+                var levelRect = new SKRect(4, height - levelHeight, width - 4, height - 4);
+                var levelRoundRect = new SKRoundRect(levelRect, 4, 4);
+                canvas.DrawRoundRect(levelRoundRect, _basePaint);
             }
 
-            float activeHeight = _meterLevel * info.Height;
-            float cornerRadius = _segmentRects.Length > 0 ? _segmentRects[0].Height / 2.5f : 2f;
+            // Draw dB marker segments (subtle lines)
+            DrawSegmentMarkers(canvas, width, height);
+        }
 
-            for (int i = 0; i < segmentCount && i < _segmentRects.Length; i++)
+        private void DrawSegmentMarkers(SKCanvas canvas, int width, int height)
+        {
+            _borderPaint.Color = new SKColor(30, 30, 46, 150);
+            _borderPaint.StrokeWidth = 1;
+
+            int segmentCount = 10;
+            float segmentHeight = height / (float)segmentCount;
+
+            for (int i = 1; i < segmentCount; i++)
             {
-                var rect = _segmentRects[i];
-                bool isActive = info.Height - rect.Top <= activeHeight;
-
-                // Use pre-calculated colors or inactive color
-                SKColor baseColor = isActive && i < SegmentColors.Length
-                    ? SegmentColors[i]
-                    : SKColors.Gray.WithAlpha(50);
-
-                // Use cached paint object, just update color
-                _basePaint.Color = baseColor;
-                canvas.DrawRoundRect(rect, cornerRadius, cornerRadius, _basePaint);
-
-                // Only draw glossy highlight for active segments
-                if (isActive)
-                {
-                    DrawGlossyHighlight(canvas, rect, cornerRadius);
-                }
-
-                // Only draw border for active segments to reduce overdraw
-                if (isActive)
-                {
-                    _borderPaint.Color = SKColors.White.WithAlpha(40);
-                    canvas.DrawRoundRect(rect, cornerRadius, cornerRadius, _borderPaint);
-                }
+                float y = i * segmentHeight;
+                canvas.DrawLine(4, y, width - 4, y, _borderPaint);
             }
+        }
 
-            // Peak marker (only if visible)
-            if (_peakLevel > 0.01f)
+        private SKColor GetColorForLevel(float level)
+        {
+            // Green for low levels (0-0.7)
+            // Yellow for medium levels (0.7-0.85)
+            // Red for high levels (0.85-1.0)
+            if (level < 0.7f)
             {
-                float peakY = info.Height - (_peakLevel * info.Height);
-                canvas.DrawRect(new SKRect(0, peakY, info.Width, peakY + 2), _peakPaint);
+                return new SKColor(16, 185, 129); // Green
             }
+            else if (level < 0.85f)
+            {
+                // Interpolate between green and yellow
+                float t = (level - 0.7f) / 0.15f;
+                return InterpolateColor(
+                    new SKColor(16, 185, 129),   // Green
+                    new SKColor(245, 158, 11),   // Yellow
+                    t
+                );
+            }
+            else
+            {
+                // Interpolate between yellow and red
+                float t = (level - 0.85f) / 0.15f;
+                return InterpolateColor(
+                    new SKColor(245, 158, 11),   // Yellow
+                    new SKColor(239, 68, 68),    // Red
+                    t
+                );
+            }
+        }
+
+        private SKColor InterpolateColor(SKColor color1, SKColor color2, float t)
+        {
+            t = Math.Clamp(t, 0f, 1f);
+            return new SKColor(
+                (byte)(color1.Red + (color2.Red - color1.Red) * t),
+                (byte)(color1.Green + (color2.Green - color1.Green) * t),
+                (byte)(color1.Blue + (color2.Blue - color1.Blue) * t),
+                (byte)(color1.Alpha + (color2.Alpha - color1.Alpha) * t)
+            );
         }
         private void TargetTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
@@ -563,8 +602,9 @@ namespace DeejNG.Dialogs
                 }));
             }
 
-            // Reset foreground color (in case it was previously set to indicate disconnection)
-            TargetTextBox.Foreground = TryFindResource("MaterialDesign.Brush.Foreground") as Brush ?? Brushes.Black;
+            // Reset foreground color by clearing any local override
+            // This allows the XAML DynamicResource binding to work
+            TargetTextBox.ClearValue(TextBlock.ForegroundProperty);
 
             UpdateMuteButtonEnabled();
         }

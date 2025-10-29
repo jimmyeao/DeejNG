@@ -1,16 +1,30 @@
 ﻿<Window x:Class="DeejNG.Dialogs.MultiTargetPickerDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Select Applications" Height="683" Width="800"
-        TextElement.Foreground="{DynamicResource MaterialDesign.Brush.Foreground}"
-        Background="{DynamicResource MaterialDesign.Brush.Background}"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        ResizeMode="CanResize"
+        TextElement.Foreground="{DynamicResource TextPrimaryBrush}"
+        Background="Transparent"
         TextElement.FontWeight="Regular"
         TextElement.FontSize="12"
-        FontFamily="{materialDesign:MaterialDesignFont}"
+        FontFamily="Segoe UI"
         TextOptions.TextFormattingMode="Ideal">
-    <Grid Margin="10">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/Themes/Styles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+    <Border BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Background="{DynamicResource BackgroundBrush}">
+    <Grid Margin="0">
         <Grid.RowDefinitions>
+            <RowDefinition Height="48"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -18,39 +32,81 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Header -->
-        <TextBlock Grid.Row="0" Text="Select targets for this slider" 
-                   Style="{StaticResource MaterialDesignHeadline6TextBlock}" 
-                   Margin="0,0,0,10"/>
+        <!-- Title Bar -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource SurfaceBrush}"
+                CornerRadius="8,8,0,0"
+                MouseLeftButtonDown="TitleBar_MouseDown">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                
+                <!-- Window Title -->
+                <TextBlock Grid.Column="0" 
+                           Text="Select Applications" 
+                           Style="{StaticResource TitleTextBlock}" 
+                           VerticalAlignment="Center"
+                           Margin="20,0"/>
+                
+                <!-- Close Button -->
+                <Button Grid.Column="1" 
+                        Content="✕" 
+                        Style="{StaticResource IconButton}" 
+                        Click="Cancel_Click" 
+                        ToolTip="Close"
+                        Margin="12"/>
+            </Grid>
+        </Border>
 
         <!-- Instruction -->
         <TextBlock Grid.Row="1"
+                   Text="Select targets for this slider"
+                   Style="{StaticResource LabelTextBlock}"
+                   Margin="20,16,20,0"/>
+        
+        <TextBlock Grid.Row="1"
                    Text="Note: You can select multiple items, but they must be in the same category. Applications already assigned to other sliders are marked and cannot be selected."
-                   Style="{StaticResource MaterialDesignBody2TextBlock}"
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   FontSize="{DynamicResource BaseFontSize}"
                    TextWrapping="Wrap"
-                   Margin="0,0,0,10"/>
+                   Margin="20,40,20,12"/>
 
         <!-- Manual Application Entry -->
-        <Expander Grid.Row="2" Header="Manually Specify Application" Margin="0,0,0,10" IsExpanded="True">
-            <StackPanel Margin="10">
+        <Expander Grid.Row="2" Header="Manually Specify Application" Margin="20,0,20,12" IsExpanded="True">
+            <Expander.Style>
+                <Style TargetType="Expander">
+                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                    <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+                    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                    <Setter Property="BorderThickness" Value="1"/>
+                </Style>
+            </Expander.Style>
+            <StackPanel Margin="12">
                 <TextBlock Text="Enter application name(s) separated by commas. You can use partial names (e.g., 'spotify' or 'spotify.exe')."
-                           Style="{StaticResource MaterialDesignBody2TextBlock}"
+                           Foreground="{DynamicResource TextSecondaryBrush}"
+                           FontSize="{DynamicResource BaseFontSize}"
                            TextWrapping="Wrap"
                            Margin="0,0,0,10"/>
                 <TextBox x:Name="ManualAppNameTextBox"
-                         materialDesign:HintAssist.Hint="e.g., chrome, firefox, spotify"
-                         Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                         AcceptsReturn="False"/>
+                         ToolTip="e.g., chrome, firefox, spotify"
+                         AcceptsReturn="False"
+                         Background="{DynamicResource SurfaceBrush}"
+                         Foreground="{DynamicResource TextPrimaryBrush}"
+                         BorderBrush="{DynamicResource BorderBrush}"
+                         BorderThickness="1"
+                         Padding="8,6"
+                         FontSize="{DynamicResource FontSizeNormal}"/>
                 <TextBlock Text="These applications will be added even if they're not currently running."
-                           Style="{StaticResource MaterialDesignCaptionTextBlock}"
-                           Foreground="{DynamicResource MaterialDesign.Brush.Foreground}"
-                           Opacity="0.7"
-                           Margin="0,5,0,0"/>
+                           Foreground="{DynamicResource TextSecondaryBrush}"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Margin="0,8,0,0"/>
             </StackPanel>
         </Expander>
 
         <!-- Session List with Checkboxes -->
-        <Grid Grid.Row="3">
+        <Grid Grid.Row="4" Margin="20,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />
@@ -59,14 +115,39 @@
 
             <!-- Available sessions -->
             <GroupBox Header="Applications" Grid.Column="0" Margin="0,0,5,0" MinHeight="300">
+                <GroupBox.Style>
+                    <Style TargetType="GroupBox">
+                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+                        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                        <Setter Property="BorderThickness" Value="1"/>
+                        <Setter Property="Padding" Value="8"/>
+                        <Setter Property="FontWeight" Value="Medium"/>
+                    </Style>
+                </GroupBox.Style>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ListBox x:Name="AvailableSessionsListBox" Margin="0,5">
+                    <ListBox x:Name="AvailableSessionsListBox" 
+                             Margin="0,5"
+                             Background="Transparent"
+                             BorderThickness="0">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <CheckBox Content="{Binding FriendlyName}" 
                                           IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
                                           IsEnabled="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
-                                          Margin="0,2"/>
+                                          Foreground="{DynamicResource TextPrimaryBrush}"
+                                          Margin="0,2">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                                            <Style.Triggers>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
+                                </CheckBox>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
@@ -75,14 +156,39 @@
 
             <!-- Input device selection -->
             <GroupBox Header="Input Devices" Grid.Column="1" Margin="0,0,5,0" MinHeight="300">
+                <GroupBox.Style>
+                    <Style TargetType="GroupBox">
+                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+                        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                        <Setter Property="BorderThickness" Value="1"/>
+                        <Setter Property="Padding" Value="8"/>
+                        <Setter Property="FontWeight" Value="Medium"/>
+                    </Style>
+                </GroupBox.Style>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ListBox x:Name="InputDevicesListBox" Margin="0,5">
+                    <ListBox x:Name="InputDevicesListBox" 
+                             Margin="0,5"
+                             Background="Transparent"
+                             BorderThickness="0">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <CheckBox Content="{Binding FriendlyName}" 
                                           IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
                                           IsEnabled="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
-                                          Margin="0,2"/>
+                                          Foreground="{DynamicResource TextPrimaryBrush}"
+                                          Margin="0,2">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                                            <Style.Triggers>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
+                                </CheckBox>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
@@ -91,14 +197,39 @@
 
             <!-- Output device selection -->
             <GroupBox Header="Output Devices" Grid.Column="2" MinHeight="300">
+                <GroupBox.Style>
+                    <Style TargetType="GroupBox">
+                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+                        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                        <Setter Property="BorderThickness" Value="1"/>
+                        <Setter Property="Padding" Value="8"/>
+                        <Setter Property="FontWeight" Value="Medium"/>
+                    </Style>
+                </GroupBox.Style>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ListBox x:Name="OutputDevicesListBox" Margin="0,5">
+                    <ListBox x:Name="OutputDevicesListBox" 
+                             Margin="0,5"
+                             Background="Transparent"
+                             BorderThickness="0">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <CheckBox Content="{Binding FriendlyName}" 
                                           IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
                                           IsEnabled="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
-                                          Margin="0,2"/>
+                                          Foreground="{DynamicResource TextPrimaryBrush}"
+                                          Margin="0,2">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                                            <Style.Triggers>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
+                                </CheckBox>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
@@ -109,16 +240,24 @@
 
 
         <!-- Action Buttons -->
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
-            <Button Content="Cancel" 
-                  Width="80" 
-                  Margin="0,0,10,0" 
-                  Click="Cancel_Click"
-                  Style="{DynamicResource MaterialDesignFlatButton}"/>
-            <Button Content="OK" 
-                  Width="80" 
-                  Click="Ok_Click"
-                  Style="{DynamicResource MaterialDesignFlatButton}"/>
-        </StackPanel>
+        <Border Grid.Row="5"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,1,0,0"
+                CornerRadius="0,0,8,8"
+                Padding="20,12">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel" 
+                        Width="80" 
+                        Margin="0,0,10,0" 
+                        Style="{StaticResource ModernButton}"
+                        Click="Cancel_Click"/>
+                <Button Content="OK" 
+                        Width="80" 
+                        Style="{StaticResource ModernButton}"
+                        Click="Ok_Click"/>
+            </StackPanel>
+        </Border>
     </Grid>
+    </Border>
 </Window>

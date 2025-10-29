@@ -1,53 +1,89 @@
 ﻿<Window x:Class="DeejNG.Dialogs.ConfirmationDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
-        Title="Confirm"
-        Height="200" Width="450"
+        Title="Confirm" Width="450"
+        SizeToContent="Height"
+        MinHeight="200"
+        MaxHeight="600"
+        WindowStyle="None"
+        AllowsTransparency="True"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
-        Background="{DynamicResource MaterialDesign.Brush.Background}"
-        TextElement.Foreground="{DynamicResource MaterialDesign.Brush.Foreground}"
+        Background="Transparent"
+        TextElement.Foreground="{DynamicResource TextPrimaryBrush}"
         TextElement.FontWeight="Regular"
         TextElement.FontSize="14"
-        FontFamily="{materialDesign:MaterialDesignFont}">
-    <Grid Margin="20">
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/Themes/Styles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+    <Border BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Background="{DynamicResource BackgroundBrush}">
+    <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="48"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0"
-                   x:Name="MessageTextBlock"
-                   Text="Are you sure?"
-                   Margin="0,0,0,20"
-                   TextWrapping="Wrap"
-                   VerticalAlignment="Center"
-                   Style="{StaticResource MaterialDesignBody1TextBlock}"/>
+        <!-- Title Bar -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource SurfaceBrush}"
+                CornerRadius="8,8,0,0"
+                MouseLeftButtonDown="TitleBar_MouseDown">
+            <Grid>
+                <TextBlock Text="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=Title}" 
+                           Style="{StaticResource TitleTextBlock}" 
+                           VerticalAlignment="Center"
+                           Margin="20,0"/>
+            </Grid>
+        </Border>
 
-        <StackPanel Grid.Row="1"
-                    Orientation="Horizontal"
-                    HorizontalAlignment="Right">
-            <Button x:Name="YesButton"
-                    Content="Yes"
-                    IsDefault="True"
-                    Click="YesButton_Click"
-                    Style="{StaticResource MaterialDesignFlatButton}"
-                    Margin="0,0,10,0"
-                    Width="80"/>
-            <Button x:Name="NoButton"
-                    Content="No"
-                    Click="NoButton_Click"
-                    Style="{StaticResource MaterialDesignFlatButton}"
-                    Margin="0,0,10,0"
-                    Width="80"
-                    Visibility="Visible"/>
-            <Button Content="Cancel"
-                    IsCancel="True"
-                    Click="CancelButton_Click"
-                    Style="{StaticResource MaterialDesignFlatButton}"
-                    Width="80"
-                    x:Name="CancelButton"/>
-        </StackPanel>
+        <!-- Content -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <TextBlock x:Name="MessageTextBlock"
+                       Text="Are you sure?"
+                       Margin="20"
+                       TextWrapping="Wrap"
+                       FontSize="{DynamicResource FontSizeNormal}"/>
+        </ScrollViewer>
+
+        <!-- Action Buttons -->
+        <Border Grid.Row="2"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,1,0,0"
+                CornerRadius="0,0,8,8"
+                Padding="20,12">
+            <StackPanel x:Name="ButtonPanel" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="YesButton"
+                        Content="Yes"
+                        IsDefault="True"
+                        Style="{StaticResource ModernButton}"
+                        Click="YesButton_Click"
+                        Margin="0,0,10,0"
+                        Width="80"/>
+                <Button x:Name="NoButton"
+                        Content="No"
+                        Style="{StaticResource ModernButton}"
+                        Click="NoButton_Click"
+                        Margin="0,0,10,0"
+                        Width="80"
+                        Visibility="Visible"/>
+                <Button Content="Cancel"
+                        IsCancel="True"
+                        Style="{StaticResource ModernButton}"
+                        Click="CancelButton_Click"
+                        Width="80"
+                        x:Name="CancelButton"/>
+            </StackPanel>
+        </Border>
     </Grid>
+    </Border>
 </Window>
