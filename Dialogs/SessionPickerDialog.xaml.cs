@@ -169,6 +169,14 @@ namespace DeejNG.Dialogs
 
 
 
+        private void TitleBar_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
+            {
+                DragMove();
+            }
+        }
+
         /// <summary>
         /// Handles the OK button click in the session picker dialog.
         /// Assigns the selected session name based on either a selected item or manual entry,

@@ -124,6 +124,14 @@ namespace DeejNG.Dialogs
             Close();
         }
 
+        private void TitleBar_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
+            {
+                DragMove();
+            }
+        }
+
         /// <summary>
         /// Loads all active output (render) audio devices, wraps them in SelectableSession objects,
         /// and marks them as selected if they exist in the provided selection list.

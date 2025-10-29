@@ -479,7 +479,10 @@ namespace DeejNG.Services
                 OverlayY = AppSettings.OverlayY,
                 OverlayTextColor = AppSettings.OverlayTextColor,
                 OverlayScreenDevice = AppSettings.OverlayScreenDevice,
-                OverlayScreenBounds = AppSettings.OverlayScreenBounds
+                OverlayScreenBounds = AppSettings.OverlayScreenBounds,
+
+                // Persist the selected theme with the profile settings
+                SelectedTheme = AppSettings.SelectedTheme
             };
         }
 

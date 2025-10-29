@@ -18,8 +18,10 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Input;
 using System.Windows.Threading;
 
 namespace DeejNG
@@ -214,6 +216,12 @@ namespace DeejNG
 
             // Setup automatic serial connection
             SetupAutomaticSerialConnection();
+
+            // Initialize theme selector
+            InitializeThemeSelector();
+
+            // Set version text from ClickOnce manifest or assembly
+            VersionText.Text = GetApplicationVersion();
         }
 
         #endregion Public Constructors
@@ -656,6 +664,108 @@ namespace DeejNG
 
         #region Private Methods
 
+        private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Left) return;
+
+            // Do not start a drag when clicking interactive controls
+            if (IsInteractiveElement(e.OriginalSource as DependencyObject)) return;
+
+            if (e.ClickCount == 2)
+            {
+                WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+                return;
+            }
+
+            try { DragMove(); } catch { }
+        }
+
+        private bool IsInteractiveElement(DependencyObject? source)
+        {
+            while (source != null)
+            {
+                if (source is ButtonBase || source is ComboBox || source is TextBoxBase || source is PasswordBox || source is Slider)
+                    return true;
+                source = VisualTreeHelper.GetParent(source);
+            }
+            return false;
+        }
+
+        private void MinButton_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+        private void MaxButton_Click(object sender, RoutedEventArgs e) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+        private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
+
+        private void InitializeThemeSelector()
+        {
+            var themes = new List<ThemeOption>
+            {
+                new ThemeOption("Dark", "Dark", "🌑", "/Themes/DarkTheme.xaml"),
+                new ThemeOption("Light", "Light", "☀️", "/Themes/LightTheme.xaml"),
+                new ThemeOption("Arctic", "Arctic", "❄️", "/Themes/ArcticTheme.xaml"),
+                new ThemeOption("Cyberpunk", "Cyberpunk", "🔮", "/Themes/CyberpunkTheme.xaml"),
+                new ThemeOption("Dracula", "Dracula", "🧛", "/Themes/DraculaTheme.xaml"),
+                new ThemeOption("Forest", "Forest", "🌲", "/Themes/ForestTheme.xaml"),
+                new ThemeOption("Nord", "Nord", "🌌", "/Themes/NordTheme.xaml"),
+                new ThemeOption("Ocean", "Ocean", "🌊", "/Themes/OceanTheme.xaml"),
+                new ThemeOption("Sunset", "Sunset", "🌅", "/Themes/SunsetTheme.xaml")
+            };
+
+            ThemeSelector.ItemsSource = themes;
+            
+            // Load saved theme or default to Dark
+            string savedTheme = _settingsManager.AppSettings.SelectedTheme ?? "Dark";
+            var selectedTheme = themes.FirstOrDefault(t => t.Name == savedTheme) ?? themes[0];
+            ThemeSelector.SelectedItem = selectedTheme;
+        }
+
+        private void ThemeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isInitializing || ThemeSelector.SelectedItem is not ThemeOption selectedTheme)
+                return;
+
+            try
+            {
+                // Remove existing theme dictionaries
+                var themesToRemove = Application.Current.Resources.MergedDictionaries
+                    .Where(d => d.Source != null && d.Source.OriginalString.Contains("/Themes/") && d.Source.OriginalString.EndsWith("Theme.xaml"))
+                    .ToList();
+
+                foreach (var theme in themesToRemove)
+                {
+                    Application.Current.Resources.MergedDictionaries.Remove(theme);
+                }
+
+                // Add the new theme (insert before Styles.xaml)
+                var newTheme = new ResourceDictionary { Source = new Uri(selectedTheme.ThemeFile, UriKind.Relative) };
+                var stylesIndex = Application.Current.Resources.MergedDictionaries
+                    .Select((d, i) => new { Dict = d, Index = i })
+                    .FirstOrDefault(x => x.Dict.Source?.OriginalString.Contains("Styles.xaml") == true);
+
+                if (stylesIndex != null)
+                {
+                    Application.Current.Resources.MergedDictionaries.Insert(stylesIndex.Index, newTheme);
+                }
+                else
+                {
+                    Application.Current.Resources.MergedDictionaries.Add(newTheme);
+                }
+
+                // Save theme preference
+                _settingsManager.AppSettings.SelectedTheme = selectedTheme.Name;
+                SaveSettings();
+
+#if DEBUG
+                Debug.WriteLine($"[Theme] Switched to {selectedTheme.DisplayName}");
+#endif
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                Debug.WriteLine($"[ERROR] Failed to switch theme: {ex.Message}");
+#endif
+            }
+        }
+
         private void ApplyTheme(string theme)
         {
             try
@@ -698,6 +808,38 @@ namespace DeejNG
                 Debug.WriteLine($"[ERROR] Applying theme '{theme}': {ex.Message}");
 #endif
             }
+        }
+
+        private void AutoSizeToChannels()
+        {
+            try
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    var work = SystemParameters.WorkArea;
+
+                    // Measure desired size of the channel area (independent of current window size)
+                    SliderPanel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                    Size desiredChannels = SliderPanel.DesiredSize;
+
+                    // Compute target width based on desired channel width
+                    double width = Math.Min(Math.Max(desiredChannels.Width + 60, 900), work.Width - 40);
+                    if (Math.Abs(this.Width - width) > 2)
+                        this.Width = width;
+
+                    // Compute target height using measured channel height + chrome rows
+                    double titleH = TitleBarGrid?.ActualHeight > 0 ? TitleBarGrid.ActualHeight : 48;
+                    // Toolbar height is auto-calculated (profile/settings row)
+                    double toolbarH = 44; // Approximate toolbar height
+                    double statusH = StatusBar?.ActualHeight ?? 0;
+                    double contentH = Math.Max(desiredChannels.Height + 40, 320); // pad, minimum
+                    double desired = titleH + toolbarH + contentH + statusH + 60; // overall padding
+                    double height = Math.Min(desired, work.Height - 20);
+                    if (Math.Abs(this.Height - height) > 2)
+                        this.Height = height;
+                }, DispatcherPriority.Render);
+            }
+            catch { }
         }
 
         private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level)
@@ -1061,6 +1203,8 @@ namespace DeejNG
 
             SetMeterVisibilityForAll(ShowSlidersCheckBox.IsChecked ?? true);
 
+            AutoSizeToChannels();
+
 #if DEBUG
             Debug.WriteLine("[Init] Sliders generated, waiting for first hardware data before completing initialization");
 #endif
@@ -1098,6 +1242,7 @@ namespace DeejNG
                             var currentTargets = _channelControls.Select(c => c.AudioTargets).ToList();
                             _expectedSliderCount = parts.Length;
                             GenerateSliders(parts.Length);
+                            AutoSizeToChannels();
 
                             for (int i = 0; i < Math.Min(currentTargets.Count, _channelControls.Count); i++)
                             {
@@ -1261,8 +1406,17 @@ namespace DeejNG
                 var settings = _profileManager.GetActiveProfileSettings();
                 _settingsManager.AppSettings = settings;
 
-                // Apply UI settings
-                ApplyTheme(settings.IsDarkTheme ? "Dark" : "Light");
+                // Apply UI settings - apply saved theme if available
+                if (!string.IsNullOrEmpty(settings.SelectedTheme))
+                {
+                    // Theme will be applied by InitializeThemeSelector
+                    // which runs earlier and selects the correct theme
+                }
+                else
+                {
+                    // Fallback for old settings without SelectedTheme
+                    ApplyTheme(settings.IsDarkTheme ? "Dark" : "Light");
+                }
                 InvertSliderCheckBox.IsChecked = settings.IsSliderInverted;
                 ShowSlidersCheckBox.IsChecked = settings.VuMeters;
 
@@ -1333,9 +1487,12 @@ namespace DeejNG
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            SliderScrollViewer.Visibility = Visibility.Visible;
+            SliderPanel.Visibility = Visibility.Visible;
             StartOnBootCheckBox.IsChecked = _settingsManager.AppSettings.StartOnBoot;
-            
+
+            // Autosize once when layout completes
+            this.Dispatcher.BeginInvoke(() => AutoSizeToChannels(), DispatcherPriority.ApplicationIdle);
+
 #if DEBUG
             Debug.WriteLine("[MainWindow] MainWindow_Loaded - overlay already initialized in constructor");
 #endif
@@ -1566,8 +1723,7 @@ namespace DeejNG
 
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
-            var settingsWindow = new SettingsWindow();
-            settingsWindow.Owner = this;
+            var settingsWindow = new SettingsWindow { Owner = this };
             settingsWindow.Show();
         }
 
@@ -2528,6 +2684,43 @@ namespace DeejNG
                     var control = _mainWindow.FindControlForTarget(_targetName);
                     control?.SetMuted(mute);
                 });
+            }
+        }
+
+        /// <summary>
+        /// Gets the application version from ClickOnce manifest or assembly
+        /// </summary>
+        private string GetApplicationVersion()
+        {
+            try
+            {
+                // Try to read version from ClickOnce manifest file
+                string manifestPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DeejNG.exe.manifest");
+                if (System.IO.File.Exists(manifestPath))
+                {
+                    var manifestXml = System.Xml.Linq.XDocument.Load(manifestPath);
+                    var assemblyIdentity = manifestXml.Descendants().FirstOrDefault(x => x.Name.LocalName == "assemblyIdentity");
+                    if (assemblyIdentity != null)
+                    {
+                        var versionAttr = assemblyIdentity.Attribute("version");
+                        if (versionAttr != null)
+                        {
+                            return $"v{versionAttr.Value}";
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // Fallback to assembly version
+            try
+            {
+                var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                return $"v{version?.Major}.{version?.Minor}.{version?.Build}.{version?.Revision}";
+            }
+            catch
+            {
+                return "v1.0.0";
             }
         }
 

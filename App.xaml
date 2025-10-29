@@ -10,21 +10,8 @@
 
             <!-- FIRST: Merged dictionaries -->
             <ResourceDictionary.MergedDictionaries>
-                <materialDesign:BundledTheme BaseTheme="Light" PrimaryColor="LightGreen" SecondaryColor="Lime" />
-                <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Light.xaml" />
-                <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Dark.xaml" />
-                <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesign3.Defaults.xaml" />
+                <ResourceDictionary Source="/Themes/MideejTheme.xaml" />
             </ResourceDictionary.MergedDictionaries>
-
-            <!-- THEN: Converters and styles -->
-            <!--<local:VolumeToHeightConverter x:Key="VolumeToHeightConverter" />-->
-
-            <Style TargetType="{x:Type Button}" BasedOn="{StaticResource MaterialDesignRaisedButton}">
-                <Setter Property="materialDesign:ButtonAssist.CornerRadius" Value="5" />
-                <Setter Property="materialDesign:RippleAssist.IsDisabled" Value="True"/>
-                <Setter Property="Focusable" Value="False"/>
-                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-            </Style>
 
         </ResourceDictionary>
     </Application.Resources>

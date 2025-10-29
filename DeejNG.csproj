@@ -10,6 +10,9 @@
     <PlatformTarget>x64</PlatformTarget>
     <Title>DeejNG</Title>
     <PackageIcon>logo.png</PackageIcon>
+    <Version>1.1.1.59</Version>
+    <AssemblyVersion>1.1.1.59</AssemblyVersion>
+    <FileVersion>1.1.1.59</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,9 +27,6 @@
 
   <ItemGroup>
     <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
-    <PackageReference Include="MaterialDesignColors" Version="5.2.1" />
-    <PackageReference Include="MaterialDesignThemes" Version="5.2.1" />
-    <PackageReference Include="MaterialDesignThemes.MahApps" Version="5.2.1" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="NAudio.Core" Version="2.2.1" />
     <PackageReference Include="NAudio.Extras" Version="2.2.1" />

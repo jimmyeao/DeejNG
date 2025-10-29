@@ -1,0 +1,28 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- Dark Theme Colors copied from Mideej -->
+  <Color x:Key="BackgroundColor">#1E1E2E</Color>
+  <Color x:Key="SurfaceColor">#2A2A3C</Color>
+  <Color x:Key="SurfaceHighlightColor">#363650</Color>
+  <Color x:Key="PrimaryColor">#3B82F6</Color>
+  <Color x:Key="PrimaryDarkColor">#2563EB</Color>
+  <Color x:Key="AccentColor">#10B981</Color>
+  <Color x:Key="TextPrimaryColor">#E5E7EB</Color>
+  <Color x:Key="TextSecondaryColor">#9CA3AF</Color>
+  <Color x:Key="BorderColor">#404050</Color>
+  <Color x:Key="ErrorColor">#EF4444</Color>
+  <Color x:Key="WarningColor">#F59E0B</Color>
+  <Color x:Key="SuccessColor">#10B981</Color>
+
+  <SolidColorBrush x:Key="BackgroundBrush" Color="{StaticResource BackgroundColor}"/>
+  <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}"/>
+  <SolidColorBrush x:Key="SurfaceHighlightBrush" Color="{StaticResource SurfaceHighlightColor}"/>
+  <SolidColorBrush x:Key="PrimaryBrush" Color="{StaticResource PrimaryColor}"/>
+  <SolidColorBrush x:Key="PrimaryDarkBrush" Color="{StaticResource PrimaryDarkColor}"/>
+  <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
+  <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}"/>
+  <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondaryColor}"/>
+  <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}"/>
+  <SolidColorBrush x:Key="ErrorBrush" Color="{StaticResource ErrorColor}"/>
+  <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}"/>
+  <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}"/>
+</ResourceDictionary>

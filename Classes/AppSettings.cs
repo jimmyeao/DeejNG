@@ -116,6 +116,11 @@ namespace DeejNG.Classes
         /// Gets or sets the text color for the overlay. Possible values: "Auto", "White", "Black".
         /// </summary>
         public string OverlayTextColor { get; set; } = "Auto"; // "Auto", "White", "Black"
+
+        /// <summary>
+        /// Gets or sets the selected theme name.
+        /// </summary>
+        public string? SelectedTheme { get; set; } = "Dark";
         #endregion Public Properties
     }
 

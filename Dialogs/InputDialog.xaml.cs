@@ -24,6 +24,14 @@ namespace DeejNG.Dialogs
             };
         }
 
+        private void TitleBar_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
+            {
+                DragMove();
+            }
+        }
+
         private void OkButton_Click(object sender, RoutedEventArgs e)
         {
             ResponseText = InputTextBox.Text?.Trim() ?? string.Empty;
