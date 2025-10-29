@@ -1,7 +1,8 @@
 ![example workflow](https://github.com/jimmyeao/DeejNG/actions/workflows/codeql.yml/badge.svg)
-# DeejNG
+# DeejNG - We've had a UI Update!
 
-<img width="667" height="501" alt="image" src="https://github.com/user-attachments/assets/e9bff8ed-f201-4a66-bcea-d858aeb5a4fa" />
+<img width="772" height="482" alt="image" src="https://github.com/user-attachments/assets/33b1a316-42a5-4dbb-a2b6-2537da202a42" />
+
 
 
 
