@@ -64,7 +64,8 @@ Add applicaiotn manually by name
 - Select from running applications, "System", "Unmapped Applications", or microphones.
 - You can select multiple targets per slider. One slider can control multiple apps or a mic.
 
-<img width="786" height="676" alt="image" src="https://github.com/user-attachments/assets/1515d3f0-0e0a-44d4-847d-8649523cd6f3" />
+
+<img width="800" height="683" alt="image" src="https://github.com/user-attachments/assets/bf9d0c45-b2f3-4423-b351-0df545778777" />
 
 
 
@@ -79,6 +80,7 @@ Add applicaiotn manually by name
 - Meters update live with peak-hold animation.
 
 ### ⚙️ Settings
+<img width="520" height="784" alt="image" src="https://github.com/user-attachments/assets/db2159a8-27be-406e-975a-9dd47f5a11c4" />
 
 Settings are saved automatically and include:
 - Assigned targets per slider
