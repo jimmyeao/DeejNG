@@ -4,319 +4,253 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DeejNG is a modern Windows audio mixer and controller built with WPF (.NET 9), NAudio, and SkiaSharp. It enables real-time control of system and application volumes using physical slider hardware (Arduino) via serial communication, featuring VU meters, mute controls, persistent target mappings, and a configurable transparent overlay.
+DeejNG is a modern audio mixer and controller for Windows built with WPF (.NET 9), NAudio, and SkiaSharp. It provides real-time control over system and application volumes using physical sliders connected via serial (e.g., Arduino), featuring VU meters, mute controls, and persistent configuration with profile support.
 
-**Companion Hardware:** https://github.com/omriharel/deej
+**Key Technologies:**
+- .NET 9 / WPF (Windows-only)
+- NAudio for audio session management
+- SkiaSharp for VU meter rendering
+- Serial port communication (System.IO.Ports)
 
-## Development Commands
+## Build & Run Commands
 
-### Build & Run
+**Build the project:**
 ```powershell
-# Build the project
 dotnet build DeejNG.sln
+```
 
-# Run the application
-dotnet run --project DeejNG.csproj
-
-# Build for release
+**Build for Release:**
+```powershell
 dotnet build DeejNG.sln -c Release
-
-# Publish single-file executable
-dotnet publish DeejNG.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
-### Testing
-This project does not currently have automated tests. Test manually by:
-1. Connecting Arduino hardware with physical sliders
-2. Verifying serial communication (9600 baud, format: `0.5|0.3|0.8|...`)
-3. Testing volume control, mute, VU meters, and overlay functionality
-
-## Architecture
-
-### Core Application Structure
-
-**Entry Point:** `App.xaml.cs`
-- Initializes `ServiceLocator` on startup for dependency injection
-- Disposes services on exit
-
-**Main Window:** `MainWindow.xaml.cs`
-- Central hub connecting all subsystems
-- Manages channel controls (sliders), serial communication, audio services, and overlay
-- Uses multiple manager classes to separate concerns
-
-### Manager Classes (Services Layer)
-
-These managers handle specific subsystem responsibilities:
-
-1. **ProfileManager** (`Services/ProfileManager.cs`)
-   - Manages multiple user profiles (e.g., "Gaming", "Streaming", "Default")
-   - Each profile contains complete application settings including COM port
-   - Handles profile creation, switching, renaming, and deletion
-   - **Migration:** Automatically migrates legacy settings.json to "Default" profile on first run
-   - Persists to `profiles.json` with active profile tracking
-   - **Critical:** `GenerateSliders()` must load from `_profileManager.GetActiveProfileSettings()`, NOT from disk
-
-2. **SerialConnectionManager** (`Services/SerialConnectionManager.cs`)
-   - Manages COM port connection lifecycle
-   - Implements watchdog for automatic reconnection
-   - Parses slider data format: `0.5|0.3|0.8|...` (pipe-delimited 0.0-1.0 values)
-   - Handles manual disconnect vs. automatic reconnect scenarios
-
-3. **AppSettingsManager** (`Services/AppSettingsManager.cs`)
-   - Works with ProfileManager to persist settings
-   - **Note:** No longer saves directly to settings.json; profiles handle persistence
-   - **Critical:** Uses fallback path strategy for Windows Server compatibility
-   - Multi-monitor overlay position persistence with screen device tracking
-   - Validates overlay positions across display configuration changes
-   - Exposes `GetSettingsPath()` for ProfileManager to determine profiles.json location
-
-4. **DeviceCacheManager** (`Services/DeviceCacheManager.cs`)
-   - Caches audio input/output devices for performance
-   - Manages NAudio `MMDevice` references
-   - Applies volume/mute to input (microphones) and output devices
-
-5. **TimerCoordinator** (`Services/TimerCoordinator.cs`)
-   - Centralizes all `DispatcherTimer` management
-   - Timers: VU meters (25ms), session cache (1s), cleanup (5min), serial reconnect (5s), watchdog (1s), position save (500ms debounce)
-   - Prevents timer leaks and ensures coordinated startup/shutdown
-
-6. **AudioService** (`Classes/AudioService.cs`)
-   - Core audio control via NAudio
-   - Session caching with LRU eviction
-   - Applies volume/mute to targets: specific apps, system, unmapped apps, current focused app
-   - Handles expired sessions and process matching
-
-### Service Locator Pattern
-
-`Core/Configuration/ServiceLocator.cs` provides manual DI:
-```csharp
-ServiceLocator.Configure();  // Register services
-var service = ServiceLocator.Get<IOverlayService>();
-ServiceLocator.Dispose();    // Cleanup
+**Run the application:**
+```powershell
+dotnet run --project DeejNG.csproj
 ```
 
-Registered services:
-- `IOverlayService` → `OverlayService`
-- `ISystemIntegrationService` → `SystemIntegrationService`
-- `IPowerManagementService` → `PowerManagementService`
+**Clean build artifacts:**
+```powershell
+dotnet clean
+```
+
+Note: This is a Windows-only WPF application targeting .NET 9. Requires Windows with audio devices and optionally Arduino hardware for physical slider control.
+
+## Architecture Overview
+
+### Core Architectural Pattern
+
+The application uses a **manager-based architecture** with manual dependency injection via `ServiceLocator` (Core/Configuration/ServiceLocator.cs). Key managers coordinate different aspects:
+
+1. **SerialConnectionManager** - Handles USB/COM port communication with hardware sliders
+2. **AppSettingsManager** - Persistent settings with fallback paths for Server OS compatibility
+3. **ProfileManager** - Multiple user profiles for different scenarios (Gaming, Streaming, etc.)
+4. **DeviceCacheManager** - Caches audio device information to reduce COM calls
+5. **TimerCoordinator** - Coordinates all application timers (VU meters, overlays, etc.)
+
+### Key Components
+
+**MainWindow (MainWindow.xaml.cs)**
+- Central hub coordinating all managers and services
+- Owns the collection of `ChannelControl` instances (sliders)
+- Manages dispatcher timers for VU meters (25ms refresh)
+- Handles audio session discovery and volume application
+
+**ChannelControl (Dialogs/ChannelControl.xaml.cs)**
+- Individual slider UI component with SkiaSharp-rendered VU meter
+- Can control multiple AudioTargets (apps, devices, system audio)
+- Features: mute toggle, input/output device switching, smoothing
+- Uses pre-calculated segment colors for performance
+
+**AudioService (Classes/AudioService.cs)**
+- Wraps NAudio API for audio session management
+- Implements session caching (5-second refresh, max 15 cached apps)
+- Handles "unmapped applications" - controls all apps not assigned to sliders
+- Distinguishes system processes from user applications
+
+**OverlayService (Core/Services/OverlayService.cs)**
+- Manages floating overlay window (FloatingOverlay) showing volume levels
+- Configurable timeout, opacity, text color, position
+- Position persistence via OverlayPositionPersistenceService
+
+### Directory Structure
+
+```
+DeejNG/
+├── MainWindow.xaml(.cs)     # Main application window
+├── App.xaml(.cs)            # Application entry point
+├── Classes/                 # Core utilities
+│   ├── AppSettings.cs       # Settings model
+│   ├── AudioService.cs      # Audio session management
+│   └── AudioUtilities.cs    # Audio helper functions
+├── Models/                  # Data models
+│   ├── AudioTarget.cs       # Represents controllable audio target
+│   ├── Profile.cs           # User profile with settings
+│   └── ThemeOption.cs       # Theme metadata
+├── Services/                # Manager classes
+│   ├── AppSettingsManager.cs       # Settings persistence
+│   ├── ProfileManager.cs           # Profile management
+│   ├── SerialConnectionManager.cs  # Serial communication
+│   ├── DeviceCacheManager.cs       # Audio device caching
+│   └── TimerCoordinator.cs         # Timer lifecycle
+├── Dialogs/                 # UI components and dialogs
+│   ├── ChannelControl.xaml(.cs)    # Slider component
+│   ├── SessionPickerDialog.xaml    # App picker
+│   ├── SettingsWindow.xaml         # Settings UI
+│   └── ...
+├── Views/                   # Additional windows
+│   └── FloatingOverlay.xaml(.cs)   # Transparent overlay
+├── Core/
+│   ├── Configuration/       # ServiceLocator for DI
+│   ├── Interfaces/          # Service interfaces
+│   ├── Services/            # Overlay, power management services
+│   └── Helpers/             # Screen position utilities
+├── Infrastructure/
+│   └── System/              # System integration (startup, registry)
+└── Themes/                  # XAML theme files
+```
 
 ### Audio Target Types
 
-**AudioTarget Model** (`Models/AudioTarget.cs`):
-- `Name`: Process name or special keyword
-- `IsInputDevice`: Microphone/input device flag
-- `IsOutputDevice`: Speaker/output device flag
+An `AudioTarget` can represent:
+1. **System Audio** - Master volume control
+2. **Application** - Specific app by executable name (e.g., "Spotify.exe")
+3. **Input Device** - Microphone/recording device
+4. **Output Device** - Speakers/headphones
+5. **Unmapped Applications** - All apps not assigned to any slider
 
-**Special Targets:**
-- `"system"`: Master system volume
-- `"unmapped"`: All applications not assigned to any slider
-- `"current"`: Currently focused window's application (uses `AudioUtilities.GetCurrentFocusTarget()`)
+Each slider (ChannelControl) can control multiple targets simultaneously.
 
-### Channel Controls
+### Serial Protocol
 
-**ChannelControl** (`Dialogs/ChannelControl.xaml.cs`):
-- Represents a single slider channel with VU meter, mute button, and target label
-- Supports multiple targets per channel (one slider controls multiple apps)
-- Events: `VolumeOrMuteChanged`, `TargetChanged`, `SessionDisconnected`
-- Double-click opens target picker dialog
-
-**Target Assignment:**
-- Double-click slider → `SessionPickerDialog` or `MultiTargetPickerDialog`
-- Shows running apps, system, unmapped, input/output devices
-- Multi-select support for controlling multiple targets per slider
-
-### Overlay System
-
-**FloatingOverlay** (`Views/FloatingOverlay.xaml`):
-- Transparent, topmost, draggable window showing volume levels
-- Multi-monitor support with position persistence
-- Configurable timeout (auto-hide) or always-on mode
-- Text color auto-detection based on background brightness
-
-**Position Management:**
-- `OverlayService` (`Core/Services/OverlayService.cs`): Core overlay logic
-- `ScreenPositionManager` (`Core/Helpers/ScreenPositionManager.cs`): Multi-monitor validation
-- Saves screen device name + bounds to detect monitor removal/rearrangement
-
-### Power Management
-
-**PowerManagementService** (`Core/Services/PowerManagementService.cs`):
-- Monitors system suspend/resume events via `SystemEvents`
-- **Suspend:** Saves settings, stops timers, hides overlay
-- **Resume:** Refreshes audio devices, restarts timers, reconnects serial
-- **Important:** Uses background priority for dispatcher operations to prevent focus stealing
-
-### Event Handling Pattern
-
-Audio session events use a decoupled handler to avoid COM reference issues:
-
-```csharp
-public class DecoupledAudioSessionEventsHandler : IAudioSessionEventsHandler
-{
-    private readonly MainWindow _mainWindow;
-    private readonly string _targetName;
-
-    public void OnSessionDisconnected(AudioSessionDisconnectReason reason)
-    {
-        // Notify MainWindow without holding COM references
-        _mainWindow.HandleSessionDisconnected(_targetName);
-    }
-}
+Hardware sends slider values as pipe-delimited floats (0.0-1.0):
 ```
-
-Handlers registered in `SyncMuteStates()` and cleaned up when targets change.
-
-## Important Implementation Details
-
-### Profile System Architecture
-**File:** `profiles.json` stored in same directory as legacy settings.json
-- Each profile contains: name, settings (AppSettings), created/modified timestamps
-- Active profile name tracked in ProfileCollection
-- **Migration on first run:** Loads legacy settings.json → creates "Default" profile → backs up old file
-- **Critical Bug Prevention:** Always load settings from `_profileManager.GetActiveProfileSettings()`, NEVER from `_settingsManager.LoadSettingsFromDisk()`
-- Profile switching flow:
-  1. Save current profile settings (`SaveSettings()`)
-  2. Switch active profile (`_profileManager.SwitchToProfile()`)
-  3. Reload UI from new profile (`LoadSettingsWithoutSerialConnection()`)
-  4. Regenerate sliders with new targets (`GenerateSliders()`)
-
-**UI Components:**
-- `InputDialog` - Material Design themed input for profile names (respects light/dark theme)
-- `ConfirmationDialog` - Material Design themed confirmations (ShowYesNo, ShowYesNoCancel, ShowOK)
-- Profile selector in MainWindow with New/Rename/Delete buttons
-
-### Serial Data Processing
-- Hardware sends slider values as `0.0-1.023` (10-bit ADC mapped to 0-1023)
-- Deadzone: Values ≤10 → 0, values ≥1013 → 1023
-- Invert slider option: `level = 1.0 - level`
-- Smoothing can be disabled for immediate response
-
-### Initialization Sequence
-1. App starts, `ServiceLocator.Configure()` registers services
-2. `MainWindow` constructor:
-   - Initializes managers (settings, serial, device, timer, overlay)
-   - Loads settings (without auto-connecting serial)
-   - Generates sliders from saved settings
-   - Subscribes to power management events
-   - Starts timers (meters, session cache, watchdog, cleanup)
-   - **Critical:** `_allowVolumeApplication = false` until first serial data received
-3. First serial data triggers:
-   - `_allowVolumeApplication = true`
-   - `SyncMuteStates()` to sync with Windows audio state
-   - Meter timer starts
-4. MainWindow fully operational
-
-### Volume Application Flow
+0.5|0.3|0.8|1.0|0.0
 ```
-Serial data → HandleSliderData()
-          → ChannelControl.SmoothAndSetVolume()
-          → VolumeOrMuteChanged event
-          → ApplyVolumeToTargets()
-          → AudioService.ApplyVolumeToTarget() or DeviceCacheManager methods
-```
+Number of values determines slider count. SerialConnectionManager parses this and raises DataReceived events.
 
-### Mute State Synchronization
-`SyncMuteStates()` (called on first data, after resume):
-1. Gets all audio sessions from `AudioSessionManager`
-2. Registers `DecoupledAudioSessionEventsHandler` for each mapped target
-3. Reads current mute state from Windows and applies to channel controls
-4. Ensures bidirectional sync (hardware ↔ Windows)
+### VU Meter Implementation
 
-### Session Caching Strategy
-- **Session ID Cache** (`_sessionIdCache` in MainWindow): Maps session IDs to `AudioSessionControl` for meter updates
-- **AudioService Cache** (`_sessionCache`): Groups sessions by process name, LRU eviction, stale session removal
-- Refresh intervals: Session cache (1s), device cache (5s), forced cleanup (5min)
+- SkiaSharp-based rendering with 20 segments (green → yellow → red)
+- 25ms refresh rate via DispatcherTimer
+- Peak hold with decay animation
+- Smoothing factor: 0.3 for gradual level changes
+- Optimized with cached SKPaint objects and pre-calculated colors
+
+### Session Management & Caching
+
+**AudioService session cache:**
+- Refreshes every 5 seconds
+- Caches up to 15 most recently accessed apps
+- Key: application name (case-insensitive)
+- Value: List of SessionInfo with process IDs
+
+**Performance optimizations:**
+- Device caching to reduce NAudio COM calls
+- Reusable collections (_tempTargetList, _tempStringSet)
+- Throttled unmapped application updates (100ms)
+- Smart session refresh only when needed
 
 ### Settings Persistence
-**New Architecture (Post-Profile System):**
-- **Primary:** `profiles.json` - Contains all profiles and active profile name
-- **Legacy:** `settings.json` - Only used for migration, then backed up to `settings.json.backup`
 
-**File Location (with fallback):**
-1. `%LocalAppData%\DeejNG\profiles.json` (preferred)
-2. `%AppData%\DeejNG\profiles.json` (roaming fallback)
-3. `%UserProfile%\Documents\DeejNG\profiles.json` (documents fallback)
-4. `<app directory>\profiles.json` (last resort)
+Settings stored in JSON format with multiple fallback paths for Server OS compatibility:
+1. `%LocalAppData%\DeejNG\settings.json` (preferred)
+2. `%AppData%\DeejNG\settings.json` (fallback)
+3. Application directory (last resort)
 
-**Each Profile Contains:**
-- Profile name (e.g., "Gaming", "Streaming", "Default")
-- Slider targets per channel
-- Theme (light/dark)
-- Slider inversion, smoothing, VU meters
-- Start on boot, start minimized
-- Overlay: enabled, position (X/Y), screen device, bounds, opacity, timeout, text color
-- **COM port name** (different COM ports per profile)
+Profiles stored in `profiles.json` in the same directory. All saves are throttled to prevent excessive disk I/O.
 
-**Important:** Settings save uses explicit flush (`FileStream.Flush(true)`) for Windows Server compatibility.
+### Theme System
 
-## Common Tasks
+Themes are XAML ResourceDictionary files in Themes/ directory:
+- DarkTheme.xaml, LightTheme.xaml (default pair)
+- Additional themes: Arctic, Cyberpunk, Dracula, Forest, Nord, Ocean, Fluent, Mideej
 
-### Adding a New Manager/Service
-1. Create interface in `Core/Interfaces/`
+Switched dynamically via App.xaml.cs resource merging.
+
+## Common Development Patterns
+
+### Adding a New Manager Service
+
+1. Create interface in `Core/Interfaces/` (e.g., INewService.cs)
 2. Implement in `Core/Services/` or `Services/`
-3. Register in `ServiceLocator.Configure()`
-4. Inject via `ServiceLocator.Get<T>()` in MainWindow
+3. Register in `ServiceLocator.Configure()` or inject via constructor in MainWindow
+4. For MainWindow-level managers, add as readonly field and initialize in constructor
 
-### Adding a New Timer
-Use `TimerCoordinator`:
-```csharp
-_timerCoordinator.InitializeTimers(); // Create
-_timerCoordinator.MyNewTimer += MyHandler; // Subscribe
-_timerCoordinator.StartMyTimer(); // Start
-_timerCoordinator.StopMyTimer(); // Stop
-```
+### Modifying Audio Session Logic
 
-### Modifying Audio Target Behavior
-- For new target types: Update `ApplyVolumeToTargets()` in MainWindow
-- For audio control logic: Modify `AudioService` methods
-- For special device handling: Extend `DeviceCacheManager`
+- All session enumeration goes through `AudioService`
+- Use `GetAllSessions()` for app discovery
+- Use cached sessions when possible (check `_sessionCache`)
+- System processes (PID 0, 4, 8) are filtered out
+- Always handle disposed sessions (NAudio throws COMException)
 
-### Debugging Serial Issues
-- Check `[Serial]` debug output for connection status
-- Watchdog logs `[SerialWatchdog]` every 1s if no data received
-- Verify data format: `float|float|float|...` (pipe-delimited)
-- Manual disconnect prevents auto-reconnect (check `_manualDisconnect` flag)
+### Working with Profiles
 
-### Working with Overlay
-- Position changes trigger debounced save (500ms) via `TimerCoordinator`
-- Multi-monitor: Screen device + bounds saved to detect configuration changes
-- `ScreenPositionManager.ValidateAndCorrectPosition()` adjusts position if monitor removed
-- Overlay focus prevention: Uses `DispatcherPriority.Background` and checks `Window.IsActive`
+- Profiles are managed by `ProfileManager`
+- Each profile contains a complete `AppSettings` snapshot
+- Switching profiles triggers `ProfileChanged` event
+- MainWindow subscribes to reload all settings
 
-## Key Dependencies
+### Dispatcher Timer Best Practices
 
-- **NAudio (2.2.1)**: Core audio control, `MMDevice`, `AudioSessionManager`
-- **SkiaSharp (2.88.9)**: VU meter rendering with smooth animations
-- **MaterialDesign**: UI theme framework
-- **System.IO.Ports (9.0.7)**: Serial communication
+- All timers coordinated through `TimerCoordinator`
+- VU meter timer runs at 25ms for smooth animation
+- Device cache refresh is less frequent (varies by usage)
+- Always check `_isClosing` before timer operations
 
-## Known Considerations
+### Serial Communication Changes
 
-- **COM Threading:** NAudio objects are apartment-threaded; use `Dispatcher.Invoke()` for UI updates
-- **Session Expiration:** Audio sessions can expire; handlers must be resilient
-- **Serial Reconnect:** Automatic unless user clicks "Disconnect" (sets `_manualDisconnect`)
-- **Overlay Focus Stealing:** Mitigated by checking window state before showing overlay
-- **Windows Server Compatibility:** Settings path fallback handles restricted write permissions
-- **Multi-Monitor:** Overlay position validated on startup; corrects if monitor configuration changed
+- SerialConnectionManager handles reconnection logic
+- Watchdog monitors for silent connections (5s threshold)
+- DataReceived event fires with complete lines (not partial)
+- Leftover buffer prevents message truncation
 
-## Troubleshooting
+## Important Implementation Notes
 
-**No audio control:**
-- Check `_allowVolumeApplication` flag (should be true after first serial data)
-- Verify `SyncMuteStates()` completed successfully
-- Check session cache: `[AudioService] Cache refreshed: X sessions in Y apps`
+### Audio Session Lifetime
 
-**Overlay not persisting position:**
-- Verify settings save with `[Settings] ✓ SAVED and VERIFIED` log
-- Check multi-monitor setup: Screen device and bounds should be saved
-- Validate `OverlayService.PositionChanged` event fires
+NAudio audio sessions can expire or become invalid. Always:
+- Wrap session access in try-catch for COMException
+- Check session state before accessing properties
+- Re-enumerate sessions periodically (not on every operation)
+- Use session instance IDs for stable identification
 
-**Serial connection issues:**
-- Check available ports: `[Ports] Found N ports: [...]`
-- Watchdog logs indicate data flow status
-- Manual disconnect prevents reconnect until user re-enables
+### WPF Threading
 
-**Settings not saving (Server OS):**
-- Check `[Settings] Path not writable` logs
-- Fallback path should be selected automatically
-- Run `GetDiagnosticInfo()` for detailed path analysis
+- Audio operations happen on background threads
+- UI updates require `Dispatcher.Invoke` or `Dispatcher.BeginInvoke`
+- ChannelControl updates are dispatcher-marshalled
+- Settings saves are async to prevent UI blocking
+
+### Memory Management
+
+- Dispose NAudio objects (MMDeviceEnumerator, AudioSessionControl) properly
+- ServiceLocator.Dispose() called on shutdown
+- Unregister event handlers to prevent memory leaks
+- TimerCoordinator stops all timers on disposal
+
+### Performance Considerations
+
+- Session enumeration is expensive - cache results
+- VU meter rendering is GPU-accelerated (SkiaSharp)
+- Smoothing can be disabled per-channel for responsiveness
+- Device queries are throttled to reduce COM overhead
+
+## Known Constraints & Design Decisions
+
+1. **Windows-only** - Uses WPF and NAudio (WASAPI)
+2. **Single instance** - No multi-instance support
+3. **Serial dependency** - Requires hardware for full functionality (but can run without)
+4. **Manual DI** - Uses ServiceLocator pattern instead of full DI container
+5. **File-based persistence** - No database, uses JSON files
+6. **25ms timer resolution** - Balance between smoothness and CPU usage
+7. **Session cache TTL** - 5 seconds to balance freshness vs performance
+
+## Debugging Tips
+
+- `#if DEBUG` blocks throughout codebase provide verbose logging
+- Check Debug output for serial communication issues
+- AppSettingsManager logs fallback path selection
+- Session cache hits tracked in `_sessionCacheHitCount`
+- Timer coordinator logs timer lifecycle events

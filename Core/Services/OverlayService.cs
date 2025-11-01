@@ -62,7 +62,8 @@ namespace DeejNG.Core.Services
             _lastVolumeUpdate = DateTime.Now;
 
             // Skip if nothing materially changed to reduce draw workload
-            if (IsSame(volumes, _lastVolumes) && IsSame(labels, _lastLabels))
+            // BUT: Don't skip if overlay is currently hidden - we need to re-show it
+            if (IsSame(volumes, _lastVolumes) && IsSame(labels, _lastLabels) && IsVisible)
             {
                 return;
             }
