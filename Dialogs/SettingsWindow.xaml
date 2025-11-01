@@ -16,7 +16,7 @@
     <Window.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <ResourceDictionary Source="/Themes/MideejTheme.xaml" />
+                <ResourceDictionary Source="/Themes/Styles.xaml" />
             </ResourceDictionary.MergedDictionaries>
             <shell:WindowChrome x:Key="Chrome" CaptionHeight="0" CornerRadius="8,8,8,8" ResizeBorderThickness="0" GlassFrameThickness="0" UseAeroCaptionButtons="False" />
         </ResourceDictionary>

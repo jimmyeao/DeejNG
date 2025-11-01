@@ -19,6 +19,8 @@ namespace DeejNG.Core.Services
         private DateTime _lastVolumeUpdate = DateTime.MinValue;
         private bool _disposed = false;
         private MainWindow _parentWindow;
+        private List<float> _lastVolumes = new();
+        private List<string> _lastLabels = new();
         
         // Properties
         public bool IsEnabled { get; set; } = true;
@@ -59,6 +61,15 @@ namespace DeejNG.Core.Services
             }
             _lastVolumeUpdate = DateTime.Now;
 
+            // Skip if nothing materially changed to reduce draw workload
+            // BUT: Don't skip if overlay is currently hidden - we need to re-show it
+            if (IsSame(volumes, _lastVolumes) && IsSame(labels, _lastLabels) && IsVisible)
+            {
+                return;
+            }
+            _lastVolumes = new List<float>(volumes);
+            _lastLabels = labels != null ? new List<string>(labels) : new List<string>();
+
             // Ensure we're on the UI thread
             if (!Application.Current.Dispatcher.CheckAccess())
             {
@@ -75,6 +86,29 @@ namespace DeejNG.Core.Services
                     _overlay.ShowVolumes(volumes, labels ?? GenerateDefaultLabels(volumes.Count));
                 }
             }
+        }
+
+        private bool IsSame(List<float> a, List<float> b)
+        {
+            if (a == null || b == null) return false;
+            if (a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+            {
+                if (Math.Abs(a[i] - b[i]) > 0.005f) return false; // small tolerance
+            }
+            return true;
+        }
+
+        private bool IsSame(List<string> a, List<string> b)
+        {
+            if (a == null && b == null) return true;
+            if (a == null || b == null) return false;
+            if (a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+            {
+                if (!string.Equals(a[i], b[i], StringComparison.Ordinal)) return false;
+            }
+            return true;
         }
 
         public void HideOverlay()

@@ -307,6 +307,7 @@ namespace DeejNG.Dialogs
 
         /// <summary>
         /// Applies changes to the overlay opacity slider.
+        /// Auto-shows the overlay so users can see the effect of opacity changes in real-time.
         /// </summary>
         private void OpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
@@ -315,6 +316,12 @@ namespace DeejNG.Dialogs
             PreserveOverlayPosition();
             _settings.OverlayOpacity = e.NewValue;
             ApplySettingsToOverlay();
+
+            // Auto-show overlay when opacity is being adjusted so user can see the effect
+            if (_settings.OverlayEnabled)
+            {
+                ShowOverlayImmediately();
+            }
         }
 
         /// <summary>

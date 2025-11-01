@@ -17,6 +17,11 @@ namespace DeejNG.Services
         private DateTime _lastDeviceCacheTime = DateTime.MinValue;
         private readonly object _cacheLock = new object();
 
+        // Backoff handling to avoid repeated work on removed devices
+        private readonly Dictionary<string, DateTime> _inputBackoffUntil = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, DateTime> _outputBackoffUntil = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan RemovalBackoff = TimeSpan.FromSeconds(5);
+
         public DeviceCacheManager()
         {
             BuildInputDeviceCache();
@@ -26,6 +31,10 @@ namespace DeejNG.Services
         public MMDevice GetInputDevice(string deviceName)
         {
             var key = deviceName.ToLowerInvariant();
+
+            // Respect backoff window
+            if (_inputBackoffUntil.TryGetValue(key, out var until) && DateTime.Now < until)
+                return null;
 
             // First check: Quick cache lookup
             lock (_cacheLock)
@@ -58,6 +67,10 @@ namespace DeejNG.Services
         {
             var key = deviceName.ToLowerInvariant();
 
+            // Respect backoff window
+            if (_outputBackoffUntil.TryGetValue(key, out var until) && DateTime.Now < until)
+                return null;
+
             // First check: Quick cache lookup
             lock (_cacheLock)
             {
@@ -87,7 +100,11 @@ namespace DeejNG.Services
 
         public void ApplyInputDeviceVolume(string deviceName, float level, bool isMuted)
         {
-            if (!_inputDeviceMap.TryGetValue(deviceName.ToLowerInvariant(), out var mic))
+            var key = deviceName.ToLowerInvariant();
+            if (_inputBackoffUntil.TryGetValue(key, out var until) && DateTime.Now < until)
+                return;
+
+            if (!_inputDeviceMap.TryGetValue(key, out var mic))
             {
                 mic = GetInputDevice(deviceName);
             }
@@ -112,6 +129,7 @@ namespace DeejNG.Services
                         Debug.WriteLine($"[ERROR] Setting input device volume for '{deviceName}': {ex.Message}");
 #endif
                         RemoveInputDevice(deviceName);
+                        _inputBackoffUntil[key] = DateTime.Now + RemovalBackoff;
                     }
                 }
             }
@@ -119,7 +137,11 @@ namespace DeejNG.Services
 
         public void ApplyOutputDeviceVolume(string deviceName, float level, bool isMuted)
         {
-            if (!_outputDeviceMap.TryGetValue(deviceName.ToLowerInvariant(), out var spkr))
+            var key = deviceName.ToLowerInvariant();
+            if (_outputBackoffUntil.TryGetValue(key, out var until) && DateTime.Now < until)
+                return;
+
+            if (!_outputDeviceMap.TryGetValue(key, out var spkr))
             {
                 spkr = GetOutputDevice(deviceName);
             }
@@ -137,7 +159,61 @@ namespace DeejNG.Services
                     Debug.WriteLine($"[ERROR] Setting output device volume for '{deviceName}': {ex.Message}");
 #endif
                     RemoveOutputDevice(deviceName);
+                    _outputBackoffUntil[key] = DateTime.Now + RemovalBackoff;
                 }
+            }
+        }
+
+        // NEW: Safe helpers for meter reads to avoid repeated exceptions on unplugged devices
+        public bool TryGetInputPeak(string deviceName, out float peak, out bool isMuted)
+        {
+            peak = 0f;
+            isMuted = true;
+            var dev = GetInputDevice(deviceName);
+            if (dev == null) return false;
+            try
+            {
+                peak = dev.AudioMeterInformation.MasterPeakValue;
+                isMuted = dev.AudioEndpointVolume.Mute;
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                RemoveInputDevice(deviceName);
+                _inputBackoffUntil[deviceName.ToLowerInvariant()] = DateTime.Now + RemovalBackoff;
+                return false;
+            }
+            catch (Exception)
+            {
+                RemoveInputDevice(deviceName);
+                _inputBackoffUntil[deviceName.ToLowerInvariant()] = DateTime.Now + RemovalBackoff;
+                return false;
+            }
+        }
+
+        public bool TryGetOutputPeak(string deviceName, out float peak, out bool isMuted)
+        {
+            peak = 0f;
+            isMuted = true;
+            var dev = GetOutputDevice(deviceName);
+            if (dev == null) return false;
+            try
+            {
+                peak = dev.AudioMeterInformation.MasterPeakValue;
+                isMuted = dev.AudioEndpointVolume.Mute;
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                RemoveOutputDevice(deviceName);
+                _outputBackoffUntil[deviceName.ToLowerInvariant()] = DateTime.Now + RemovalBackoff;
+                return false;
+            }
+            catch (Exception)
+            {
+                RemoveOutputDevice(deviceName);
+                _outputBackoffUntil[deviceName.ToLowerInvariant()] = DateTime.Now + RemovalBackoff;
+                return false;
             }
         }
 
@@ -150,6 +226,8 @@ namespace DeejNG.Services
                     _inputDeviceMap.Clear();
                     _outputDeviceMap.Clear();
                     _lastInputVolume.Clear(); // Clear the volume cache too
+                    _inputBackoffUntil.Clear();
+                    _outputBackoffUntil.Clear();
                     BuildInputDeviceCache();
                     BuildOutputDeviceCache();
                     _lastDeviceCacheTime = DateTime.Now;
@@ -243,6 +321,8 @@ namespace DeejNG.Services
             _inputDeviceMap.Clear();
             _outputDeviceMap.Clear();
             _lastInputVolume.Clear();
+            _inputBackoffUntil.Clear();
+            _outputBackoffUntil.Clear();
         }
     }
 }

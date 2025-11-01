@@ -90,7 +90,8 @@ namespace DeejNG
         public MainWindow()
         {
             _isInitializing = true;
-            RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
+            // Use default render mode (hardware accelerated when available) for smoother UI
+            RenderOptions.ProcessRenderMode = RenderMode.Default;
             InitializeComponent();
             Loaded += MainWindow_Loaded;
 
@@ -2091,7 +2092,10 @@ namespace DeejNG
                     _lastDeviceCacheTime = DateTime.Now;
                 }
 
-                // Get sessions very frequently for real-time response
+                if (_cachedAudioDevice == null)
+                    return;
+
+                // Get sessions frequently for real-time response
                 SessionCollection sessions = null;
                 if ((DateTime.Now - _lastMeterSessionRefresh).TotalMilliseconds > 50)
                 {
@@ -2126,30 +2130,18 @@ namespace DeejNG
                             {
                                 if (target.IsInputDevice)
                                 {
-                                    var device = _deviceManager.GetInputDevice(target.Name);
-                                    if (device != null)
+                                    if (_deviceManager.TryGetInputPeak(target.Name, out var peak, out var muted))
                                     {
-                                        try
-                                        {
-                                            float peak = device.AudioMeterInformation.MasterPeakValue;
-                                            if (peak > highestPeak) highestPeak = peak;
-                                            if (!device.AudioEndpointVolume.Mute) allMuted = false;
-                                        }
-                                        catch (ArgumentException) { }
+                                        if (peak > highestPeak) highestPeak = peak;
+                                        if (!muted) allMuted = false;
                                     }
                                 }
                                 else if (target.IsOutputDevice)
                                 {
-                                    var device = _deviceManager.GetOutputDevice(target.Name);
-                                    if (device != null)
+                                    if (_deviceManager.TryGetOutputPeak(target.Name, out var peak, out var muted))
                                     {
-                                        try
-                                        {
-                                            float peak = device.AudioMeterInformation.MasterPeakValue;
-                                            if (peak > highestPeak) highestPeak = peak;
-                                            if (!device.AudioEndpointVolume.Mute) allMuted = false;
-                                        }
-                                        catch (ArgumentException) { }
+                                        if (peak > highestPeak) highestPeak = peak;
+                                        if (!muted) allMuted = false;
                                     }
                                 }
                                 else if (string.Equals(target.Name, "system", StringComparison.OrdinalIgnoreCase))
@@ -2725,6 +2717,7 @@ namespace DeejNG
         }
 
         #endregion Public Classes
+    
     }
 
     internal static class IconHandler

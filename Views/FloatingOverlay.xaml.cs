@@ -51,6 +51,7 @@ namespace DeejNG.Views
         private double _initialY = 0;
         private bool _hasAppliedInitialPosition = false;
         private bool _isInitializing = true;
+        private bool _persistentInfoLogged = false; // gate persistent display log
         // Win32 API imports
         [DllImport("user32.dll")]
         private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
@@ -181,11 +182,16 @@ namespace DeejNG.Views
             {
                 _autoCloseTimer.Stop();
                 _autoCloseTimer.Start();
+                _persistentInfoLogged = false; // reset gate in timed mode
                 Debug.WriteLine($"[Overlay] Auto-close timer restarted ({_autoCloseTimer.Interval.TotalSeconds}s)");
             }
             else if (this.IsVisible)
             {
-                Debug.WriteLine("[Overlay] No auto-close timer (persistent display)");
+                if (!_persistentInfoLogged)
+                {
+                    Debug.WriteLine("[Overlay] No auto-close timer (persistent display)");
+                    _persistentInfoLogged = true;
+                }
             }
         }
         /// <summary>
@@ -270,6 +276,7 @@ namespace DeejNG.Views
             {
                 // Don't call base.Show() as it can steal focus
                 this.Visibility = Visibility.Visible;
+                _persistentInfoLogged = false; // reset when showing
 
                 // If you need to ensure it's topmost, do it without activation
                 if (this.IsLoaded)
@@ -292,6 +299,7 @@ namespace DeejNG.Views
             try
             {
                 this.Visibility = Visibility.Collapsed;
+                _persistentInfoLogged = false; // reset when hiding
             }
             catch (Exception ex)
             {
