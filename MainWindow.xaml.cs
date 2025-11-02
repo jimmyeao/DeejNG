@@ -708,7 +708,13 @@ namespace DeejNG
                 new ThemeOption("Forest", "Forest", "🌲", "/Themes/ForestTheme.xaml"),
                 new ThemeOption("Nord", "Nord", "🌌", "/Themes/NordTheme.xaml"),
                 new ThemeOption("Ocean", "Ocean", "🌊", "/Themes/OceanTheme.xaml"),
-                new ThemeOption("Sunset", "Sunset", "🌅", "/Themes/SunsetTheme.xaml")
+                new ThemeOption("Sunset", "Sunset", "🌅", "/Themes/SunsetTheme.xaml"),
+                new	ThemeOption("Halloween", "Halloween", "🎃", "/Themes/HalloweenTheme.xaml"),
+                new	ThemeOption("Christmas", "Christmas", "🎄", "/Themes/ChristmasTheme.xaml"),
+                new	ThemeOption("Diwali", "Diwali", "🪔", "/Themes/DiwaliTheme.xaml"),
+                new	ThemeOption("Hanukkah", "Hanukkah", "🕎", "/Themes/HanukkahTheme.xaml"),
+                new	ThemeOption("Eid", "Eid", "🌙", "/Themes/EidTheme.xaml"),
+                new	ThemeOption("LunarNewYear", "Lunar New Year", "🧧", "/Themes/LunarNewYearTheme.xaml")
             };
 
             ThemeSelector.ItemsSource = themes;
