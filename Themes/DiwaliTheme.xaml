@@ -1,0 +1,29 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <!-- Diwali Theme Colors (opaque) -->
+ <Color x:Key="BackgroundColor">#1B1330</Color>
+ <Color x:Key="SurfaceColor">#251A3F</Color>
+ <Color x:Key="SurfaceHighlightColor">#2F2152</Color>
+ <Color x:Key="PrimaryColor">#FFC107</Color>
+ <Color x:Key="PrimaryDarkColor">#FFA000</Color>
+ <Color x:Key="AccentColor">#E040FB</Color>
+ <Color x:Key="TextPrimaryColor">#FFFDE7</Color>
+ <Color x:Key="TextSecondaryColor">#D1C4E9</Color>
+ <Color x:Key="BorderColor">#4A3F6B</Color>
+ <Color x:Key="ErrorColor">#E57373</Color>
+ <Color x:Key="WarningColor">#FFB300</Color>
+ <Color x:Key="SuccessColor">#81C784</Color>
+
+ <SolidColorBrush x:Key="BackgroundBrush" Color="{StaticResource BackgroundColor}"/>
+ <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}"/>
+ <SolidColorBrush x:Key="SurfaceHighlightBrush" Color="{StaticResource SurfaceHighlightColor}"/>
+ <SolidColorBrush x:Key="PrimaryBrush" Color="{StaticResource PrimaryColor}"/>
+ <SolidColorBrush x:Key="PrimaryDarkBrush" Color="{StaticResource PrimaryDarkColor}"/>
+ <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
+ <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}"/>
+ <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondaryColor}"/>
+ <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}"/>
+ <SolidColorBrush x:Key="ErrorBrush" Color="{StaticResource ErrorColor}"/>
+ <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}"/>
+ <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}"/>
+</ResourceDictionary>

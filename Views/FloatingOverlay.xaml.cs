@@ -322,53 +322,20 @@ namespace DeejNG.Views
         {
             base.OnSourceInitialized(e);
             this.LocationChanged += Window_LocationChanged;
-            try
-            {
-                var helper = new WindowInteropHelper(this);
-                IntPtr hwnd = helper.Handle;
 
-                // Minimal Win32 fix - just prevent activation
-                int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-                exStyle |= WS_EX_NOACTIVATE;
-                SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+            Dispatcher.InvokeAsync(() =>
+            {
+                if (!_hasAppliedInitialPosition && (_initialX != 0 || _initialY != 0))
+                {
+                    Debug.WriteLine($"[Overlay] Deferred apply initial position X={_initialX}, Y={_initialY}");
+                    SetPrecisePosition(_initialX, _initialY);
+                    _hasAppliedInitialPosition = true;
+                }
 
-#if DEBUG
-                Debug.WriteLine("[Overlay] Applied WS_EX_NOACTIVATE");
-#endif
-            }
-            catch (Exception ex)
-            {
-#if DEBUG
-                Debug.WriteLine($"[Overlay] Error setting window styles: {ex.Message}");
-#endif
-            }
-            
-            // CRITICAL FIX: Apply the initial position NOW, after window is fully initialized
-            // This ensures the position sticks even when starting minimized
-            if (!_hasAppliedInitialPosition && (_initialX != 0 || _initialY != 0))
-            {
-#if DEBUG
-                Debug.WriteLine($"[Overlay] OnSourceInitialized: Applying initial position X={_initialX}, Y={_initialY}");
-#endif
-                SetPrecisePosition(_initialX, _initialY);
-                _hasAppliedInitialPosition = true;
-#if DEBUG
-                Debug.WriteLine($"[Overlay] OnSourceInitialized: Position applied successfully. Window: Left={this.Left}, Top={this.Top}");
-#endif
-            }
-            else
-            {
-#if DEBUG
-                Debug.WriteLine($"[Overlay] OnSourceInitialized: Skipping position application (already applied: {_hasAppliedInitialPosition}, initial: {_initialX}, {_initialY})");
-#endif
-            }
-            
-            // CRITICAL: Clear initialization flag to allow position updates from now on
-            _isInitializing = false;
-#if DEBUG
-            Debug.WriteLine("[Overlay] Initialization complete - position updates now enabled");
-#endif
+                _isInitializing = false;
+            }, DispatcherPriority.ApplicationIdle);
         }
+
 
         #endregion Protected Methods
 
