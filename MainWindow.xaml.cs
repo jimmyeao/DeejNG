@@ -2736,7 +2736,7 @@ namespace DeejNG
             {
                 if (File.Exists(IconPath))
                 {
-                    var uninstallKey = Registry.CurrentUser.OpenSubKey(@"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall", writable: true);
+                    var uninstallKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall", writable: true);
                     if (uninstallKey != null)
                     {
                         foreach (var subKeyName in uninstallKey.GetSubKeyNames())
