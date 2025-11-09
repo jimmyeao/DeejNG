@@ -1,9 +1,14 @@
 ﻿using DeejNG.Classes;
+using DeejNG.Models;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 
 namespace DeejNG.Dialogs
 {
@@ -23,6 +28,9 @@ namespace DeejNG.Dialogs
 
         // Current instance of the settings object
         private AppSettings _settings;
+
+        // Button mappings collection for UI binding
+        private ObservableCollection<ButtonMappingViewModel> _buttonMappings = new();
 
         #endregion
 
@@ -90,6 +98,15 @@ namespace DeejNG.Dialogs
 
             // Wire COM port selection changes
             SettingComPortSelector.SelectionChanged += SettingComPortSelector_SelectionChanged;
+
+            // Initialize button configuration after window loads
+            this.Loaded += SettingsWindow_Loaded;
+        }
+
+        private void SettingsWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            // Load button configuration after all controls are initialized
+            LoadButtonConfiguration();
         }
 
         #endregion
@@ -375,6 +392,9 @@ namespace DeejNG.Dialogs
             // Save selected overlay text color (e.g., Auto, White, Black)
             _settings.OverlayTextColor = GetTextColorFromSelection();
 
+            // Save button configuration
+            SaveButtonConfiguration();
+
             try
             {
 #if DEBUG
@@ -481,5 +501,208 @@ namespace DeejNG.Dialogs
         {
             Close();
         }
+
+        #region Button Configuration
+
+        /// <summary>
+        /// Loads button configuration from settings and initializes UI.
+        /// </summary>
+        private void LoadButtonConfiguration()
+        {
+            try
+            {
+                int numberOfButtons = _settings?.NumberOfButtons ?? 0;
+
+                if (NumberOfButtonsTextBox != null)
+                {
+                    NumberOfButtonsTextBox.Text = numberOfButtons.ToString();
+                }
+
+                UpdateButtonMappings(numberOfButtons);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ERROR] LoadButtonConfiguration: {ex.Message}");
+                // Initialize with defaults if something goes wrong
+                if (NumberOfButtonsTextBox != null)
+                {
+                    NumberOfButtonsTextBox.Text = "0";
+                }
+            }
+        }
+
+        /// <summary>
+        /// Updates the button mappings collection based on the number of buttons.
+        /// </summary>
+        private void UpdateButtonMappings(int count)
+        {
+            _buttonMappings.Clear();
+
+            for (int i = 0; i < count; i++)
+            {
+                var existingMapping = _settings.ButtonMappings?.FirstOrDefault(m => m.ButtonIndex == i);
+
+                var viewModel = new ButtonMappingViewModel
+                {
+                    ButtonIndex = i,
+                    Action = existingMapping?.Action ?? ButtonAction.None,
+                    TargetChannelIndex = existingMapping?.TargetChannelIndex ?? -1
+                };
+
+                _buttonMappings.Add(viewModel);
+            }
+
+            // Only set ItemsSource if the control is initialized
+            if (ButtonMappingsItemsControl != null)
+            {
+                ButtonMappingsItemsControl.ItemsSource = _buttonMappings;
+            }
+        }
+
+        /// <summary>
+        /// Handles changes to the number of buttons text box.
+        /// </summary>
+        private void NumberOfButtons_Changed(object sender, TextChangedEventArgs e)
+        {
+            if (int.TryParse(NumberOfButtonsTextBox.Text, out int count))
+            {
+                count = Math.Clamp(count, 0, 8);
+                UpdateButtonMappings(count);
+            }
+        }
+
+        /// <summary>
+        /// Handles button action selection changes to enable/disable channel selector.
+        /// </summary>
+        private void ButtonAction_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            // The binding handles this automatically via NeedsTargetChannel property
+        }
+
+        /// <summary>
+        /// Validates that only numbers can be entered in numeric text boxes.
+        /// </summary>
+        private void NumberValidationTextBox(object sender, TextCompositionEventArgs e)
+        {
+            Regex regex = new Regex("[^0-9]+");
+            e.Handled = regex.IsMatch(e.Text);
+        }
+
+        /// <summary>
+        /// Saves button configuration to settings.
+        /// </summary>
+        private void SaveButtonConfiguration()
+        {
+            if (int.TryParse(NumberOfButtonsTextBox.Text, out int count))
+            {
+                _settings.NumberOfButtons = Math.Clamp(count, 0, 8);
+            }
+            else
+            {
+                _settings.NumberOfButtons = 0;
+            }
+
+            _settings.ButtonMappings = new List<ButtonMapping>();
+
+            foreach (var viewModel in _buttonMappings)
+            {
+                _settings.ButtonMappings.Add(new ButtonMapping
+                {
+                    ButtonIndex = viewModel.ButtonIndex,
+                    Action = viewModel.Action,
+                    TargetChannelIndex = viewModel.TargetChannelIndex,
+                    FriendlyName = $"Button {viewModel.ButtonIndex + 1}"
+                });
+            }
+        }
+
+        #endregion
+
+        #region Button Mapping View Model
+
+        /// <summary>
+        /// View model for button mapping UI.
+        /// </summary>
+        public class ButtonMappingViewModel : INotifyPropertyChanged
+        {
+            private int _buttonIndex;
+            private ButtonAction _action;
+            private int _targetChannelIndex;
+
+            public int ButtonIndex
+            {
+                get => _buttonIndex;
+                set
+                {
+                    _buttonIndex = value;
+                    OnPropertyChanged(nameof(ButtonIndex));
+                    OnPropertyChanged(nameof(ButtonIndexDisplay));
+                }
+            }
+
+            public string ButtonIndexDisplay => $"Button {ButtonIndex + 1}";
+
+            public ButtonAction Action
+            {
+                get => _action;
+                set
+                {
+                    _action = value;
+                    OnPropertyChanged(nameof(Action));
+                    OnPropertyChanged(nameof(ActionIndex));
+                    OnPropertyChanged(nameof(NeedsTargetChannel));
+                }
+            }
+
+            public int ActionIndex
+            {
+                get => (int)_action;
+                set
+                {
+                    _action = (ButtonAction)value;
+                    OnPropertyChanged(nameof(Action));
+                    OnPropertyChanged(nameof(ActionIndex));
+                    OnPropertyChanged(nameof(NeedsTargetChannel));
+                }
+            }
+
+            public int TargetChannelIndex
+            {
+                get => _targetChannelIndex;
+                set
+                {
+                    _targetChannelIndex = value;
+                    OnPropertyChanged(nameof(TargetChannelIndex));
+                    OnPropertyChanged(nameof(TargetChannelDisplay));
+                }
+            }
+
+            public string TargetChannelDisplay
+            {
+                get => _targetChannelIndex >= 0 ? (_targetChannelIndex + 1).ToString() : "";
+                set
+                {
+                    if (int.TryParse(value, out int channelNum) && channelNum > 0)
+                    {
+                        TargetChannelIndex = channelNum - 1;
+                    }
+                    else
+                    {
+                        TargetChannelIndex = -1;
+                    }
+                }
+            }
+
+            public bool NeedsTargetChannel => _action == ButtonAction.MuteChannel;
+
+            public event PropertyChangedEventHandler? PropertyChanged;
+
+            protected void OnPropertyChanged(string propertyName)
+            {
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            }
+        }
+
+        #endregion
     }
 }

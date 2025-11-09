@@ -481,6 +481,10 @@ namespace DeejNG.Services
                 OverlayScreenDevice = AppSettings.OverlayScreenDevice,
                 OverlayScreenBounds = AppSettings.OverlayScreenBounds,
 
+                // Preserve button settings from current settings
+                NumberOfButtons = AppSettings.NumberOfButtons,
+                ButtonMappings = AppSettings.ButtonMappings,
+
                 // Persist the selected theme with the profile settings
                 SelectedTheme = AppSettings.SelectedTheme
             };

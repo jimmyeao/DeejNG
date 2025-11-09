@@ -134,6 +134,78 @@
                     </StackPanel>
                 </Border>
 
+                <!-- Button Configuration Section -->
+                <TextBlock Text="Physical Buttons" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
+                <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20">
+                    <StackPanel>
+                        <TextBlock Text="Configure physical buttons on your controller"
+                                   Style="{StaticResource SubtitleTextBlock}"
+                                   Margin="0,0,0,12"/>
+
+                        <Grid Margin="0,0,0,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="150"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Number of Buttons" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <TextBox x:Name="NumberOfButtonsTextBox" Width="60" Text="0"
+                                         PreviewTextInput="NumberValidationTextBox"
+                                         TextChanged="NumberOfButtons_Changed"/>
+                                <TextBlock Text="(0-8)" Margin="8,0,0,0" VerticalAlignment="Center"
+                                           Style="{StaticResource SubtitleTextBlock}"
+                                           Opacity="0.6"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Button mappings list -->
+                        <ItemsControl x:Name="ButtonMappingsItemsControl" Margin="0,8,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{DynamicResource BorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            Padding="12"
+                                            Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="80"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="100"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding ButtonIndexDisplay}"
+                                                       Style="{StaticResource LabelTextBlock}"
+                                                       VerticalAlignment="Center"/>
+
+                                            <ComboBox Grid.Column="1"
+                                                      SelectedIndex="{Binding ActionIndex, Mode=TwoWay}"
+                                                      Style="{StaticResource ModernComboBox}"
+                                                      Margin="8,0"
+                                                      SelectionChanged="ButtonAction_SelectionChanged">
+                                                <ComboBoxItem Content="None"/>
+                                                <ComboBoxItem Content="Media Play/Pause"/>
+                                                <ComboBoxItem Content="Media Next"/>
+                                                <ComboBoxItem Content="Media Previous"/>
+                                                <ComboBoxItem Content="Media Stop"/>
+                                                <ComboBoxItem Content="Mute Channel"/>
+                                                <ComboBoxItem Content="Global Mute"/>
+                                            </ComboBox>
+
+                                            <TextBox Grid.Column="2"
+                                                     Text="{Binding TargetChannelDisplay, Mode=TwoWay}"
+                                                     IsEnabled="{Binding NeedsTargetChannel}"
+                                                     ToolTip="Target channel (1-based)"
+                                                     PreviewTextInput="NumberValidationTextBox"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
                     <Button Content="Save" Style="{StaticResource ModernButton}" Click="Save_Click" Margin="0,0,10,0"/>
                     <Button Content="Cancel" Style="{StaticResource ModernButton}" Click="Cancel_Click"/>

@@ -23,9 +23,22 @@ namespace DeejNG.Services
         private int _noDataCounter = 0;
         private bool _expectingData = false;
 
+        // Protocol validation
+        private bool _isProtocolValidated = false;
+        private DateTime _connectionStartTime = DateTime.MinValue;
+        private static readonly TimeSpan ValidationTimeout = TimeSpan.FromSeconds(5);
+        private HashSet<string> _invalidPorts = new HashSet<string>();
+        private DateTime _invalidPortsClearTime = DateTime.MinValue;
+        private static readonly TimeSpan InvalidPortsRetryInterval = TimeSpan.FromMinutes(2);
+
         private volatile int _reading = 0;      // re-entrancy guard
         private string _leftover = string.Empty; // pending partial line
         private int _baudRate = 0;
+
+        // Button handling
+        private int _numberOfSliders = 0;
+        private int _numberOfButtons = 0;
+        private bool[] _buttonStates = Array.Empty<bool>(); // Track current button states
 
         // ---- Tuning ----
         private const int MaxRemainderBytes = 4096;
@@ -36,13 +49,100 @@ namespace DeejNG.Services
         private const byte WatchdogProbeByte = 10; // 0 to disable probe
 
         public event Action<string> DataReceived;
+        public event Action<int, bool> ButtonStateChanged; // buttonIndex, isPressed
         public event Action Connected;
         public event Action Disconnected;
+        public event Action<string> ProtocolValidated; // Raised when valid DeejNG data is received
 
         public bool IsConnected => _isConnected && !_serialDisconnected;
         public bool IsFullyInitialized => _serialPortFullyInitialized;
+        public bool IsProtocolValidated => _isProtocolValidated;
         public string LastConnectedPort => _lastConnectedPort;
         public string CurrentPort => _serialPort?.PortName ?? string.Empty;
+
+        /// <summary>
+        /// Configures the number of sliders and buttons expected in the serial data.
+        /// This must be called before button events will be raised.
+        /// </summary>
+        /// <param name="sliderCount">Number of slider values expected</param>
+        /// <param name="buttonCount">Number of button values expected</param>
+        public void ConfigureLayout(int sliderCount, int buttonCount)
+        {
+            _numberOfSliders = sliderCount;
+            _numberOfButtons = buttonCount;
+
+            if (buttonCount > 0)
+            {
+                _buttonStates = new bool[buttonCount];
+#if DEBUG
+                Debug.WriteLine($"[Serial] Configured for {sliderCount} sliders and {buttonCount} buttons");
+#endif
+            }
+            else
+            {
+                _buttonStates = Array.Empty<bool>();
+            }
+        }
+
+        /// <summary>
+        /// Checks if a port is marked as invalid (failed protocol validation)
+        /// </summary>
+        private bool IsPortMarkedInvalid(string portName)
+        {
+            // Clear invalid ports list after retry interval
+            if (DateTime.Now - _invalidPortsClearTime > InvalidPortsRetryInterval)
+            {
+#if DEBUG
+                if (_invalidPorts.Count > 0)
+                    Debug.WriteLine($"[Validation] Clearing {_invalidPorts.Count} invalid port(s) - retry interval elapsed");
+#endif
+                _invalidPorts.Clear();
+                _invalidPortsClearTime = DateTime.Now;
+            }
+
+            return _invalidPorts.Contains(portName);
+        }
+
+        /// <summary>
+        /// Validates if the received data is valid DeejNG protocol (pipe-delimited numeric values)
+        /// Accepts both raw ADC values (0-1023) and normalized floats (0.0-1.0)
+        /// </summary>
+        private bool IsValidDeejNGData(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            var parts = line.Split('|');
+
+            // DeejNG data should have at least one value
+            if (parts.Length == 0)
+                return false;
+
+            // Check if at least the first few values are valid numbers
+            int validCount = 0;
+            int maxCheck = Math.Min(parts.Length, 3); // Check first 3 values
+
+            for (int i = 0; i < maxCheck; i++)
+            {
+                if (float.TryParse(parts[i].Trim(), out float value))
+                {
+                    // Accept two formats:
+                    // 1. Raw ADC values (0-1023 for 10-bit ADC, typical Arduino)
+                    // 2. Normalized float values (0.0-1.0)
+                    // Also allow some tolerance for noise/calibration
+                    bool isRawADC = value >= -10 && value <= 1100;  // 0-1023 range with tolerance
+                    bool isNormalized = value >= -0.1f && value <= 1.1f;  // 0.0-1.0 range with tolerance
+
+                    if (isRawADC || isNormalized)
+                    {
+                        validCount++;
+                    }
+                }
+            }
+
+            // Consider valid if at least half of checked values are valid numbers in range
+            return validCount >= (maxCheck / 2.0);
+        }
 
         public void InitSerial(string portName, int baudRate)
         {
@@ -53,6 +153,17 @@ namespace DeejNG.Services
 #if DEBUG
                     Debug.WriteLine("[Serial] Invalid port name provided");
 #endif
+                    return;
+                }
+
+                // Check if this port was recently marked as invalid
+                if (IsPortMarkedInvalid(portName))
+                {
+#if DEBUG
+                    Debug.WriteLine($"[Validation] Skipping port {portName} - marked as invalid (no valid DeejNG data)");
+#endif
+                    _isConnected = false;
+                    _serialDisconnected = true;
                     return;
                 }
 
@@ -94,9 +205,13 @@ namespace DeejNG.Services
                 _noDataCounter = 0;
                 _expectingData = false;
 
+                // Reset protocol validation state
+                _isProtocolValidated = false;
+                _connectionStartTime = DateTime.Now;
+
                 Connected?.Invoke();
 #if DEBUG
-                Debug.WriteLine($"[Serial] Connected to {portName} @ {baudRate}");
+                Debug.WriteLine($"[Serial] Connected to {portName} @ {baudRate} - awaiting protocol validation");
 #endif
             }
             catch (Exception ex)
@@ -125,6 +240,15 @@ namespace DeejNG.Services
                 _serialDisconnected = true;
                 _serialPortFullyInitialized = false;
 
+                // Clear invalid ports list on manual disconnect - user may be troubleshooting
+                if (_invalidPorts.Count > 0)
+                {
+#if DEBUG
+                    Debug.WriteLine($"[Manual] Clearing {_invalidPorts.Count} invalid port(s) on manual disconnect");
+#endif
+                    _invalidPorts.Clear();
+                }
+
                 Disconnected?.Invoke();
             }
             catch (Exception ex)
@@ -133,6 +257,19 @@ namespace DeejNG.Services
                 Debug.WriteLine($"[ERROR] Failed to disconnect manually: {ex.Message}");
 #endif
             }
+        }
+
+        /// <summary>
+        /// Clears the invalid ports list - useful for troubleshooting or when device firmware is updated
+        /// </summary>
+        public void ClearInvalidPorts()
+        {
+#if DEBUG
+            if (_invalidPorts.Count > 0)
+                Debug.WriteLine($"[Validation] Manually clearing {_invalidPorts.Count} invalid port(s)");
+#endif
+            _invalidPorts.Clear();
+            _invalidPortsClearTime = DateTime.Now;
         }
 
         public bool TryConnectToSavedPort(string savedPortName)
@@ -159,6 +296,16 @@ namespace DeejNG.Services
                     return false;
                 }
 
+                // Clear saved port from invalid list before attempting auto-connect
+                // (it may have been marked invalid in a previous session or failed attempt)
+                if (_invalidPorts.Contains(portToTry))
+                {
+                    _invalidPorts.Remove(portToTry);
+#if DEBUG
+                    Debug.WriteLine($"[AutoConnect] Removed {portToTry} from invalid list for auto-connect attempt");
+#endif
+                }
+
                 // Reuse last configured baud rate; default to 9600 if unknown.
                 InitSerial(portToTry, _baudRate > 0 ? _baudRate : 9600);
 
@@ -178,6 +325,16 @@ namespace DeejNG.Services
         {
             _userSelectedPort = portName;
             if (_manualDisconnect) _manualDisconnect = false;
+
+            // Clear this port from invalid list when user manually selects it
+            if (_invalidPorts.Contains(portName))
+            {
+                _invalidPorts.Remove(portName);
+#if DEBUG
+                Debug.WriteLine($"[UI] User selected port {portName} - removed from invalid list");
+#endif
+            }
+
 #if DEBUG
             Debug.WriteLine($"[UI] User selected port: {portName}");
 #endif
@@ -196,6 +353,30 @@ namespace DeejNG.Services
 #endif
                     HandleSerialDisconnection();
                     return;
+                }
+
+                // Check for protocol validation timeout
+                if (!_isProtocolValidated && _connectionStartTime != DateTime.MinValue)
+                {
+                    var elapsed = DateTime.Now - _connectionStartTime;
+                    if (elapsed >= ValidationTimeout)
+                    {
+#if DEBUG
+                        Debug.WriteLine($"[Validation] Protocol validation timeout ({elapsed.TotalSeconds:F1}s) - no valid DeejNG data received from {CurrentPort}");
+#endif
+                        // Mark this port as invalid
+                        if (!string.IsNullOrEmpty(CurrentPort))
+                        {
+                            _invalidPorts.Add(CurrentPort);
+                            if (_invalidPortsClearTime == DateTime.MinValue)
+                            {
+                                _invalidPortsClearTime = DateTime.Now;
+                            }
+                        }
+
+                        HandleSerialDisconnection();
+                        return;
+                    }
                 }
 
                 if (_expectingData)
@@ -295,7 +476,7 @@ namespace DeejNG.Services
                             var line = combined.AsSpan(start, len).Trim().ToString();
                             if (line.Length > 0 && line.Length <= MaxLineLength)
                             {
-                                DataReceived?.Invoke(line);
+                                ProcessSerialLine(line);
 
                                 if (!_serialPortFullyInitialized)
                                 {
@@ -386,6 +567,90 @@ namespace DeejNG.Services
 #if DEBUG
                 Debug.WriteLine($"[ERROR] Failed to cleanup serial port: {ex.Message}");
 #endif
+            }
+        }
+
+        /// <summary>
+        /// Processes a complete serial line, separating slider and button data.
+        /// </summary>
+        private void ProcessSerialLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) return;
+
+            // Validate protocol if not yet validated
+            if (!_isProtocolValidated)
+            {
+                if (IsValidDeejNGData(line))
+                {
+                    _isProtocolValidated = true;
+#if DEBUG
+                    Debug.WriteLine($"[Validation] Protocol validated for port {CurrentPort}");
+#endif
+                    ProtocolValidated?.Invoke(CurrentPort);
+                }
+                else
+                {
+#if DEBUG
+                    Debug.WriteLine($"[Validation] Invalid data received: {line}");
+#endif
+                    // Don't process invalid data
+                    return;
+                }
+            }
+
+            // If no buttons configured, pass entire line to DataReceived
+            if (_numberOfButtons == 0 || _numberOfSliders == 0)
+            {
+                DataReceived?.Invoke(line);
+                return;
+            }
+
+            // Split the line
+            string[] parts = line.Split('|');
+
+            // Separate slider data from button data
+            int expectedTotal = _numberOfSliders + _numberOfButtons;
+
+            // If we get fewer values than expected, treat all as sliders (backward compatible)
+            if (parts.Length <= _numberOfSliders)
+            {
+                DataReceived?.Invoke(line);
+                return;
+            }
+
+            // Extract slider portion
+            var sliderParts = new string[_numberOfSliders];
+            Array.Copy(parts, 0, sliderParts, 0, Math.Min(_numberOfSliders, parts.Length));
+            string sliderData = string.Join("|", sliderParts);
+
+            // Raise slider data event
+            DataReceived?.Invoke(sliderData);
+
+            // Process button data (starts after slider values)
+            int buttonStartIndex = _numberOfSliders;
+            int buttonCount = Math.Min(_numberOfButtons, parts.Length - buttonStartIndex);
+
+            for (int i = 0; i < buttonCount; i++)
+            {
+                if (int.TryParse(parts[buttonStartIndex + i].Trim(), out int buttonValue))
+                {
+                    bool isPressed = buttonValue == 1;
+
+                    // Check for state change
+                    if (i < _buttonStates.Length && _buttonStates[i] != isPressed)
+                    {
+                        _buttonStates[i] = isPressed;
+
+                        // Only raise event on button press (not release) to avoid double-triggering
+                        if (isPressed)
+                        {
+#if DEBUG
+                            Debug.WriteLine($"[Serial] Button {i} pressed");
+#endif
+                            ButtonStateChanged?.Invoke(i, isPressed);
+                        }
+                    }
+                }
             }
         }
 
