@@ -506,41 +506,36 @@ namespace DeejNG.Dialogs
 
         /// <summary>
         /// Loads button configuration from settings and initializes UI.
+        /// Buttons are now auto-detected (10000/10001 values), so we show all 8 slots for configuration.
         /// </summary>
         private void LoadButtonConfiguration()
         {
             try
             {
-                int numberOfButtons = _settings?.NumberOfButtons ?? 0;
-
-                if (NumberOfButtonsTextBox != null)
-                {
-                    NumberOfButtonsTextBox.Text = numberOfButtons.ToString();
-                }
-
-                UpdateButtonMappings(numberOfButtons);
+                // Always show 8 button slots (max supported)
+                // Users can configure ahead of time; only buttons detected from hardware will activate
+                LoadButtonMappingSlots();
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[ERROR] LoadButtonConfiguration: {ex.Message}");
-                // Initialize with defaults if something goes wrong
-                if (NumberOfButtonsTextBox != null)
-                {
-                    NumberOfButtonsTextBox.Text = "0";
-                }
             }
         }
 
         /// <summary>
-        /// Updates the button mappings collection based on the number of buttons.
+        /// Loads 8 button mapping slots for configuration.
+        /// Buttons are auto-detected from hardware (10000/10001 protocol).
         /// </summary>
-        private void UpdateButtonMappings(int count)
+        private void LoadButtonMappingSlots()
         {
             _buttonMappings.Clear();
 
-            for (int i = 0; i < count; i++)
+            // Show all 8 button slots (users can configure ahead of time)
+            const int maxButtons = 8;
+
+            for (int i = 0; i < maxButtons; i++)
             {
-                var existingMapping = _settings.ButtonMappings?.FirstOrDefault(m => m.ButtonIndex == i);
+                var existingMapping = _settings?.ButtonMappings?.FirstOrDefault(m => m.ButtonIndex == i);
 
                 var viewModel = new ButtonMappingViewModel
                 {
@@ -552,22 +547,10 @@ namespace DeejNG.Dialogs
                 _buttonMappings.Add(viewModel);
             }
 
-            // Only set ItemsSource if the control is initialized
+            // Set ItemsSource if the control is initialized
             if (ButtonMappingsItemsControl != null)
             {
                 ButtonMappingsItemsControl.ItemsSource = _buttonMappings;
-            }
-        }
-
-        /// <summary>
-        /// Handles changes to the number of buttons text box.
-        /// </summary>
-        private void NumberOfButtons_Changed(object sender, TextChangedEventArgs e)
-        {
-            if (int.TryParse(NumberOfButtonsTextBox.Text, out int count))
-            {
-                count = Math.Clamp(count, 0, 8);
-                UpdateButtonMappings(count);
             }
         }
 
@@ -590,21 +573,15 @@ namespace DeejNG.Dialogs
 
         /// <summary>
         /// Saves button configuration to settings.
+        /// Only saves button mappings that have actions assigned.
+        /// Buttons are auto-detected from hardware (10000/10001 protocol).
         /// </summary>
         private void SaveButtonConfiguration()
         {
-            if (int.TryParse(NumberOfButtonsTextBox.Text, out int count))
-            {
-                _settings.NumberOfButtons = Math.Clamp(count, 0, 8);
-            }
-            else
-            {
-                _settings.NumberOfButtons = 0;
-            }
-
             _settings.ButtonMappings = new List<ButtonMapping>();
 
-            foreach (var viewModel in _buttonMappings)
+            // Only save button mappings that have actions configured
+            foreach (var viewModel in _buttonMappings.Where(vm => vm.Action != ButtonAction.None))
             {
                 _settings.ButtonMappings.Add(new ButtonMapping
                 {

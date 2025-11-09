@@ -105,7 +105,11 @@ namespace DeejNG.Services
 
         /// <summary>
         /// Validates if the received data is valid DeejNG protocol (pipe-delimited numeric values)
-        /// Accepts both raw ADC values (0-1023), normalized floats (0.0-1.0), and inline mute trigger (9999)
+        /// Accepts:
+        /// - Raw ADC values (0-1023)
+        /// - Normalized floats (0.0-1.0)
+        /// - Inline mute trigger (9999)
+        /// - Button states (10000=OFF, 10001=ON)
         /// </summary>
         private bool IsValidDeejNGData(string line)
         {
@@ -126,16 +130,18 @@ namespace DeejNG.Services
             {
                 if (float.TryParse(parts[i].Trim(), out float value))
                 {
-                    // Accept three formats:
+                    // Accept four formats:
                     // 1. Raw ADC values (0-1023 for 10-bit ADC, typical Arduino)
                     // 2. Normalized float values (0.0-1.0)
                     // 3. Inline mute trigger value (9999)
+                    // 4. Button states (10000=OFF, 10001=ON)
                     // Also allow some tolerance for noise/calibration
                     bool isRawADC = value >= -10 && value <= 1100;  // 0-1023 range with tolerance
                     bool isNormalized = value >= -0.1f && value <= 1.1f;  // 0.0-1.0 range with tolerance
                     bool isInlineMute = value >= 9998 && value <= 10000;  // 9999 inline mute trigger with tolerance
+                    bool isButton = value >= 9999.5f && value <= 10001.5f;  // 10000 or 10001 button states
 
-                    if (isRawADC || isNormalized || isInlineMute)
+                    if (isRawADC || isNormalized || isInlineMute || isButton)
                     {
                         validCount++;
                     }
@@ -573,7 +579,9 @@ namespace DeejNG.Services
         }
 
         /// <summary>
-        /// Processes a complete serial line, separating slider and button data.
+        /// Processes a complete serial line, auto-detecting and separating slider and button data.
+        /// Sliders: 0-1023 (or 9999 for inline mute)
+        /// Buttons: 10000 (OFF) or 10001 (ON)
         /// </summary>
         private void ProcessSerialLine(string line)
         {
@@ -600,46 +608,58 @@ namespace DeejNG.Services
                 }
             }
 
-            // If no buttons configured, pass entire line to DataReceived
-            if (_numberOfButtons == 0 || _numberOfSliders == 0)
-            {
-                DataReceived?.Invoke(line);
-                return;
-            }
-
             // Split the line
             string[] parts = line.Split('|');
+            if (parts.Length == 0) return;
 
-            // Separate slider data from button data
-            int expectedTotal = _numberOfSliders + _numberOfButtons;
+            // Auto-detect sliders vs buttons by value range
+            var sliderParts = new List<string>();
+            var buttonValues = new List<float>();
 
-            // If we get fewer values than expected, treat all as sliders (backward compatible)
-            if (parts.Length <= _numberOfSliders)
+            for (int i = 0; i < parts.Length; i++)
             {
-                DataReceived?.Invoke(line);
-                return;
+                if (float.TryParse(parts[i].Trim(), out float value))
+                {
+                    // Button values are 10000 or 10001
+                    if (value >= 9999.5f)
+                    {
+                        buttonValues.Add(value);
+                    }
+                    else
+                    {
+                        // Slider value (0-1023 range or 9999 inline mute)
+                        sliderParts.Add(parts[i]);
+                    }
+                }
             }
 
-            // Extract slider portion
-            var sliderParts = new string[_numberOfSliders];
-            Array.Copy(parts, 0, sliderParts, 0, Math.Min(_numberOfSliders, parts.Length));
-            string sliderData = string.Join("|", sliderParts);
-
-            // Raise slider data event
-            DataReceived?.Invoke(sliderData);
-
-            // Process button data (starts after slider values)
-            int buttonStartIndex = _numberOfSliders;
-            int buttonCount = Math.Min(_numberOfButtons, parts.Length - buttonStartIndex);
-
-            for (int i = 0; i < buttonCount; i++)
+            // Raise slider data event if we have any sliders
+            if (sliderParts.Count > 0)
             {
-                if (int.TryParse(parts[buttonStartIndex + i].Trim(), out int buttonValue))
+                string sliderData = string.Join("|", sliderParts);
+                DataReceived?.Invoke(sliderData);
+            }
+
+            // Process buttons if we have any
+            if (buttonValues.Count > 0)
+            {
+                // Resize button state array if needed
+                if (_buttonStates.Length != buttonValues.Count)
                 {
-                    bool isPressed = buttonValue == 1;
+                    _buttonStates = new bool[buttonValues.Count];
+#if DEBUG
+                    Debug.WriteLine($"[Serial] Auto-detected {buttonValues.Count} button(s)");
+#endif
+                }
+
+                // Check each button for state changes
+                for (int i = 0; i < buttonValues.Count; i++)
+                {
+                    // 10001 = pressed, 10000 = not pressed
+                    bool isPressed = buttonValues[i] >= 10000.5f;
 
                     // Check for state change
-                    if (i < _buttonStates.Length && _buttonStates[i] != isPressed)
+                    if (_buttonStates[i] != isPressed)
                     {
                         _buttonStates[i] = isPressed;
 
@@ -647,7 +667,7 @@ namespace DeejNG.Services
                         if (isPressed)
                         {
 #if DEBUG
-                            Debug.WriteLine($"[Serial] Button {i} pressed");
+                            Debug.WriteLine($"[Serial] Button {i} pressed (value: {buttonValues[i]})");
 #endif
                             ButtonStateChanged?.Invoke(i, isPressed);
                         }

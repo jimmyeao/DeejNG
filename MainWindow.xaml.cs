@@ -1447,20 +1447,18 @@ namespace DeejNG
             }
         }
 
-        /// <parameter name="file_path">Configures the serial manager with the current button layout.
+        /// <summary>
+        /// Configures button indicators UI. Buttons are now auto-detected from serial data.
         /// </summary>
         private void ConfigureButtonLayout()
         {
             try
             {
-                var settings = _settingsManager.AppSettings;
-                int sliderCount = _channelControls.Count;
-                int buttonCount = settings?.NumberOfButtons ?? 0;
+                // Buttons are now auto-detected from serial protocol (10000/10001 values)
+                // No need to configure serial manager - it auto-detects
 
-                _serialManager.ConfigureLayout(sliderCount, buttonCount);
-
-                // Initialize button handler if buttons are configured
-                if (buttonCount > 0 && _buttonActionHandler == null)
+                // Initialize button handler lazily if not yet created
+                if (_buttonActionHandler == null)
                 {
                     _buttonActionHandler = new ButtonActionHandler(_channelControls);
                 }
@@ -1469,7 +1467,7 @@ namespace DeejNG
                 UpdateButtonIndicators();
 
 #if DEBUG
-                Debug.WriteLine($"[Button] Configured serial layout: {sliderCount} sliders, {buttonCount} buttons");
+                Debug.WriteLine($"[Button] Button UI configured (auto-detection enabled)");
 #endif
             }
             catch (Exception ex)
@@ -1481,7 +1479,8 @@ namespace DeejNG
         }
 
         /// <summary>
-        /// Updates the button indicator UI based on current settings.
+        /// Updates the button indicator UI based on configured button mappings.
+        /// Buttons are auto-detected from serial data (10000/10001 values).
         /// </summary>
         private void UpdateButtonIndicators()
         {
@@ -1490,11 +1489,11 @@ namespace DeejNG
                 try
                 {
                     var settings = _settingsManager.AppSettings;
-                    int buttonCount = settings?.NumberOfButtons ?? 0;
 
                     _buttonIndicators.Clear();
 
-                    if (buttonCount > 0 && settings?.ButtonMappings != null)
+                    // Show indicators for all configured button mappings
+                    if (settings?.ButtonMappings != null && settings.ButtonMappings.Count > 0)
                     {
                         foreach (var mapping in settings.ButtonMappings.OrderBy(m => m.ButtonIndex))
                         {
