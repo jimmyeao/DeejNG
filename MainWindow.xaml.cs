@@ -10,6 +10,8 @@ using DeejNG.Views;
 using Microsoft.Win32;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
@@ -82,6 +84,12 @@ namespace DeejNG
         private readonly IOverlayService _overlayService;
         private readonly ISystemIntegrationService _systemIntegrationService;
         private readonly IPowerManagementService _powerManagementService;
+        private ButtonActionHandler _buttonActionHandler;
+        private ObservableCollection<ButtonIndicatorViewModel> _buttonIndicators = new();
+
+        // Inline mute support (triggered by 9999 value from hardware)
+        private readonly HashSet<int> _inlineMutedChannels = new HashSet<int>();
+        private const float INLINE_MUTE_TRIGGER = 9999f;
 
         #endregion Private Fields
 
@@ -146,6 +154,7 @@ namespace DeejNG
 
             // Setup serial manager events
             _serialManager.DataReceived += HandleSliderData;
+            _serialManager.ButtonStateChanged += HandleButtonPress;
             _serialManager.Connected += () =>
             {
                 Dispatcher.BeginInvoke(() =>
@@ -175,6 +184,20 @@ namespace DeejNG
                         _timerCoordinator.StartSerialReconnect();
                     }
                 }, DispatcherPriority.Background); // FIX: Use background priority to prevent focus stealing
+            };
+            _serialManager.ProtocolValidated += (validatedPort) =>
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+#if DEBUG
+                    Debug.WriteLine($"[MainWindow] Protocol validated for {validatedPort} - saving as last known good port");
+#endif
+                    // Only save the port name once protocol is validated
+                    _settingsManager.AppSettings.PortName = validatedPort;
+                    SaveSettings();
+
+                    UpdateConnectionStatus();
+                }, DispatcherPriority.Background);
             };
 
             StartSessionCacheUpdater();
@@ -400,9 +423,17 @@ namespace DeejNG
             _settingsManager.AppSettings.OverlayScreenDevice = newSettings.OverlayScreenDevice;
             _settingsManager.AppSettings.OverlayScreenBounds = newSettings.OverlayScreenBounds;
 
+            // Update button configuration
+            _settingsManager.AppSettings.NumberOfButtons = newSettings.NumberOfButtons;
+            _settingsManager.AppSettings.ButtonMappings = newSettings.ButtonMappings;
+
 #if DEBUG
             Debug.WriteLine($"[Overlay] Settings updated - Opacity: {newSettings.OverlayOpacity}, Position: ({newSettings.OverlayX}, {newSettings.OverlayY})");
+            Debug.WriteLine($"[Button] Button configuration updated - Count: {newSettings.NumberOfButtons}, Mappings: {newSettings.ButtonMappings?.Count ?? 0}");
 #endif
+
+            // Reconfigure button layout if button count changed
+            ConfigureButtonLayout();
 
             // CRITICAL FIX: Save to profile after updating overlay settings
             SaveSettings();
@@ -1215,6 +1246,9 @@ namespace DeejNG
 #if DEBUG
             Debug.WriteLine("[Init] Sliders generated, waiting for first hardware data before completing initialization");
 #endif
+
+            // Configure button layout after sliders are generated
+            ConfigureButtonLayout();
         }
 
         private void HandleSliderData(string data)
@@ -1265,19 +1299,49 @@ namespace DeejNG
 
                         for (int i = 0; i < maxIndex; i++)
                         {
-                            if (!float.TryParse(parts[i].Trim(), out float level)) continue;
+                            if (!float.TryParse(parts[i].Trim(), out float rawValue)) continue;
 
+                            var ctrl = _channelControls[i];
+                            var targets = ctrl.AudioTargets;
+
+                            if (targets.Count == 0) continue;
+
+                            // Check for inline mute trigger (9999)
+                            if (rawValue >= INLINE_MUTE_TRIGGER - 0.5f && rawValue <= INLINE_MUTE_TRIGGER + 0.5f)
+                            {
+                                // Mute this channel via inline mute
+                                if (!_inlineMutedChannels.Contains(i))
+                                {
+                                    _inlineMutedChannels.Add(i);
+                                    ctrl.SetMuted(true);
+#if DEBUG
+                                    Debug.WriteLine($"[InlineMute] Channel {i} muted (received {rawValue})");
+#endif
+                                }
+                                // Don't update slider position when muted
+                                continue;
+                            }
+                            else
+                            {
+                                // Normal value range - unmute if it was inline-muted
+                                if (_inlineMutedChannels.Contains(i))
+                                {
+                                    _inlineMutedChannels.Remove(i);
+                                    ctrl.SetMuted(false);
+#if DEBUG
+                                    Debug.WriteLine($"[InlineMute] Channel {i} unmuted (received {rawValue})");
+#endif
+                                }
+                            }
+
+                            // Process normal slider value
+                            float level = rawValue;
                             if (level <= 10) level = 0;
                             if (level >= 1013) level = 1023;
 
                             level = Math.Clamp(level / 1023f, 0f, 1f);
                             if (InvertSliderCheckBox.IsChecked ?? false)
                                 level = 1f - level;
-
-                            var ctrl = _channelControls[i];
-                            var targets = ctrl.AudioTargets;
-
-                            if (targets.Count == 0) continue;
 
                             float currentVolume = ctrl.CurrentVolume;
                             if (Math.Abs(currentVolume - level) < 0.01f) continue;
@@ -1325,6 +1389,187 @@ namespace DeejNG
 #endif
             }
         }
+
+        /// <summary>
+        /// Handles button press events from the serial manager.
+        /// </summary>
+        private void HandleButtonPress(int buttonIndex, bool isPressed)
+        {
+#if DEBUG
+            Debug.WriteLine($"[Button] Button {buttonIndex} state changed: {isPressed}");
+#endif
+
+            // Update UI button state
+            Dispatcher.BeginInvoke(() =>
+            {
+                var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
+                if (indicator != null)
+                {
+                    indicator.IsPressed = isPressed;
+                }
+            });
+
+            // Only process on button press (not release)
+            if (!isPressed) return;
+
+            try
+            {
+                var settings = _settingsManager.AppSettings;
+                if (settings == null || settings.ButtonMappings == null) return;
+
+                // Find the mapping for this button
+                var mapping = settings.ButtonMappings.FirstOrDefault(m => m.ButtonIndex == buttonIndex);
+                if (mapping == null || mapping.Action == ButtonAction.None)
+                {
+#if DEBUG
+                    Debug.WriteLine($"[Button] No mapping found for button {buttonIndex}");
+#endif
+                    return;
+                }
+
+                // Ensure button handler is initialized
+                if (_buttonActionHandler == null)
+                {
+                    _buttonActionHandler = new ButtonActionHandler(_channelControls);
+                }
+
+                // Execute the action on UI thread
+                Dispatcher.BeginInvoke(() =>
+                {
+                    _buttonActionHandler.ExecuteAction(mapping);
+                });
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                Debug.WriteLine($"[ERROR] Handling button press: {ex.Message}");
+#endif
+            }
+        }
+
+        /// <summary>
+        /// Configures button indicators UI. Buttons are now auto-detected from serial data.
+        /// </summary>
+        private void ConfigureButtonLayout()
+        {
+            try
+            {
+                // Buttons are now auto-detected from serial protocol (10000/10001 values)
+                // No need to configure serial manager - it auto-detects
+
+                // Initialize button handler lazily if not yet created
+                if (_buttonActionHandler == null)
+                {
+                    _buttonActionHandler = new ButtonActionHandler(_channelControls);
+                }
+
+                // Update button indicators UI
+                UpdateButtonIndicators();
+
+#if DEBUG
+                Debug.WriteLine($"[Button] Button UI configured (auto-detection enabled)");
+#endif
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                Debug.WriteLine($"[ERROR] Configuring button layout: {ex.Message}");
+#endif
+            }
+        }
+
+        /// <summary>
+        /// Updates the button indicator UI based on configured button mappings.
+        /// Buttons are auto-detected from serial data (10000/10001 values).
+        /// </summary>
+        private void UpdateButtonIndicators()
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                try
+                {
+                    var settings = _settingsManager.AppSettings;
+
+                    _buttonIndicators.Clear();
+
+                    // Show indicators for all configured button mappings
+                    if (settings?.ButtonMappings != null && settings.ButtonMappings.Count > 0)
+                    {
+                        foreach (var mapping in settings.ButtonMappings.OrderBy(m => m.ButtonIndex))
+                        {
+                            var indicator = new ButtonIndicatorViewModel
+                            {
+                                ButtonIndex = mapping.ButtonIndex,
+                                Label = $"BTN {mapping.ButtonIndex + 1}",
+                                ActionText = GetButtonActionText(mapping),
+                                Icon = GetButtonActionIcon(mapping.Action),
+                                ToolTip = GetButtonActionTooltip(mapping),
+                                IsPressed = false
+                            };
+
+                            _buttonIndicators.Add(indicator);
+                        }
+
+                        ButtonIndicatorsList.ItemsSource = _buttonIndicators;
+                        ButtonIndicatorsPanel.Visibility = Visibility.Visible;
+                    }
+                    else
+                    {
+                        ButtonIndicatorsPanel.Visibility = Visibility.Collapsed;
+                    }
+                }
+                catch (Exception ex)
+                {
+#if DEBUG
+                    Debug.WriteLine($"[ERROR] Updating button indicators: {ex.Message}");
+#endif
+                }
+            });
+        }
+
+        private string GetButtonActionText(ButtonMapping mapping)
+        {
+            if (mapping.Action == ButtonAction.None)
+                return "Not assigned";
+
+            string actionText = mapping.Action switch
+            {
+                ButtonAction.MediaPlayPause => "Play/Pause",
+                ButtonAction.MediaNext => "Next Track",
+                ButtonAction.MediaPrevious => "Previous Track",
+                ButtonAction.MediaStop => "Stop",
+                ButtonAction.MuteChannel => $"Mute Ch{mapping.TargetChannelIndex + 1}",
+                ButtonAction.GlobalMute => "Global Mute",
+                ButtonAction.ToggleInputOutput => "Toggle I/O",
+                _ => mapping.Action.ToString()
+            };
+
+            return actionText;
+        }
+
+        private string GetButtonActionIcon(ButtonAction action)
+        {
+            return action switch
+            {
+                ButtonAction.MediaPlayPause => "⏯",
+                ButtonAction.MediaNext => "⏭",
+                ButtonAction.MediaPrevious => "⏮",
+                ButtonAction.MediaStop => "⏹",
+                ButtonAction.MuteChannel => "🔇",
+                ButtonAction.GlobalMute => "🔕",
+                ButtonAction.ToggleInputOutput => "🔄",
+                _ => "🔘"
+            };
+        }
+
+        private string GetButtonActionTooltip(ButtonMapping mapping)
+        {
+            if (mapping.Action == ButtonAction.None)
+                return "No action assigned to this button";
+
+            return $"Button {mapping.ButtonIndex + 1}: {GetButtonActionText(mapping)}";
+        }
+
         private void LoadAvailablePorts()
         {
             try
@@ -1647,7 +1892,8 @@ namespace DeejNG
                 return; // The Connected event will stop the timer
             }
 
-            // Try any available port if saved port doesn't work
+            // FIX: Don't blindly connect to first available port - wait for user selection
+            // This prevents connecting to wrong devices (e.g., joysticks, other controllers)
             try
             {
                 var availablePorts = SerialPort.GetPortNames();
@@ -1666,29 +1912,26 @@ namespace DeejNG
                     return;
                 }
 
-                string portToTry = availablePorts[0];
 #if DEBUG
-                Debug.WriteLine($"[SerialReconnect] Trying first available port: {portToTry}");
+                Debug.WriteLine($"[SerialReconnect] Saved port not available. {availablePorts.Length} port(s) detected. Please select correct port manually.");
 #endif
 
-                _serialManager.InitSerial(portToTry, 9600);
-
-                if (_serialManager.IsConnected)
+                // Update UI to prompt user to select the correct port
+                Dispatcher.BeginInvoke(() =>
                 {
-#if DEBUG
-                    Debug.WriteLine($"[SerialReconnect] Successfully connected to {portToTry}");
-#endif
-                    // The Connected event will handle UI updates and stop the timer
-                }
+                    ConnectionStatus.Text = $"Please select correct COM port ({availablePorts.Length} available)";
+                    ConnectionStatus.Foreground = Brushes.Orange;
+                    LoadAvailablePorts();
+                }, DispatcherPriority.Background);
             }
             catch (Exception ex)
             {
 #if DEBUG
-                Debug.WriteLine($"[SerialReconnect] Failed to reconnect: {ex.Message}");
+                Debug.WriteLine($"[SerialReconnect] Failed to check ports: {ex.Message}");
 #endif
                 Dispatcher.BeginInvoke(() =>
                 {
-                    ConnectionStatus.Text = "Reconnection failed - retrying...";
+                    ConnectionStatus.Text = "Connection failed - check ports manually";
                     ConnectionStatus.Foreground = Brushes.Red;
                 }, DispatcherPriority.Background);
             }
@@ -2049,8 +2292,16 @@ namespace DeejNG
 
             if (_serialManager.IsConnected)
             {
-                statusText = $"Connected to {_serialManager.CurrentPort}";
-                statusColor = Brushes.Green;
+                if (_serialManager.IsProtocolValidated)
+                {
+                    statusText = $"Connected to {_serialManager.CurrentPort}";
+                    statusColor = Brushes.Green;
+                }
+                else
+                {
+                    statusText = $"Verifying {_serialManager.CurrentPort}...";
+                    statusColor = Brushes.Orange;
+                }
             }
             else if (_serialManager.ShouldAttemptReconnect())
             {

@@ -121,6 +121,17 @@ namespace DeejNG.Classes
         /// Gets or sets the selected theme name.
         /// </summary>
         public string? SelectedTheme { get; set; } = "Dark";
+
+        /// <summary>
+        /// Gets or sets the number of physical buttons connected to the controller.
+        /// Default is 0 (no buttons).
+        /// </summary>
+        public int NumberOfButtons { get; set; } = 0;
+
+        /// <summary>
+        /// Gets or sets the button mappings for physical buttons.
+        /// </summary>
+        public List<ButtonMapping> ButtonMappings { get; set; } = new();
         #endregion Public Properties
     }
 

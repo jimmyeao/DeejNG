@@ -36,6 +36,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Title Bar -->
@@ -200,8 +201,69 @@
                 <!-- Dynamically added ChannelControl instances -->
             </WrapPanel>
 
-            <!-- Bottom Status Bar -->
+            <!-- Button Indicators -->
             <Border Grid.Row="3"
+                    x:Name="ButtonIndicatorsPanel"
+                    Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="0,1"
+                    Padding="20,8"
+                    Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock Text="Physical Buttons"
+                               Style="{StaticResource LabelTextBlock}"
+                               FontSize="10"
+                               Opacity="0.7"
+                               Margin="0,0,0,8"/>
+                    <ItemsControl x:Name="ButtonIndicatorsList">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource BackgroundBrush}"
+                                        BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="4"
+                                        Padding="8,4"
+                                        Margin="0,0,8,4"
+                                        ToolTip="{Binding ToolTip}">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsPressed}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Icon}"
+                                                   FontSize="14"
+                                                   Margin="0,0,6,0"
+                                                   VerticalAlignment="Center"/>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Label}"
+                                                       Style="{StaticResource LabelTextBlock}"
+                                                       FontSize="10"/>
+                                            <TextBlock Text="{Binding ActionText}"
+                                                       Style="{StaticResource SubtitleTextBlock}"
+                                                       FontSize="9"
+                                                       Opacity="0.7"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Bottom Status Bar -->
+            <Border Grid.Row="4"
                     x:Name="StatusBar"
                     Background="{DynamicResource SurfaceBrush}"
                     BorderBrush="{DynamicResource BorderBrush}"
