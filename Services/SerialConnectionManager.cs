@@ -105,7 +105,7 @@ namespace DeejNG.Services
 
         /// <summary>
         /// Validates if the received data is valid DeejNG protocol (pipe-delimited numeric values)
-        /// Accepts both raw ADC values (0-1023) and normalized floats (0.0-1.0)
+        /// Accepts both raw ADC values (0-1023), normalized floats (0.0-1.0), and inline mute trigger (9999)
         /// </summary>
         private bool IsValidDeejNGData(string line)
         {
@@ -126,14 +126,16 @@ namespace DeejNG.Services
             {
                 if (float.TryParse(parts[i].Trim(), out float value))
                 {
-                    // Accept two formats:
+                    // Accept three formats:
                     // 1. Raw ADC values (0-1023 for 10-bit ADC, typical Arduino)
                     // 2. Normalized float values (0.0-1.0)
+                    // 3. Inline mute trigger value (9999)
                     // Also allow some tolerance for noise/calibration
                     bool isRawADC = value >= -10 && value <= 1100;  // 0-1023 range with tolerance
                     bool isNormalized = value >= -0.1f && value <= 1.1f;  // 0.0-1.0 range with tolerance
+                    bool isInlineMute = value >= 9998 && value <= 10000;  // 9999 inline mute trigger with tolerance
 
-                    if (isRawADC || isNormalized)
+                    if (isRawADC || isNormalized || isInlineMute)
                     {
                         validCount++;
                     }

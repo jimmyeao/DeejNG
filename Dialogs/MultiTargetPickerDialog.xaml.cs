@@ -302,6 +302,16 @@ namespace DeejNG.Dialogs
                             // The process may have exited; skip this session
                             continue;
                         }
+                        catch (System.ComponentModel.Win32Exception)
+                        {
+                            // Access denied (protected system process); skip this session
+                            continue;
+                        }
+                        catch (System.InvalidOperationException)
+                        {
+                            // Process has exited; skip this session
+                            continue;
+                        }
 
                         string friendlyName = "";
 

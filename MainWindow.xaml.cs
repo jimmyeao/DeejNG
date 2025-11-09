@@ -87,6 +87,10 @@ namespace DeejNG
         private ButtonActionHandler _buttonActionHandler;
         private ObservableCollection<ButtonIndicatorViewModel> _buttonIndicators = new();
 
+        // Inline mute support (triggered by 9999 value from hardware)
+        private readonly HashSet<int> _inlineMutedChannels = new HashSet<int>();
+        private const float INLINE_MUTE_TRIGGER = 9999f;
+
         #endregion Private Fields
 
         #region Public Constructors
@@ -1295,19 +1299,49 @@ namespace DeejNG
 
                         for (int i = 0; i < maxIndex; i++)
                         {
-                            if (!float.TryParse(parts[i].Trim(), out float level)) continue;
+                            if (!float.TryParse(parts[i].Trim(), out float rawValue)) continue;
 
+                            var ctrl = _channelControls[i];
+                            var targets = ctrl.AudioTargets;
+
+                            if (targets.Count == 0) continue;
+
+                            // Check for inline mute trigger (9999)
+                            if (rawValue >= INLINE_MUTE_TRIGGER - 0.5f && rawValue <= INLINE_MUTE_TRIGGER + 0.5f)
+                            {
+                                // Mute this channel via inline mute
+                                if (!_inlineMutedChannels.Contains(i))
+                                {
+                                    _inlineMutedChannels.Add(i);
+                                    ctrl.SetMuted(true);
+#if DEBUG
+                                    Debug.WriteLine($"[InlineMute] Channel {i} muted (received {rawValue})");
+#endif
+                                }
+                                // Don't update slider position when muted
+                                continue;
+                            }
+                            else
+                            {
+                                // Normal value range - unmute if it was inline-muted
+                                if (_inlineMutedChannels.Contains(i))
+                                {
+                                    _inlineMutedChannels.Remove(i);
+                                    ctrl.SetMuted(false);
+#if DEBUG
+                                    Debug.WriteLine($"[InlineMute] Channel {i} unmuted (received {rawValue})");
+#endif
+                                }
+                            }
+
+                            // Process normal slider value
+                            float level = rawValue;
                             if (level <= 10) level = 0;
                             if (level >= 1013) level = 1023;
 
                             level = Math.Clamp(level / 1023f, 0f, 1f);
                             if (InvertSliderCheckBox.IsChecked ?? false)
                                 level = 1f - level;
-
-                            var ctrl = _channelControls[i];
-                            var targets = ctrl.AudioTargets;
-
-                            if (targets.Count == 0) continue;
 
                             float currentVolume = ctrl.CurrentVolume;
                             if (Math.Abs(currentVolume - level) < 0.01f) continue;
