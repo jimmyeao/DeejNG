@@ -87,6 +87,9 @@ namespace DeejNG
         private ButtonActionHandler _buttonActionHandler;
         private ObservableCollection<ButtonIndicatorViewModel> _buttonIndicators = new();
 
+        // Track toggle state for latching buttons (PlayPause)
+        private bool _playPauseState = false; // false = paused/stopped, true = playing
+
         // Inline mute support (triggered by 9999 value from hardware)
         private readonly HashSet<int> _inlineMutedChannels = new HashSet<int>();
         private const float INLINE_MUTE_TRIGGER = 9999f;
@@ -1425,33 +1428,44 @@ namespace DeejNG
 
                 // Find the mapping for this button
                 var mapping = settings.ButtonMappings.FirstOrDefault(m => m.ButtonIndex == buttonIndex);
+                if (mapping == null) return;
 
-                // Check if this is a mute action (needs latching indicator)
-                bool isMuteAction = mapping?.Action == ButtonAction.MuteChannel ||
-                                   mapping?.Action == ButtonAction.GlobalMute;
+                // Determine button type:
+                // - Mute actions: Latched (show mute state)
+                // - Play/Pause: Latched (show play state toggle)
+                // - Next/Prev/Stop: Momentary (show press state only)
+                bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
+                                   mapping.Action == ButtonAction.GlobalMute;
+                bool isPlayPauseAction = mapping.Action == ButtonAction.MediaPlayPause;
+                bool isMomentaryAction = mapping.Action == ButtonAction.MediaNext ||
+                                        mapping.Action == ButtonAction.MediaPrevious ||
+                                        mapping.Action == ButtonAction.MediaStop;
 
-                // Update UI button state
+                // Update UI button state on UI thread
                 Dispatcher.BeginInvoke(() =>
                 {
                     var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
                     if (indicator != null)
                     {
-                        // For mute buttons: don't update here, will update after executing action
-                        // For transport buttons: show momentary press state
-                        if (!isMuteAction)
+                        // For momentary buttons: show press state
+                        if (isMomentaryAction)
                         {
                             indicator.IsPressed = isPressed;
+#if DEBUG
+                            Debug.WriteLine($"[Button] Momentary button {buttonIndex} indicator set to {isPressed}");
+#endif
                         }
+                        // For mute and play/pause: don't update here, will update after executing action
                     }
                 });
 
                 // Only process actions on button press (not release)
                 if (!isPressed) return;
 
-                if (mapping == null || mapping.Action == ButtonAction.None)
+                if (mapping.Action == ButtonAction.None)
                 {
 #if DEBUG
-                    Debug.WriteLine($"[Button] No mapping found for button {buttonIndex}");
+                    Debug.WriteLine($"[Button] No action assigned to button {buttonIndex}");
 #endif
                     return;
                 }
@@ -1467,11 +1481,12 @@ namespace DeejNG
                 {
                     _buttonActionHandler.ExecuteAction(mapping);
 
-                    // For mute actions, update indicator to show mute state (not button state)
-                    if (isMuteAction)
+                    // Update indicator based on button type
+                    var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
+                    if (indicator != null)
                     {
-                        var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
-                        if (indicator != null)
+                        // For mute actions, show the actual mute state
+                        if (isMuteAction)
                         {
                             bool muteState = false;
 
@@ -1493,6 +1508,17 @@ namespace DeejNG
                             Debug.WriteLine($"[Button] Updated mute indicator {buttonIndex} to {muteState}");
 #endif
                         }
+                        // For play/pause, toggle the state
+                        else if (isPlayPauseAction)
+                        {
+                            _playPauseState = !_playPauseState;
+                            indicator.IsPressed = _playPauseState;
+
+#if DEBUG
+                            Debug.WriteLine($"[Button] Toggled play/pause indicator {buttonIndex} to {_playPauseState}");
+#endif
+                        }
+                        // Momentary actions already handled in first dispatcher block
                     }
                 });
             }
@@ -1586,7 +1612,15 @@ namespace DeejNG
                             _buttonIndicators.Add(indicator);
                         }
 
-                        ButtonIndicatorsList.ItemsSource = _buttonIndicators;
+                        // Set ItemsSource only if not already set (first time initialization)
+                        if (ButtonIndicatorsList.ItemsSource == null)
+                        {
+                            ButtonIndicatorsList.ItemsSource = _buttonIndicators;
+#if DEBUG
+                            Debug.WriteLine("[Button] ButtonIndicatorsList ItemsSource initialized");
+#endif
+                        }
+
                         ButtonIndicatorsPanel.Visibility = Visibility.Visible;
                     }
                     else
