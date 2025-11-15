@@ -1031,6 +1031,17 @@ namespace DeejNG
             if (ComPortSelector.SelectedItem is string selectedPort)
             {
                 _serialManager.SetUserSelectedPort(selectedPort);
+                
+                // Save the port immediately when user manually selects it
+                // This ensures the selection persists across reboots even if connection fails
+                if (!_isInitializing && _hasLoadedInitialSettings)
+                {
+#if DEBUG
+                    Debug.WriteLine($"[UI] User selected port {selectedPort} - saving to settings");
+#endif
+                    _settingsManager.AppSettings.PortName = selectedPort;
+                    SaveSettings();
+                }
             }
         }
 
@@ -1716,9 +1727,11 @@ namespace DeejNG
                 }
                 else if (availablePorts.Length > 0)
                 {
-                    ComPortSelector.SelectedIndex = 0;
+                    // Don't auto-select first port - force user to manually select
+                    // This prevents connecting to wrong devices on startup
+                    ComPortSelector.SelectedIndex = -1;
 #if DEBUG
-                    Debug.WriteLine($"[Ports] Selected first available port: {availablePorts[0]}");
+                    Debug.WriteLine($"[Ports] Saved port not found. {availablePorts.Length} port(s) available but not auto-selecting. User must manually select.");
 #endif
                 }
                 else
@@ -2088,6 +2101,13 @@ namespace DeejNG
 
         private void SetupAutomaticSerialConnection()
         {
+            // Clear invalid ports list on startup to give saved port a fresh chance
+            // This prevents issues where the Arduino might have been slow to respond in previous session
+            _serialManager.ClearInvalidPorts();
+#if DEBUG
+            Debug.WriteLine("[AutoConnect] Cleared invalid ports list for fresh startup");
+#endif
+
             var connectionAttempts = 0;
             const int maxAttempts = 5;
             var attemptTimer = new DispatcherTimer();
