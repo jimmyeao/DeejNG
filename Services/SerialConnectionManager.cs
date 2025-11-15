@@ -663,14 +663,12 @@ namespace DeejNG.Services
                     {
                         _buttonStates[i] = isPressed;
 
-                        // Only raise event on button press (not release) to avoid double-triggering
-                        if (isPressed)
-                        {
+                        // Raise event for both press and release (for UI indicator updates)
+                        // Note: MainWindow.HandleButtonPress only executes actions on press
 #if DEBUG
-                            Debug.WriteLine($"[Serial] Button {i} pressed (value: {buttonValues[i]})");
+                        Debug.WriteLine($"[Serial] Button {i} {(isPressed ? "pressed" : "released")} (value: {buttonValues[i]})");
 #endif
-                            ButtonStateChanged?.Invoke(i, isPressed);
-                        }
+                        ButtonStateChanged?.Invoke(i, isPressed);
                     }
                 }
             }

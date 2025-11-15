@@ -1219,6 +1219,9 @@ namespace DeejNG
                 {
                     if (!_allowVolumeApplication) return;
                     ApplyVolumeToTargets(control, targets, vol);
+
+                    // Update button indicators when mute state changes via UI
+                    UpdateMuteButtonIndicators();
                 };
 
                 control.SessionDisconnected += (sender, target) =>
@@ -1314,6 +1317,7 @@ namespace DeejNG
                                 {
                                     _inlineMutedChannels.Add(i);
                                     ctrl.SetMuted(true);
+                                    UpdateMuteButtonIndicators(); // Update button indicators
 #if DEBUG
                                     Debug.WriteLine($"[InlineMute] Channel {i} muted (received {rawValue})");
 #endif
@@ -1328,6 +1332,7 @@ namespace DeejNG
                                 {
                                     _inlineMutedChannels.Remove(i);
                                     ctrl.SetMuted(false);
+                                    UpdateMuteButtonIndicators(); // Update button indicators
 #if DEBUG
                                     Debug.WriteLine($"[InlineMute] Channel {i} unmuted (received {rawValue})");
 #endif
@@ -1399,19 +1404,6 @@ namespace DeejNG
             Debug.WriteLine($"[Button] Button {buttonIndex} state changed: {isPressed}");
 #endif
 
-            // Update UI button state
-            Dispatcher.BeginInvoke(() =>
-            {
-                var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
-                if (indicator != null)
-                {
-                    indicator.IsPressed = isPressed;
-                }
-            });
-
-            // Only process on button press (not release)
-            if (!isPressed) return;
-
             try
             {
                 var settings = _settingsManager.AppSettings;
@@ -1419,6 +1411,29 @@ namespace DeejNG
 
                 // Find the mapping for this button
                 var mapping = settings.ButtonMappings.FirstOrDefault(m => m.ButtonIndex == buttonIndex);
+
+                // Check if this is a mute action (needs latching indicator)
+                bool isMuteAction = mapping?.Action == ButtonAction.MuteChannel ||
+                                   mapping?.Action == ButtonAction.GlobalMute;
+
+                // Update UI button state
+                Dispatcher.BeginInvoke(() =>
+                {
+                    var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
+                    if (indicator != null)
+                    {
+                        // For mute buttons: don't update here, will update after executing action
+                        // For transport buttons: show momentary press state
+                        if (!isMuteAction)
+                        {
+                            indicator.IsPressed = isPressed;
+                        }
+                    }
+                });
+
+                // Only process actions on button press (not release)
+                if (!isPressed) return;
+
                 if (mapping == null || mapping.Action == ButtonAction.None)
                 {
 #if DEBUG
@@ -1437,6 +1452,34 @@ namespace DeejNG
                 Dispatcher.BeginInvoke(() =>
                 {
                     _buttonActionHandler.ExecuteAction(mapping);
+
+                    // For mute actions, update indicator to show mute state (not button state)
+                    if (isMuteAction)
+                    {
+                        var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
+                        if (indicator != null)
+                        {
+                            bool muteState = false;
+
+                            if (mapping.Action == ButtonAction.MuteChannel &&
+                                mapping.TargetChannelIndex >= 0 &&
+                                mapping.TargetChannelIndex < _channelControls.Count)
+                            {
+                                muteState = _channelControls[mapping.TargetChannelIndex].IsMuted;
+                            }
+                            else if (mapping.Action == ButtonAction.GlobalMute)
+                            {
+                                // Global mute - check if any channel is muted
+                                muteState = _channelControls.Any(c => c.IsMuted);
+                            }
+
+                            indicator.IsPressed = muteState;
+
+#if DEBUG
+                            Debug.WriteLine($"[Button] Updated mute indicator {buttonIndex} to {muteState}");
+#endif
+                        }
+                    }
                 });
             }
             catch (Exception ex)
@@ -1497,6 +1540,25 @@ namespace DeejNG
                     {
                         foreach (var mapping in settings.ButtonMappings.OrderBy(m => m.ButtonIndex))
                         {
+                            // For mute buttons, initialize indicator to show current mute state
+                            bool initialState = false;
+                            bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
+                                               mapping.Action == ButtonAction.GlobalMute;
+
+                            if (isMuteAction)
+                            {
+                                if (mapping.Action == ButtonAction.MuteChannel &&
+                                    mapping.TargetChannelIndex >= 0 &&
+                                    mapping.TargetChannelIndex < _channelControls.Count)
+                                {
+                                    initialState = _channelControls[mapping.TargetChannelIndex].IsMuted;
+                                }
+                                else if (mapping.Action == ButtonAction.GlobalMute)
+                                {
+                                    initialState = _channelControls.Any(c => c.IsMuted);
+                                }
+                            }
+
                             var indicator = new ButtonIndicatorViewModel
                             {
                                 ButtonIndex = mapping.ButtonIndex,
@@ -1504,7 +1566,7 @@ namespace DeejNG
                                 ActionText = GetButtonActionText(mapping),
                                 Icon = GetButtonActionIcon(mapping.Action),
                                 ToolTip = GetButtonActionTooltip(mapping),
-                                IsPressed = false
+                                IsPressed = initialState
                             };
 
                             _buttonIndicators.Add(indicator);
@@ -1522,6 +1584,53 @@ namespace DeejNG
                 {
 #if DEBUG
                     Debug.WriteLine($"[ERROR] Updating button indicators: {ex.Message}");
+#endif
+                }
+            });
+        }
+
+        /// <summary>
+        /// Updates mute button indicators to reflect current channel mute states.
+        /// </summary>
+        private void UpdateMuteButtonIndicators()
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                try
+                {
+                    var settings = _settingsManager.AppSettings;
+                    if (settings?.ButtonMappings == null) return;
+
+                    foreach (var mapping in settings.ButtonMappings)
+                    {
+                        bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
+                                           mapping.Action == ButtonAction.GlobalMute;
+
+                        if (!isMuteAction) continue;
+
+                        var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == mapping.ButtonIndex);
+                        if (indicator == null) continue;
+
+                        bool muteState = false;
+
+                        if (mapping.Action == ButtonAction.MuteChannel &&
+                            mapping.TargetChannelIndex >= 0 &&
+                            mapping.TargetChannelIndex < _channelControls.Count)
+                        {
+                            muteState = _channelControls[mapping.TargetChannelIndex].IsMuted;
+                        }
+                        else if (mapping.Action == ButtonAction.GlobalMute)
+                        {
+                            muteState = _channelControls.Any(c => c.IsMuted);
+                        }
+
+                        indicator.IsPressed = muteState;
+                    }
+                }
+                catch (Exception ex)
+                {
+#if DEBUG
+                    Debug.WriteLine($"[ERROR] Updating mute button indicators: {ex.Message}");
 #endif
                 }
             });
