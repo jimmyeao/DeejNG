@@ -585,19 +585,22 @@ namespace DeejNG
             _isClosing = true;
 
             // Force save settings (including overlay position) before shutdown
-            if (_settingsManager?.AppSettings != null)
+            // CRITICAL FIX: Save to profile, not legacy settings file
+            if (_settingsManager?.AppSettings != null && _profileManager != null)
             {
                 try
                 {
-                    _settingsManager.SaveSettings(_settingsManager.AppSettings);
+                    // Update the active profile with current settings and save
+                    _profileManager.UpdateActiveProfileSettings(_settingsManager.AppSettings);
+                    _profileManager.SaveProfiles();
 #if DEBUG
-                    Debug.WriteLine("[Shutdown] Settings force saved");
+                    Debug.WriteLine("[Shutdown] Settings saved to active profile");
 #endif
                 }
                 catch (Exception ex)
                 {
 #if DEBUG
-                    Debug.WriteLine($"[Shutdown] Error force saving settings: {ex.Message}");
+                    Debug.WriteLine($"[Shutdown] Error saving settings to profile: {ex.Message}");
 #endif
                 }
             }
