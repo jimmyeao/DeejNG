@@ -202,7 +202,9 @@ namespace DeejNG.Dialogs
 
         private void SetBaudRateSelection(int baudRate)
         {
-            // Find and select the matching baud rate in the ComboBox
+            ComboBoxItem? defaultItem = null;
+
+            // Find and select the matching baud rate, or remember the default
             foreach (ComboBoxItem item in SettingBaudRateSelector.Items)
             {
                 if (item.Tag != null && int.TryParse(item.Tag.ToString(), out int itemBaudRate))
@@ -212,17 +214,19 @@ namespace DeejNG.Dialogs
                         SettingBaudRateSelector.SelectedItem = item;
                         return;
                     }
+                    
+                    // Remember default item for fallback
+                    if (defaultItem == null && itemBaudRate == AppSettings.DefaultBaudRate)
+                    {
+                        defaultItem = item;
+                    }
                 }
             }
 
-            // Default to DefaultBaudRate if not found
-            foreach (ComboBoxItem item in SettingBaudRateSelector.Items)
+            // Fallback to default if requested baud rate not found
+            if (defaultItem != null)
             {
-                if (item.Tag?.ToString() == AppSettings.DefaultBaudRate.ToString())
-                {
-                    SettingBaudRateSelector.SelectedItem = item;
-                    return;
-                }
+                SettingBaudRateSelector.SelectedItem = defaultItem;
             }
         }
 
