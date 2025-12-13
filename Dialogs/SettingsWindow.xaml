@@ -72,12 +72,30 @@
                 <!-- Serial Connection Section -->
                 <TextBlock Text="Serial Connection" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
                 <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="COM Port:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
-                        <ComboBox x:Name="SettingComPortSelector" Width="160" Margin="0,0,8,0"
-                                  Style="{StaticResource ModernComboBox}"
-                                  DropDownOpened="SettingComPortSelector_DropDownOpened"/>
-                        <Button x:Name="SettingConnectButton" Content="Connect" Style="{StaticResource ModernButton}" Click="SettingConnect_Click"/>
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                            <TextBlock Text="COM Port:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
+                            <ComboBox x:Name="SettingComPortSelector" Width="160" Margin="0,0,8,0"
+                                      Style="{StaticResource ModernComboBox}"
+                                      DropDownOpened="SettingComPortSelector_DropDownOpened"/>
+                            <Button x:Name="SettingConnectButton" Content="Connect" Style="{StaticResource ModernButton}" Click="SettingConnect_Click"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Baud Rate:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
+                            <ComboBox x:Name="SettingBaudRateSelector" Width="160" Margin="0,0,8,0"
+                                      Style="{StaticResource ModernComboBox}"
+                                      SelectionChanged="SettingBaudRateSelector_SelectionChanged">
+                                <ComboBoxItem Content="300" Tag="300"/>
+                                <ComboBoxItem Content="1200" Tag="1200"/>
+                                <ComboBoxItem Content="2400" Tag="2400"/>
+                                <ComboBoxItem Content="4800" Tag="4800"/>
+                                <ComboBoxItem Content="9600" Tag="9600"/>
+                                <ComboBoxItem Content="19200" Tag="19200"/>
+                                <ComboBoxItem Content="38400" Tag="38400"/>
+                                <ComboBoxItem Content="57600" Tag="57600"/>
+                                <ComboBoxItem Content="115200" Tag="115200"/>
+                            </ComboBox>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 

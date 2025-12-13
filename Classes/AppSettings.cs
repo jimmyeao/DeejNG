@@ -56,6 +56,11 @@ namespace DeejNG.Classes
         public string? PortName { get; set; }
 
         /// <summary>
+        /// Gets or sets the baud rate for serial communication.
+        /// </summary>
+        public int BaudRate { get; set; } = 9600;
+
+        /// <summary>
         /// Gets or sets the audio targets assigned to each slider.
         /// </summary>
         public List<List<AudioTarget>> SliderTargets { get; set; } = new();

@@ -1058,8 +1058,9 @@ namespace DeejNG
                     // Stop automatic reconnection while user is manually connecting
                     _timerCoordinator.StopSerialReconnect();
 
-                    // Try connection
-                    _serialManager.InitSerial(selectedPort, 9600);
+                    // Try connection with configured baud rate
+                    int baudRate = _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600;
+                    _serialManager.InitSerial(selectedPort, baudRate);
 
                     // Reset button after short delay
                     var resetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -1884,7 +1885,8 @@ namespace DeejNG
                 ConnectionStatus.Foreground = Brushes.Orange;
             }, DispatcherPriority.Background);
 
-            if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName))
+            int baudRate = _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600;
+            if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName, baudRate))
             {
 #if DEBUG
                 Debug.WriteLine("[SerialReconnect] Successfully reconnected to saved port");
@@ -1990,7 +1992,8 @@ namespace DeejNG
                 Debug.WriteLine($"[AutoConnect] Attempt #{connectionAttempts}");
 #endif
 
-                if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName))
+                int baudRate = _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600;
+                if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName, baudRate))
                 {
 #if DEBUG
                     Debug.WriteLine("[AutoConnect] Successfully connected!");

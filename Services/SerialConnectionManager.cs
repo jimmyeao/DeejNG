@@ -280,7 +280,7 @@ namespace DeejNG.Services
             _invalidPortsClearTime = DateTime.Now;
         }
 
-        public bool TryConnectToSavedPort(string savedPortName)
+        public bool TryConnectToSavedPort(string savedPortName, int baudRate = 9600)
         {
             try
             {
@@ -314,8 +314,9 @@ namespace DeejNG.Services
 #endif
                 }
 
-                // Reuse last configured baud rate; default to 9600 if unknown.
-                InitSerial(portToTry, _baudRate > 0 ? _baudRate : 9600);
+                // Use provided baud rate, or reuse last configured baud rate; default to 9600 if unknown.
+                int effectiveBaudRate = baudRate > 0 ? baudRate : (_baudRate > 0 ? _baudRate : 9600);
+                InitSerial(portToTry, effectiveBaudRate);
 
                 if (IsConnected) _userSelectedPort = string.Empty;
                 return IsConnected;

@@ -72,6 +72,10 @@ namespace DeejNG.Dialogs
                 // Initialize COM port controls from main window
                 SettingComPortSelector.ItemsSource = _mainWindow.ComPortSelector.ItemsSource;
                 SettingComPortSelector.SelectedItem = _mainWindow.ComPortSelector.SelectedItem;
+                
+                // Initialize baud rate selector
+                SetBaudRateSelection(_settings.BaudRate);
+                
                 UpdateConnectButtonState();
             }
 
@@ -178,6 +182,47 @@ namespace DeejNG.Dialogs
             {
                 SettingConnectButton.Content = _mainWindow.ConnectButton.Content;
                 SettingConnectButton.IsEnabled = _mainWindow.ConnectButton.IsEnabled;
+            }
+        }
+
+        private void SettingBaudRateSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_settings == null || SettingBaudRateSelector.SelectedItem == null)
+                return;
+
+            var selectedItem = SettingBaudRateSelector.SelectedItem as ComboBoxItem;
+            if (selectedItem?.Tag != null && int.TryParse(selectedItem.Tag.ToString(), out int baudRate))
+            {
+                _settings.BaudRate = baudRate;
+#if DEBUG
+                Debug.WriteLine($"[Settings] Baud rate changed to: {baudRate}");
+#endif
+            }
+        }
+
+        private void SetBaudRateSelection(int baudRate)
+        {
+            // Find and select the matching baud rate in the ComboBox
+            foreach (ComboBoxItem item in SettingBaudRateSelector.Items)
+            {
+                if (item.Tag != null && int.TryParse(item.Tag.ToString(), out int itemBaudRate))
+                {
+                    if (itemBaudRate == baudRate)
+                    {
+                        SettingBaudRateSelector.SelectedItem = item;
+                        return;
+                    }
+                }
+            }
+
+            // Default to 9600 if not found
+            foreach (ComboBoxItem item in SettingBaudRateSelector.Items)
+            {
+                if (item.Tag?.ToString() == "9600")
+                {
+                    SettingBaudRateSelector.SelectedItem = item;
+                    return;
+                }
             }
         }
 
