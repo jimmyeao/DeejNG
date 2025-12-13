@@ -215,10 +215,10 @@ namespace DeejNG.Dialogs
                 }
             }
 
-            // Default to 9600 if not found
+            // Default to DefaultBaudRate if not found
             foreach (ComboBoxItem item in SettingBaudRateSelector.Items)
             {
-                if (item.Tag?.ToString() == "9600")
+                if (item.Tag?.ToString() == AppSettings.DefaultBaudRate.ToString())
                 {
                     SettingBaudRateSelector.SelectedItem = item;
                     return;

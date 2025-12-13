@@ -1059,8 +1059,7 @@ namespace DeejNG
                     _timerCoordinator.StopSerialReconnect();
 
                     // Try connection with configured baud rate
-                    int baudRate = _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600;
-                    _serialManager.InitSerial(selectedPort, baudRate);
+                    _serialManager.InitSerial(selectedPort, GetBaudRate());
 
                     // Reset button after short delay
                     var resetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -1885,8 +1884,7 @@ namespace DeejNG
                 ConnectionStatus.Foreground = Brushes.Orange;
             }, DispatcherPriority.Background);
 
-            int baudRate = _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600;
-            if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName, baudRate))
+            if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName, GetBaudRate()))
             {
 #if DEBUG
                 Debug.WriteLine("[SerialReconnect] Successfully reconnected to saved port");
@@ -1992,8 +1990,7 @@ namespace DeejNG
                 Debug.WriteLine($"[AutoConnect] Attempt #{connectionAttempts}");
 #endif
 
-                int baudRate = _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600;
-                if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName, baudRate))
+                if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName, GetBaudRate()))
                 {
 #if DEBUG
                     Debug.WriteLine("[AutoConnect] Successfully connected!");
@@ -2286,6 +2283,14 @@ namespace DeejNG
             }, DispatcherPriority.Render);
 
             SaveSettings();
+        }
+
+        /// <summary>
+        /// Gets the configured baud rate from settings, defaulting to the standard default if not set.
+        /// </summary>
+        private int GetBaudRate()
+        {
+            return _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : AppSettings.DefaultBaudRate;
         }
 
         private void UpdateConnectionStatus()

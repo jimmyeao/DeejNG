@@ -22,6 +22,11 @@ namespace DeejNG.Classes
         /// Constant indicating no timeout for the overlay.
         /// </summary>
         public const int OverlayNoTimeout = 0;
+
+        /// <summary>
+        /// Default baud rate for serial communication.
+        /// </summary>
+        public const int DefaultBaudRate = 9600;
         #endregion
 
         #region Public Properties
@@ -58,7 +63,7 @@ namespace DeejNG.Classes
         /// <summary>
         /// Gets or sets the baud rate for serial communication.
         /// </summary>
-        public int BaudRate { get; set; } = 9600;
+        public int BaudRate { get; set; } = DefaultBaudRate;
 
         /// <summary>
         /// Gets or sets the audio targets assigned to each slider.

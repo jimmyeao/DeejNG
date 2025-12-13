@@ -280,7 +280,7 @@ namespace DeejNG.Services
             _invalidPortsClearTime = DateTime.Now;
         }
 
-        public bool TryConnectToSavedPort(string savedPortName, int baudRate = 9600)
+        public bool TryConnectToSavedPort(string savedPortName, int baudRate = 0)
         {
             try
             {
