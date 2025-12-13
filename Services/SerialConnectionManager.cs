@@ -1,3 +1,4 @@
+using DeejNG.Classes;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -314,8 +315,8 @@ namespace DeejNG.Services
 #endif
                 }
 
-                // Use provided baud rate, or reuse last configured baud rate; default to 9600 if unknown.
-                int effectiveBaudRate = baudRate > 0 ? baudRate : (_baudRate > 0 ? _baudRate : 9600);
+                // Use provided baud rate, or reuse last configured baud rate; default to standard default if unknown.
+                int effectiveBaudRate = baudRate > 0 ? baudRate : (_baudRate > 0 ? _baudRate : AppSettings.DefaultBaudRate);
                 InitSerial(portToTry, effectiveBaudRate);
 
                 if (IsConnected) _userSelectedPort = string.Empty;
