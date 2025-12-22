@@ -2380,7 +2380,7 @@ namespace DeejNG
                         {
                             var mappedApps = GetAllMappedApplications();
                             mappedApps.Remove("unmapped");
-
+                            _audioService.ApplyMuteStateToUnmappedApplications(ctrl.IsMuted, mappedApps);
                             // In SyncMuteStates we only care about mute; don't touch meters here.
                             // Leave meter updates to UpdateMeters().
                         }
