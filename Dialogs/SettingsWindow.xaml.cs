@@ -73,6 +73,9 @@ namespace DeejNG.Dialogs
                 SettingComPortSelector.ItemsSource = _mainWindow.ComPortSelector.ItemsSource;
                 SettingComPortSelector.SelectedItem = _mainWindow.ComPortSelector.SelectedItem;
                 UpdateConnectButtonState();
+
+                // Initialize baud rate from settings
+                InitializeBaudRateSelection();
             }
 
             // Wire up real-time control events
@@ -98,6 +101,7 @@ namespace DeejNG.Dialogs
 
             // Wire COM port selection changes
             SettingComPortSelector.SelectionChanged += SettingComPortSelector_SelectionChanged;
+            // Baud rate changes are persisted on Save; no live wiring needed here
 
             // Initialize button configuration after window loads
             this.Loaded += SettingsWindow_Loaded;
@@ -166,6 +170,13 @@ namespace DeejNG.Dialogs
         {
             if (_mainWindow != null)
             {
+                // Update baud rate in settings before forwarding connect
+                if (BaudRateComboBox.SelectedItem is ComboBoxItem item &&
+                    int.TryParse(item.Content?.ToString(), out int baud))
+                {
+                    _settings.BaudRate = baud;
+                }
+
                 // Forward the click to the main window's connect button
                 _mainWindow.ConnectButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
                 UpdateConnectButtonState();
@@ -391,7 +402,11 @@ namespace DeejNG.Dialogs
 
             // Save selected overlay text color (e.g., Auto, White, Black)
             _settings.OverlayTextColor = GetTextColorFromSelection();
-
+            if (BaudRateComboBox.SelectedItem is ComboBoxItem item &&
+                int.TryParse(item.Content?.ToString(), out int baud))
+            {
+                _settings.BaudRate = baud;
+            }
             // Save button configuration
             SaveButtonConfiguration();
 
@@ -484,6 +499,28 @@ namespace DeejNG.Dialogs
             {
                 _settings.OverlayTimeoutSeconds = (int)e.NewValue;
                 ApplySettingsToOverlay();
+            }
+        }
+
+        /// <summary>
+        /// Helper to select the baud rate option matching AppSettings.BaudRate, defaulting to 9600 if not set.
+        /// </summary>
+        private void InitializeBaudRateSelection()
+        {
+            int baud = _settings?.BaudRate > 0 ? _settings.BaudRate : 9600;
+            foreach (ComboBoxItem item in BaudRateComboBox.Items)
+            {
+                if (int.TryParse(item.Content?.ToString(), out int value) && value == baud)
+                {
+                    BaudRateComboBox.SelectedItem = item;
+                    return;
+                }
+            }
+
+            // Fallback to first item if no match
+            if (BaudRateComboBox.Items.Count > 0)
+            {
+                BaudRateComboBox.SelectedIndex = 0;
             }
         }
 

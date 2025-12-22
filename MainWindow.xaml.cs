@@ -30,13 +30,9 @@ namespace DeejNG
 {
     public partial class MainWindow : Window
     {
-        #region Public Fields
 
         public List<ChannelControl> _channelControls = new();
 
-        #endregion Public Fields
-
-        #region Private Fields
         [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();
 
@@ -93,10 +89,6 @@ namespace DeejNG
         // Inline mute support (triggered by 9999 value from hardware)
         private readonly HashSet<int> _inlineMutedChannels = new HashSet<int>();
         private const float INLINE_MUTE_TRIGGER = 9999f;
-
-        #endregion Private Fields
-
-        #region Public Constructors
 
         public MainWindow()
         {
@@ -250,10 +242,6 @@ namespace DeejNG
             // Set version text from ClickOnce manifest or assembly
             VersionText.Text = GetApplicationVersion();
         }
-
-        #endregion Public Constructors
-
-        #region Public Methods
 
         /// <summary>
         /// Finds the ChannelControl that currently controls the specified target
@@ -442,12 +430,6 @@ namespace DeejNG
             SaveSettings();
         }
 
-        #endregion Public Methods
-
-        #region Protected Methods
-
-        #region Power Management Event Handlers
-
         private void OnSystemSuspending(object sender, EventArgs e)
         {
 #if DEBUG
@@ -581,8 +563,6 @@ namespace DeejNG
             }
         }
 
-        #endregion Power Management Event Handlers
-
         protected override void OnClosed(EventArgs e)
         {
             _isClosing = true;
@@ -698,9 +678,7 @@ namespace DeejNG
             base.OnStateChanged(e);
         }
 
-        #endregion Protected Methods
-
-        #region Private Methods
+      
 
         private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)
         {
@@ -1068,6 +1046,11 @@ namespace DeejNG
                     Debug.WriteLine($"[Manual] User clicked connect for port: {selectedPort}");
 #endif
 
+                    // Use the last saved baud rate if available, otherwise default to 9600
+                    int baud = _settingsManager.AppSettings.BaudRate > 0
+                        ? _settingsManager.AppSettings.BaudRate
+                        : 9600;
+
                     // Update button state immediately
                     ConnectButton.IsEnabled = false;
                     ConnectButton.Content = "Connecting...";
@@ -1076,7 +1059,7 @@ namespace DeejNG
                     _timerCoordinator.StopSerialReconnect();
 
                     // Try connection
-                    _serialManager.InitSerial(selectedPort, 9600);
+                    _serialManager.InitSerial(selectedPort, baud);
 
                     // Reset button after short delay
                     var resetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -2006,7 +1989,8 @@ namespace DeejNG
                     ShowSlidersCheckBox.IsChecked ?? true,
                     StartOnBootCheckBox.IsChecked ?? false,
                     StartMinimizedCheckBox.IsChecked ?? false,
-                    DisableSmoothingCheckBox.IsChecked ?? false
+                    DisableSmoothingCheckBox.IsChecked ?? false,
+                    _serialManager.CurrentBaudRate
                 );
 
                 // Update active profile and save
@@ -2043,7 +2027,9 @@ namespace DeejNG
                 ConnectionStatus.Foreground = Brushes.Orange;
             }, DispatcherPriority.Background);
 
-            if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName))
+            if (_serialManager.TryConnectToSavedPort(
+                _settingsManager.AppSettings.PortName,
+                _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600))
             {
 #if DEBUG
                 Debug.WriteLine("[SerialReconnect] Successfully reconnected to saved port");
@@ -2156,7 +2142,7 @@ namespace DeejNG
                 Debug.WriteLine($"[AutoConnect] Attempt #{connectionAttempts}");
 #endif
 
-                if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName))
+                if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName, _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600))
                 {
 #if DEBUG
                     Debug.WriteLine("[AutoConnect] Successfully connected!");
@@ -2392,9 +2378,11 @@ namespace DeejNG
                         }
                         else if (targetName == "unmapped")
                         {
-                            var mappedAppsForUnmapped = new HashSet<string>(allMappedApps);
-                            mappedAppsForUnmapped.Remove("unmapped");
-                            _audioService.ApplyMuteStateToUnmappedApplications(ctrl.IsMuted, mappedAppsForUnmapped);
+                            var mappedApps = GetAllMappedApplications();
+                            mappedApps.Remove("unmapped");
+
+                            // In SyncMuteStates we only care about mute; don't touch meters here.
+                            // Leave meter updates to UpdateMeters().
                         }
                         else
                         {
@@ -2405,12 +2393,7 @@ namespace DeejNG
                                     bool isMuted = matchedSession.SimpleAudioVolume.Mute;
                                     ctrl.SetMuted(isMuted);
                                 }
-                                catch (Exception ex)
-                                {
-#if DEBUG
-                                    Debug.WriteLine($"[ERROR] Getting mute state for {targetName}: {ex.Message}");
-#endif
-                                }
+                                catch (ArgumentException) { }
                             }
                         }
                     }
@@ -2544,9 +2527,6 @@ namespace DeejNG
                             continue;
                         }
 
-                        float highestPeak = 0;
-                        bool allMuted = true;
-
                         foreach (var target in targets)
                         {
                             try
@@ -2555,16 +2535,28 @@ namespace DeejNG
                                 {
                                     if (_deviceManager.TryGetInputPeak(target.Name, out var peak, out var muted))
                                     {
-                                        if (peak > highestPeak) highestPeak = peak;
-                                        if (!muted) allMuted = false;
+                                        if (peak > 0.01f)
+                                        {
+                                            ctrl.UpdateAudioMeter(peak * visualGain);
+                                        }
+                                        else
+                                        {
+                                            ctrl.UpdateAudioMeter(0);
+                                        }
                                     }
                                 }
                                 else if (target.IsOutputDevice)
                                 {
                                     if (_deviceManager.TryGetOutputPeak(target.Name, out var peak, out var muted))
                                     {
-                                        if (peak > highestPeak) highestPeak = peak;
-                                        if (!muted) allMuted = false;
+                                        if (peak > 0.01f)
+                                        {
+                                            ctrl.UpdateAudioMeter(peak * visualGain);
+                                        }
+                                        else
+                                        {
+                                            ctrl.UpdateAudioMeter(0);
+                                        }
                                     }
                                 }
                                 else if (string.Equals(target.Name, "system", StringComparison.OrdinalIgnoreCase))
@@ -2573,8 +2565,7 @@ namespace DeejNG
                                     float systemVol = _cachedAudioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
                                     peak *= systemVol * systemCalibrationFactor;
 
-                                    if (peak > highestPeak) highestPeak = peak;
-                                    if (!_cachedAudioDevice.AudioEndpointVolume.Mute) allMuted = false;
+                                    ctrl.UpdateAudioMeter(peak > 0 ? peak * visualGain : 0);
                                 }
                                 else if (string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
                                 {
@@ -2589,11 +2580,7 @@ namespace DeejNG
                                             try
                                             {
                                                 float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
-                                                if (peak > highestPeak)
-                                                {
-                                                    highestPeak = peak;
-                                                }
-                                                if (!matchingSession.SimpleAudioVolume.Mute) allMuted = false;
+                                                ctrl.UpdateAudioMeter(peak > 0 ? peak * visualGain : 0);
                                             }
                                             catch (ArgumentException) { }
                                         }
@@ -2605,11 +2592,7 @@ namespace DeejNG
                                     mappedApps.Remove("unmapped");
 
                                     float unmappedPeak = GetUnmappedApplicationsPeakLevelOptimized(mappedApps, sessions);
-                                    if (unmappedPeak > highestPeak)
-                                    {
-                                        highestPeak = unmappedPeak;
-                                    }
-                                    if (!ctrl.IsMuted) allMuted = false;
+                                    ctrl.UpdateAudioMeter(unmappedPeak > 0 ? unmappedPeak * visualGain : 0);
                                 }
                                 else
                                 {
@@ -2620,11 +2603,7 @@ namespace DeejNG
                                         try
                                         {
                                             float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
-                                            if (peak > highestPeak)
-                                            {
-                                                highestPeak = peak;
-                                            }
-                                            if (!matchingSession.SimpleAudioVolume.Mute) allMuted = false;
+                                            ctrl.UpdateAudioMeter(peak > 0 ? peak * visualGain : 0);
                                         }
                                         catch (ArgumentException) { }
                                     }
@@ -2637,9 +2616,6 @@ namespace DeejNG
 #endif
                             }
                         }
-
-                        float finalLevel = ctrl.IsMuted || allMuted ? 0 : Math.Min(highestPeak * visualGain, 1.0f);
-                        ctrl.UpdateAudioMeter(finalLevel);
                     }
                     catch (Exception ex)
                     {
@@ -2844,8 +2820,6 @@ namespace DeejNG
             }
         }
 
-        #region Profile Management
-
         /// <summary>
         /// Loads all profiles into the profile selector ComboBox
         /// </summary>
@@ -3038,12 +3012,6 @@ namespace DeejNG
             }
         }
 
-        #endregion Profile Management
-
-        #endregion Private Methods
-
-        #region Public Classes
-
         public class DecoupledAudioSessionEventsHandler : IAudioSessionEventsHandler
         {
             private readonly MainWindow _mainWindow;
@@ -3139,8 +3107,6 @@ namespace DeejNG
             }
         }
 
-        #endregion Public Classes
-    
     }
 
     internal static class IconHandler

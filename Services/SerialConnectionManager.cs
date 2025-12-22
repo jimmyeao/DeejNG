@@ -59,6 +59,7 @@ namespace DeejNG.Services
         public bool IsProtocolValidated => _isProtocolValidated;
         public string LastConnectedPort => _lastConnectedPort;
         public string CurrentPort => _serialPort?.PortName ?? string.Empty;
+        public int CurrentBaudRate => _baudRate > 0 ? _baudRate : 9600;
 
         /// <summary>
         /// Configures the number of sliders and buttons expected in the serial data.
@@ -156,6 +157,7 @@ namespace DeejNG.Services
         {
             try
             {
+                _baudRate = baudRate;
                 if (string.IsNullOrWhiteSpace(portName))
                 {
 #if DEBUG
@@ -280,8 +282,13 @@ namespace DeejNG.Services
             _invalidPortsClearTime = DateTime.Now;
         }
 
-        public bool TryConnectToSavedPort(string savedPortName)
+        public bool TryConnectToSavedPort(string savedPortName, int baudRate)
         {
+            if (string.IsNullOrWhiteSpace(savedPortName))
+                return false;
+
+            // Optionally update internal field
+            _baudRate = baudRate;
             try
             {
                 if (IsConnected) return true;
