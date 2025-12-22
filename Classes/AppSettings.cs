@@ -132,6 +132,11 @@ namespace DeejNG.Classes
         /// Gets or sets the button mappings for physical buttons.
         /// </summary>
         public List<ButtonMapping> ButtonMappings { get; set; } = new();
+
+        /// <summary>
+        /// Gets or sets the baud rate used for the serial connection.
+        /// </summary>
+        public int BaudRate { get; set; } = 9600;
         #endregion Public Properties
     }
 

@@ -30,13 +30,9 @@ namespace DeejNG
 {
     public partial class MainWindow : Window
     {
-        #region Public Fields
 
         public List<ChannelControl> _channelControls = new();
 
-        #endregion Public Fields
-
-        #region Private Fields
         [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();
 
@@ -87,13 +83,12 @@ namespace DeejNG
         private ButtonActionHandler _buttonActionHandler;
         private ObservableCollection<ButtonIndicatorViewModel> _buttonIndicators = new();
 
+        // Track toggle state for latching buttons (PlayPause)
+        private bool _playPauseState = false; // false = paused/stopped, true = playing
+
         // Inline mute support (triggered by 9999 value from hardware)
         private readonly HashSet<int> _inlineMutedChannels = new HashSet<int>();
         private const float INLINE_MUTE_TRIGGER = 9999f;
-
-        #endregion Private Fields
-
-        #region Public Constructors
 
         public MainWindow()
         {
@@ -247,10 +242,6 @@ namespace DeejNG
             // Set version text from ClickOnce manifest or assembly
             VersionText.Text = GetApplicationVersion();
         }
-
-        #endregion Public Constructors
-
-        #region Public Methods
 
         /// <summary>
         /// Finds the ChannelControl that currently controls the specified target
@@ -439,12 +430,6 @@ namespace DeejNG
             SaveSettings();
         }
 
-        #endregion Public Methods
-
-        #region Protected Methods
-
-        #region Power Management Event Handlers
-
         private void OnSystemSuspending(object sender, EventArgs e)
         {
 #if DEBUG
@@ -578,26 +563,27 @@ namespace DeejNG
             }
         }
 
-        #endregion Power Management Event Handlers
-
         protected override void OnClosed(EventArgs e)
         {
             _isClosing = true;
 
             // Force save settings (including overlay position) before shutdown
-            if (_settingsManager?.AppSettings != null)
+            // CRITICAL FIX: Save to profile, not legacy settings file
+            if (_settingsManager?.AppSettings != null && _profileManager != null)
             {
                 try
                 {
-                    _settingsManager.SaveSettings(_settingsManager.AppSettings);
+                    // Update the active profile with current settings and save
+                    _profileManager.UpdateActiveProfileSettings(_settingsManager.AppSettings);
+                    _profileManager.SaveProfiles();
 #if DEBUG
-                    Debug.WriteLine("[Shutdown] Settings force saved");
+                    Debug.WriteLine("[Shutdown] Settings saved to active profile");
 #endif
                 }
                 catch (Exception ex)
                 {
 #if DEBUG
-                    Debug.WriteLine($"[Shutdown] Error force saving settings: {ex.Message}");
+                    Debug.WriteLine($"[Shutdown] Error saving settings to profile: {ex.Message}");
 #endif
                 }
             }
@@ -692,9 +678,7 @@ namespace DeejNG
             base.OnStateChanged(e);
         }
 
-        #endregion Protected Methods
-
-        #region Private Methods
+      
 
         private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)
         {
@@ -1031,6 +1015,17 @@ namespace DeejNG
             if (ComPortSelector.SelectedItem is string selectedPort)
             {
                 _serialManager.SetUserSelectedPort(selectedPort);
+                
+                // Save the port immediately when user manually selects it
+                // This ensures the selection persists across reboots even if connection fails
+                if (!_isInitializing && _hasLoadedInitialSettings)
+                {
+#if DEBUG
+                    Debug.WriteLine($"[UI] User selected port {selectedPort} - saving to settings");
+#endif
+                    _settingsManager.AppSettings.PortName = selectedPort;
+                    SaveSettings();
+                }
             }
         }
 
@@ -1051,6 +1046,11 @@ namespace DeejNG
                     Debug.WriteLine($"[Manual] User clicked connect for port: {selectedPort}");
 #endif
 
+                    // Use the last saved baud rate if available, otherwise default to 9600
+                    int baud = _settingsManager.AppSettings.BaudRate > 0
+                        ? _settingsManager.AppSettings.BaudRate
+                        : 9600;
+
                     // Update button state immediately
                     ConnectButton.IsEnabled = false;
                     ConnectButton.Content = "Connecting...";
@@ -1059,7 +1059,7 @@ namespace DeejNG
                     _timerCoordinator.StopSerialReconnect();
 
                     // Try connection
-                    _serialManager.InitSerial(selectedPort, 9600);
+                    _serialManager.InitSerial(selectedPort, baud);
 
                     // Reset button after short delay
                     var resetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -1219,6 +1219,9 @@ namespace DeejNG
                 {
                     if (!_allowVolumeApplication) return;
                     ApplyVolumeToTargets(control, targets, vol);
+
+                    // Update button indicators when mute state changes via UI
+                    UpdateMuteButtonIndicators();
                 };
 
                 control.SessionDisconnected += (sender, target) =>
@@ -1314,6 +1317,7 @@ namespace DeejNG
                                 {
                                     _inlineMutedChannels.Add(i);
                                     ctrl.SetMuted(true);
+                                    UpdateMuteButtonIndicators(); // Update button indicators
 #if DEBUG
                                     Debug.WriteLine($"[InlineMute] Channel {i} muted (received {rawValue})");
 #endif
@@ -1328,6 +1332,7 @@ namespace DeejNG
                                 {
                                     _inlineMutedChannels.Remove(i);
                                     ctrl.SetMuted(false);
+                                    UpdateMuteButtonIndicators(); // Update button indicators
 #if DEBUG
                                     Debug.WriteLine($"[InlineMute] Channel {i} unmuted (received {rawValue})");
 #endif
@@ -1399,19 +1404,6 @@ namespace DeejNG
             Debug.WriteLine($"[Button] Button {buttonIndex} state changed: {isPressed}");
 #endif
 
-            // Update UI button state
-            Dispatcher.BeginInvoke(() =>
-            {
-                var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
-                if (indicator != null)
-                {
-                    indicator.IsPressed = isPressed;
-                }
-            });
-
-            // Only process on button press (not release)
-            if (!isPressed) return;
-
             try
             {
                 var settings = _settingsManager.AppSettings;
@@ -1419,10 +1411,44 @@ namespace DeejNG
 
                 // Find the mapping for this button
                 var mapping = settings.ButtonMappings.FirstOrDefault(m => m.ButtonIndex == buttonIndex);
-                if (mapping == null || mapping.Action == ButtonAction.None)
+                if (mapping == null) return;
+
+                // Determine button type:
+                // - Mute actions: Latched (show mute state)
+                // - Play/Pause: Latched (show play state toggle)
+                // - Next/Prev/Stop: Momentary (show press state only)
+                bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
+                                   mapping.Action == ButtonAction.GlobalMute;
+                bool isPlayPauseAction = mapping.Action == ButtonAction.MediaPlayPause;
+                bool isMomentaryAction = mapping.Action == ButtonAction.MediaNext ||
+                                        mapping.Action == ButtonAction.MediaPrevious ||
+                                        mapping.Action == ButtonAction.MediaStop;
+
+                // Update UI button state on UI thread
+                Dispatcher.BeginInvoke(() =>
+                {
+                    var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
+                    if (indicator != null)
+                    {
+                        // For momentary buttons: show press state
+                        if (isMomentaryAction)
+                        {
+                            indicator.IsPressed = isPressed;
+#if DEBUG
+                            Debug.WriteLine($"[Button] Momentary button {buttonIndex} indicator set to {isPressed}");
+#endif
+                        }
+                        // For mute and play/pause: don't update here, will update after executing action
+                    }
+                });
+
+                // Only process actions on button press (not release)
+                if (!isPressed) return;
+
+                if (mapping.Action == ButtonAction.None)
                 {
 #if DEBUG
-                    Debug.WriteLine($"[Button] No mapping found for button {buttonIndex}");
+                    Debug.WriteLine($"[Button] No action assigned to button {buttonIndex}");
 #endif
                     return;
                 }
@@ -1437,6 +1463,46 @@ namespace DeejNG
                 Dispatcher.BeginInvoke(() =>
                 {
                     _buttonActionHandler.ExecuteAction(mapping);
+
+                    // Update indicator based on button type
+                    var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
+                    if (indicator != null)
+                    {
+                        // For mute actions, show the actual mute state
+                        if (isMuteAction)
+                        {
+                            bool muteState = false;
+
+                            if (mapping.Action == ButtonAction.MuteChannel &&
+                                mapping.TargetChannelIndex >= 0 &&
+                                mapping.TargetChannelIndex < _channelControls.Count)
+                            {
+                                muteState = _channelControls[mapping.TargetChannelIndex].IsMuted;
+                            }
+                            else if (mapping.Action == ButtonAction.GlobalMute)
+                            {
+                                // Global mute - check if any channel is muted
+                                muteState = _channelControls.Any(c => c.IsMuted);
+                            }
+
+                            indicator.IsPressed = muteState;
+
+#if DEBUG
+                            Debug.WriteLine($"[Button] Updated mute indicator {buttonIndex} to {muteState}");
+#endif
+                        }
+                        // For play/pause, toggle the state
+                        else if (isPlayPauseAction)
+                        {
+                            _playPauseState = !_playPauseState;
+                            indicator.IsPressed = _playPauseState;
+
+#if DEBUG
+                            Debug.WriteLine($"[Button] Toggled play/pause indicator {buttonIndex} to {_playPauseState}");
+#endif
+                        }
+                        // Momentary actions already handled in first dispatcher block
+                    }
                 });
             }
             catch (Exception ex)
@@ -1497,6 +1563,25 @@ namespace DeejNG
                     {
                         foreach (var mapping in settings.ButtonMappings.OrderBy(m => m.ButtonIndex))
                         {
+                            // For mute buttons, initialize indicator to show current mute state
+                            bool initialState = false;
+                            bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
+                                               mapping.Action == ButtonAction.GlobalMute;
+
+                            if (isMuteAction)
+                            {
+                                if (mapping.Action == ButtonAction.MuteChannel &&
+                                    mapping.TargetChannelIndex >= 0 &&
+                                    mapping.TargetChannelIndex < _channelControls.Count)
+                                {
+                                    initialState = _channelControls[mapping.TargetChannelIndex].IsMuted;
+                                }
+                                else if (mapping.Action == ButtonAction.GlobalMute)
+                                {
+                                    initialState = _channelControls.Any(c => c.IsMuted);
+                                }
+                            }
+
                             var indicator = new ButtonIndicatorViewModel
                             {
                                 ButtonIndex = mapping.ButtonIndex,
@@ -1504,13 +1589,21 @@ namespace DeejNG
                                 ActionText = GetButtonActionText(mapping),
                                 Icon = GetButtonActionIcon(mapping.Action),
                                 ToolTip = GetButtonActionTooltip(mapping),
-                                IsPressed = false
+                                IsPressed = initialState
                             };
 
                             _buttonIndicators.Add(indicator);
                         }
 
-                        ButtonIndicatorsList.ItemsSource = _buttonIndicators;
+                        // Set ItemsSource only if not already set (first time initialization)
+                        if (ButtonIndicatorsList.ItemsSource == null)
+                        {
+                            ButtonIndicatorsList.ItemsSource = _buttonIndicators;
+#if DEBUG
+                            Debug.WriteLine("[Button] ButtonIndicatorsList ItemsSource initialized");
+#endif
+                        }
+
                         ButtonIndicatorsPanel.Visibility = Visibility.Visible;
                     }
                     else
@@ -1522,6 +1615,53 @@ namespace DeejNG
                 {
 #if DEBUG
                     Debug.WriteLine($"[ERROR] Updating button indicators: {ex.Message}");
+#endif
+                }
+            });
+        }
+
+        /// <summary>
+        /// Updates mute button indicators to reflect current channel mute states.
+        /// </summary>
+        private void UpdateMuteButtonIndicators()
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                try
+                {
+                    var settings = _settingsManager.AppSettings;
+                    if (settings?.ButtonMappings == null) return;
+
+                    foreach (var mapping in settings.ButtonMappings)
+                    {
+                        bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
+                                           mapping.Action == ButtonAction.GlobalMute;
+
+                        if (!isMuteAction) continue;
+
+                        var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == mapping.ButtonIndex);
+                        if (indicator == null) continue;
+
+                        bool muteState = false;
+
+                        if (mapping.Action == ButtonAction.MuteChannel &&
+                            mapping.TargetChannelIndex >= 0 &&
+                            mapping.TargetChannelIndex < _channelControls.Count)
+                        {
+                            muteState = _channelControls[mapping.TargetChannelIndex].IsMuted;
+                        }
+                        else if (mapping.Action == ButtonAction.GlobalMute)
+                        {
+                            muteState = _channelControls.Any(c => c.IsMuted);
+                        }
+
+                        indicator.IsPressed = muteState;
+                    }
+                }
+                catch (Exception ex)
+                {
+#if DEBUG
+                    Debug.WriteLine($"[ERROR] Updating mute button indicators: {ex.Message}");
 #endif
                 }
             });
@@ -1607,9 +1747,11 @@ namespace DeejNG
                 }
                 else if (availablePorts.Length > 0)
                 {
-                    ComPortSelector.SelectedIndex = 0;
+                    // Don't auto-select first port - force user to manually select
+                    // This prevents connecting to wrong devices on startup
+                    ComPortSelector.SelectedIndex = -1;
 #if DEBUG
-                    Debug.WriteLine($"[Ports] Selected first available port: {availablePorts[0]}");
+                    Debug.WriteLine($"[Ports] Saved port not found. {availablePorts.Length} port(s) available but not auto-selecting. User must manually select.");
 #endif
                 }
                 else
@@ -1847,7 +1989,8 @@ namespace DeejNG
                     ShowSlidersCheckBox.IsChecked ?? true,
                     StartOnBootCheckBox.IsChecked ?? false,
                     StartMinimizedCheckBox.IsChecked ?? false,
-                    DisableSmoothingCheckBox.IsChecked ?? false
+                    DisableSmoothingCheckBox.IsChecked ?? false,
+                    _serialManager.CurrentBaudRate
                 );
 
                 // Update active profile and save
@@ -1884,7 +2027,9 @@ namespace DeejNG
                 ConnectionStatus.Foreground = Brushes.Orange;
             }, DispatcherPriority.Background);
 
-            if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName))
+            if (_serialManager.TryConnectToSavedPort(
+                _settingsManager.AppSettings.PortName,
+                _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600))
             {
 #if DEBUG
                 Debug.WriteLine("[SerialReconnect] Successfully reconnected to saved port");
@@ -1979,6 +2124,13 @@ namespace DeejNG
 
         private void SetupAutomaticSerialConnection()
         {
+            // Clear invalid ports list on startup to give saved port a fresh chance
+            // This prevents issues where the Arduino might have been slow to respond in previous session
+            _serialManager.ClearInvalidPorts();
+#if DEBUG
+            Debug.WriteLine("[AutoConnect] Cleared invalid ports list for fresh startup");
+#endif
+
             var connectionAttempts = 0;
             const int maxAttempts = 5;
             var attemptTimer = new DispatcherTimer();
@@ -1990,7 +2142,7 @@ namespace DeejNG
                 Debug.WriteLine($"[AutoConnect] Attempt #{connectionAttempts}");
 #endif
 
-                if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName))
+                if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName, _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600))
                 {
 #if DEBUG
                     Debug.WriteLine("[AutoConnect] Successfully connected!");
@@ -2226,9 +2378,11 @@ namespace DeejNG
                         }
                         else if (targetName == "unmapped")
                         {
-                            var mappedAppsForUnmapped = new HashSet<string>(allMappedApps);
-                            mappedAppsForUnmapped.Remove("unmapped");
-                            _audioService.ApplyMuteStateToUnmappedApplications(ctrl.IsMuted, mappedAppsForUnmapped);
+                            var mappedApps = GetAllMappedApplications();
+                            mappedApps.Remove("unmapped");
+
+                            // In SyncMuteStates we only care about mute; don't touch meters here.
+                            // Leave meter updates to UpdateMeters().
                         }
                         else
                         {
@@ -2239,12 +2393,7 @@ namespace DeejNG
                                     bool isMuted = matchedSession.SimpleAudioVolume.Mute;
                                     ctrl.SetMuted(isMuted);
                                 }
-                                catch (Exception ex)
-                                {
-#if DEBUG
-                                    Debug.WriteLine($"[ERROR] Getting mute state for {targetName}: {ex.Message}");
-#endif
-                                }
+                                catch (ArgumentException) { }
                             }
                         }
                     }
@@ -2378,9 +2527,6 @@ namespace DeejNG
                             continue;
                         }
 
-                        float highestPeak = 0;
-                        bool allMuted = true;
-
                         foreach (var target in targets)
                         {
                             try
@@ -2389,16 +2535,28 @@ namespace DeejNG
                                 {
                                     if (_deviceManager.TryGetInputPeak(target.Name, out var peak, out var muted))
                                     {
-                                        if (peak > highestPeak) highestPeak = peak;
-                                        if (!muted) allMuted = false;
+                                        if (peak > 0.01f)
+                                        {
+                                            ctrl.UpdateAudioMeter(peak * visualGain);
+                                        }
+                                        else
+                                        {
+                                            ctrl.UpdateAudioMeter(0);
+                                        }
                                     }
                                 }
                                 else if (target.IsOutputDevice)
                                 {
                                     if (_deviceManager.TryGetOutputPeak(target.Name, out var peak, out var muted))
                                     {
-                                        if (peak > highestPeak) highestPeak = peak;
-                                        if (!muted) allMuted = false;
+                                        if (peak > 0.01f)
+                                        {
+                                            ctrl.UpdateAudioMeter(peak * visualGain);
+                                        }
+                                        else
+                                        {
+                                            ctrl.UpdateAudioMeter(0);
+                                        }
                                     }
                                 }
                                 else if (string.Equals(target.Name, "system", StringComparison.OrdinalIgnoreCase))
@@ -2407,8 +2565,7 @@ namespace DeejNG
                                     float systemVol = _cachedAudioDevice.AudioEndpointVolume.MasterVolumeLevelScalar;
                                     peak *= systemVol * systemCalibrationFactor;
 
-                                    if (peak > highestPeak) highestPeak = peak;
-                                    if (!_cachedAudioDevice.AudioEndpointVolume.Mute) allMuted = false;
+                                    ctrl.UpdateAudioMeter(peak > 0 ? peak * visualGain : 0);
                                 }
                                 else if (string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
                                 {
@@ -2423,11 +2580,7 @@ namespace DeejNG
                                             try
                                             {
                                                 float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
-                                                if (peak > highestPeak)
-                                                {
-                                                    highestPeak = peak;
-                                                }
-                                                if (!matchingSession.SimpleAudioVolume.Mute) allMuted = false;
+                                                ctrl.UpdateAudioMeter(peak > 0 ? peak * visualGain : 0);
                                             }
                                             catch (ArgumentException) { }
                                         }
@@ -2439,11 +2592,7 @@ namespace DeejNG
                                     mappedApps.Remove("unmapped");
 
                                     float unmappedPeak = GetUnmappedApplicationsPeakLevelOptimized(mappedApps, sessions);
-                                    if (unmappedPeak > highestPeak)
-                                    {
-                                        highestPeak = unmappedPeak;
-                                    }
-                                    if (!ctrl.IsMuted) allMuted = false;
+                                    ctrl.UpdateAudioMeter(unmappedPeak > 0 ? unmappedPeak * visualGain : 0);
                                 }
                                 else
                                 {
@@ -2454,11 +2603,7 @@ namespace DeejNG
                                         try
                                         {
                                             float peak = matchingSession.AudioMeterInformation.MasterPeakValue;
-                                            if (peak > highestPeak)
-                                            {
-                                                highestPeak = peak;
-                                            }
-                                            if (!matchingSession.SimpleAudioVolume.Mute) allMuted = false;
+                                            ctrl.UpdateAudioMeter(peak > 0 ? peak * visualGain : 0);
                                         }
                                         catch (ArgumentException) { }
                                     }
@@ -2471,9 +2616,6 @@ namespace DeejNG
 #endif
                             }
                         }
-
-                        float finalLevel = ctrl.IsMuted || allMuted ? 0 : Math.Min(highestPeak * visualGain, 1.0f);
-                        ctrl.UpdateAudioMeter(finalLevel);
                     }
                     catch (Exception ex)
                     {
@@ -2678,8 +2820,6 @@ namespace DeejNG
             }
         }
 
-        #region Profile Management
-
         /// <summary>
         /// Loads all profiles into the profile selector ComboBox
         /// </summary>
@@ -2872,12 +3012,6 @@ namespace DeejNG
             }
         }
 
-        #endregion Profile Management
-
-        #endregion Private Methods
-
-        #region Public Classes
-
         public class DecoupledAudioSessionEventsHandler : IAudioSessionEventsHandler
         {
             private readonly MainWindow _mainWindow;
@@ -2973,8 +3107,6 @@ namespace DeejNG
             }
         }
 
-        #endregion Public Classes
-    
     }
 
     internal static class IconHandler

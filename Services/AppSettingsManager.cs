@@ -458,7 +458,8 @@ namespace DeejNG.Services
             bool vuMeters,
             bool startOnBoot,
             bool startMinimized,
-            bool disableSmoothing)
+            bool disableSmoothing,
+            int baudRate)
         {
             return new AppSettings
             {
@@ -470,6 +471,7 @@ namespace DeejNG.Services
                 StartOnBoot = startOnBoot,
                 StartMinimized = startMinimized,
                 DisableSmoothing = disableSmoothing,
+                BaudRate = baudRate,
 
                 // Preserve overlay settings from current settings
                 OverlayEnabled = AppSettings.OverlayEnabled,

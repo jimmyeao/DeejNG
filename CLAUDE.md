@@ -86,13 +86,17 @@ DeejNG/
 ├── Models/                  # Data models
 │   ├── AudioTarget.cs       # Represents controllable audio target
 │   ├── Profile.cs           # User profile with settings
-│   └── ThemeOption.cs       # Theme metadata
+│   ├── ThemeOption.cs       # Theme metadata
+│   ├── ButtonAction.cs      # Button action enum
+│   ├── ButtonMapping.cs     # Button configuration model
+│   └── ButtonIndicatorViewModel.cs  # Button UI state
 ├── Services/                # Manager classes
 │   ├── AppSettingsManager.cs       # Settings persistence
 │   ├── ProfileManager.cs           # Profile management
 │   ├── SerialConnectionManager.cs  # Serial communication
 │   ├── DeviceCacheManager.cs       # Audio device caching
-│   └── TimerCoordinator.cs         # Timer lifecycle
+│   ├── TimerCoordinator.cs         # Timer lifecycle
+│   └── ButtonActionHandler.cs      # Button action execution
 ├── Dialogs/                 # UI components and dialogs
 │   ├── ChannelControl.xaml(.cs)    # Slider component
 │   ├── SessionPickerDialog.xaml    # App picker
@@ -128,6 +132,94 @@ Hardware sends slider values as pipe-delimited floats (0.0-1.0):
 0.5|0.3|0.8|1.0|0.0
 ```
 Number of values determines slider count. SerialConnectionManager parses this and raises DataReceived events.
+
+### Button System
+
+**Physical Button Detection:**
+Buttons are auto-detected from serial data. Hardware sends special values to indicate button states:
+- `10000.0` = Button released (not pressed)
+- `10001.0` = Button pressed
+
+Buttons can be mixed with sliders in the same serial message:
+```
+0.5|0.3|10001.0|0.8|10000.0
+```
+This represents: 2 sliders, 1 pressed button, 1 slider, 1 released button.
+
+**Button Types & Behavior:**
+
+The system distinguishes between two button types based on their action, even though all physical buttons are momentary:
+
+1. **Momentary Buttons** - UI indicator shows press state only while physically held
+   - MediaNext (Next Track)
+   - MediaPrevious (Previous Track)
+   - MediaStop (Stop Playback)
+
+2. **Latched Buttons** - UI indicator shows toggled/persistent state
+   - MediaPlayPause - Toggles between playing/paused state with each press
+   - MuteChannel - Shows actual mute state of the target channel
+   - GlobalMute - Shows mute state (lit when any channel is muted)
+
+**Button Actions (Models/ButtonAction.cs):**
+- `None` - No action assigned
+- `MediaPlayPause` - Toggle play/pause (sends Windows media key)
+- `MediaNext` - Next track (sends Windows media key)
+- `MediaPrevious` - Previous track (sends Windows media key)
+- `MediaStop` - Stop playback (sends Windows media key)
+- `MuteChannel` - Toggle mute for specific channel (requires TargetChannelIndex)
+- `GlobalMute` - Toggle mute for all channels
+- `ToggleInputOutput` - Reserved for future use
+
+**Button Mapping (Models/ButtonMapping.cs):**
+Each button has a mapping configuration:
+```csharp
+{
+    ButtonIndex = 0,                    // 0-based button index
+    Action = ButtonAction.MediaPlayPause,
+    TargetChannelIndex = -1,            // -1 for global, 0+ for specific channel
+    FriendlyName = "Play/Pause"
+}
+```
+
+**Button UI Indicators:**
+Buttons are displayed in the UI as indicator chips showing:
+- Button number (BTN 1, BTN 2, etc.)
+- Action icon (▶, ⏭, ⏮, ⏹, 🔇)
+- Action text (Play/Pause, Next, Previous, etc.)
+- Visual state (highlighted when pressed/active)
+
+Indicators use WPF DataTriggers bound to `ButtonIndicatorViewModel.IsPressed`:
+- True = AccentBrush background (highlighted)
+- False = Default background
+
+**State Tracking (MainWindow.xaml.cs):**
+- `_buttonIndicators` - ObservableCollection of ButtonIndicatorViewModel for UI binding
+- `_playPauseState` - Tracks play/pause toggle state (bool)
+- Mute state - Queried from ChannelControl.IsMuted
+
+**Button Event Flow:**
+1. Serial data received → `SerialConnectionManager` detects button value (10000/10001)
+2. `ButtonStateChanged` event raised with (buttonIndex, isPressed)
+3. `MainWindow.HandleButtonPress()` processes the event:
+   - For momentary buttons: Update indicator.IsPressed = isPressed
+   - For press events (not release): Execute the button action
+   - For latched buttons: Update indicator to show actual state after action
+4. `ButtonActionHandler.ExecuteAction()` performs the action (media keys or mute toggle)
+5. UI indicator updates automatically via INotifyPropertyChanged
+
+**Implementation Details:**
+- ButtonIndicatorsList.ItemsSource set only once during initialization to prevent binding issues
+- All button state updates marshalled to UI thread via Dispatcher.BeginInvoke
+- Media keys sent via Win32 keybd_event API (VK_MEDIA_PLAY_PAUSE, etc.)
+- Mute actions directly call ChannelControl.SetMuted()
+- Button indicators auto-hide when no button mappings configured
+
+**Important Notes:**
+- Physical buttons are always momentary (hardware has no latching mechanism)
+- "Latched" refers to the UI indicator behavior, not the physical button
+- Play/Pause state is tracked in software since Windows doesn't report media state
+- All button events fire on both press AND release for UI feedback
+- Actions only execute on press (not release) to prevent double-triggering
 
 ### VU Meter Implementation
 
@@ -206,6 +298,29 @@ Switched dynamically via App.xaml.cs resource merging.
 - DataReceived event fires with complete lines (not partial)
 - Leftover buffer prevents message truncation
 
+### Working with Buttons
+
+**Adding a New Button Action:**
+1. Add enum value to `Models/ButtonAction.cs`
+2. Implement action logic in `Services/ButtonActionHandler.ExecuteAction()`
+3. Update `MainWindow.HandleButtonPress()` to categorize as momentary or latched
+4. Add icon mapping in `MainWindow.GetButtonActionIcon()`
+5. Add text mapping in `MainWindow.GetButtonActionText()`
+6. Add tooltip mapping in `MainWindow.GetButtonActionTooltip()`
+
+**Button State Update Rules:**
+- **Momentary buttons**: Update `indicator.IsPressed` immediately on press/release
+- **Latched buttons**: Update `indicator.IsPressed` AFTER action executes with actual state
+- **Never update indicators directly** - always use Dispatcher.BeginInvoke for thread safety
+- For new latched buttons, query actual state (like mute) rather than tracking separate state
+
+**Button Indicator Lifecycle:**
+1. `ConfigureButtonLayout()` called when sliders are generated or settings change
+2. `UpdateButtonIndicators()` clears and rebuilds _buttonIndicators collection
+3. ItemsSource set only on first initialization (checked via null check)
+4. ObservableCollection automatically notifies UI of changes
+5. Panel visibility managed automatically (visible when mappings exist)
+
 ## Important Implementation Notes
 
 ### Audio Session Lifetime
@@ -254,3 +369,6 @@ NAudio audio sessions can expire or become invalid. Always:
 - AppSettingsManager logs fallback path selection
 - Session cache hits tracked in `_sessionCacheHitCount`
 - Timer coordinator logs timer lifecycle events
+- Button events logged with `[Button]` prefix showing state changes and indicator updates
+- Button action execution logged in `ButtonActionHandler` with action type
+- Momentary vs latched button categorization logged in HandleButtonPress
