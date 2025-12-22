@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        Title="Settings" Height="991" Width="520"
+        Title="Settings" Height="1204" Width="900"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -25,7 +25,6 @@
         <StaticResource ResourceKey="Chrome" />
     </shell:WindowChrome.WindowChrome>
     <DockPanel Margin="0,0,0,10">
-        <!-- Custom Title Bar -->
         <Border DockPanel.Dock="Top" Background="{DynamicResource SurfaceBrush}">
             <Grid Height="48" MouseLeftButtonDown="TitleBar_MouseDown" Background="Transparent">
                 <Grid.ColumnDefinitions>
@@ -34,197 +33,206 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Window title -->
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0">
                     <TextBlock Text="⚙" FontSize="24" VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <TextBlock Text="Settings" Style="{StaticResource TitleTextBlock}" VerticalAlignment="Center"/>
                 </StackPanel>
 
-                <!-- Close button -->
                 <Button Grid.Column="2" Content="✕" Style="{StaticResource IconButton}" 
                         shell:WindowChrome.IsHitTestVisibleInChrome="True" 
                         ToolTip="Close" Click="CloseButton_Click" Margin="8,0"/>
             </Grid>
         </Border>
 
-        <!-- Content with ScrollViewer -->
-        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Height="920">
-            <StackPanel Margin="20">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
 
-        <!-- General toggles moved from main window -->
-                <!-- General Section -->
-                <TextBlock Text="General" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
-                <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20">
-                    <StackPanel>
-                        <CheckBox x:Name="SettingInvertSliders" Content="Invert Sliders" Margin="0,0,0,12"
-                                  Foreground="{DynamicResource TextPrimaryBrush}"/>
-                        <CheckBox x:Name="SettingShowMeters" Content="Show Meters" Margin="0,0,0,12"
-                                  Foreground="{DynamicResource TextPrimaryBrush}"/>
-                        <CheckBox x:Name="SettingStartOnBoot" Content="Start on boot" Margin="0,0,0,12"
-                                  Foreground="{DynamicResource TextPrimaryBrush}"/>
-                        <CheckBox x:Name="SettingStartMinimized" Content="Start minimized" Margin="0,0,0,12"
-                                  Foreground="{DynamicResource TextPrimaryBrush}"/>
-                        <CheckBox x:Name="SettingDisableSmoothing" Content="Disable Smoothing"
-                                  Foreground="{DynamicResource TextPrimaryBrush}"/>
-                    </StackPanel>
-                </Border>
+            <Grid Margin="20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="20" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
-                <!-- Serial Connection Section -->
-                <TextBlock Text="Serial Connection" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
-                <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20">
-                    <StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                            <TextBlock Text="COM Port:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
-                            <ComboBox x:Name="SettingComPortSelector" Width="160" Margin="0,0,8,0"
-                                      Style="{StaticResource ModernComboBox}"
-                                      DropDownOpened="SettingComPortSelector_DropDownOpened"/>
-                            <Button x:Name="SettingConnectButton" Content="Connect" Style="{StaticResource ModernButton}" Click="SettingConnect_Click"/>
+                <StackPanel Grid.Row="0" Grid.Column="0">
+                    <TextBlock Text="General" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
+                    <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20" Height="207">
+                        <StackPanel>
+                            <CheckBox x:Name="SettingInvertSliders" Content="Invert Sliders" Margin="0,0,0,12"
+                                      Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            <CheckBox x:Name="SettingShowMeters" Content="Show Meters" Margin="0,0,0,12"
+                                      Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            <CheckBox x:Name="SettingStartOnBoot" Content="Start on boot" Margin="0,0,0,12"
+                                      Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            <CheckBox x:Name="SettingStartMinimized" Content="Start minimized" Margin="0,0,0,12"
+                                      Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            <CheckBox x:Name="SettingDisableSmoothing" Content="Disable Smoothing"
+                                      Foreground="{DynamicResource TextPrimaryBrush}"/>
                         </StackPanel>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Baud Rate:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
-                            <ComboBox x:Name="BaudRateComboBox" Width="160" Style="{StaticResource ModernComboBox}">
-                                <ComboBoxItem Content="9600"/>
-                                <ComboBoxItem Content="19200"/>
-                                <ComboBoxItem Content="38400"/>
-                                <ComboBoxItem Content="57600"/>
-                                <ComboBoxItem Content="115200"/>
-                            </ComboBox>
+                    </Border>
+
+                    <TextBlock Text="Serial Connection" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
+                    <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="COM Port:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
+                                <ComboBox x:Name="SettingComPortSelector" Width="160" Margin="0,0,8,0"
+                                          Style="{StaticResource ModernComboBox}"
+                                          DropDownOpened="SettingComPortSelector_DropDownOpened"/>
+                                <Button x:Name="SettingConnectButton" Content="Connect" Style="{StaticResource ModernButton}" Click="SettingConnect_Click"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Baud Rate:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
+                                <ComboBox x:Name="BaudRateComboBox" Width="160" Style="{StaticResource ModernComboBox}">
+                                    <ComboBoxItem Content="9600"/>
+                                    <ComboBoxItem Content="19200"/>
+                                    <ComboBoxItem Content="38400"/>
+                                    <ComboBoxItem Content="57600"/>
+                                    <ComboBoxItem Content="115200"/>
+                                </ComboBox>
+                            </StackPanel>
                         </StackPanel>
-                    </StackPanel>
-                </Border>
+                    </Border>
+                </StackPanel>
 
-                <!-- Overlay Section -->
-                <TextBlock Text="Overlay" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
-                <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20">
-                    <StackPanel>
-                        <CheckBox x:Name="OverlayEnabledCheckBox" Content="Enable Overlay" Margin="0,0,0,16"
-                                  Foreground="{DynamicResource TextPrimaryBrush}"/>
+                <StackPanel Grid.Row="0" Grid.Column="2" Grid.RowSpan="2">
+                    <TextBlock Text="Overlay" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
+                    <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20">
+                        <StackPanel>
+                            <CheckBox x:Name="OverlayEnabledCheckBox" Content="Enable Overlay" Margin="0,0,0,16"
+                                      Foreground="{DynamicResource TextPrimaryBrush}"/>
 
-                        <Grid Margin="0,0,0,16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="150"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Opacity" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center"/>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                <Slider x:Name="OpacitySlider" Minimum="0.0" Maximum="1.0" Width="200" TickFrequency="0.05" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
-                                <TextBlock Text="{Binding ElementName=OpacitySlider, Path=Value, StringFormat={}{0:P0}}" Margin="10,0,0,0" VerticalAlignment="Center" Style="{StaticResource SubtitleTextBlock}"/>
-                            </StackPanel>
-                        </Grid>
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Opacity" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <Slider x:Name="OpacitySlider" Minimum="0.0" Maximum="1.0" Width="180" TickFrequency="0.05" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding ElementName=OpacitySlider, Path=Value, StringFormat={}{0:P0}}" Margin="10,0,0,0" VerticalAlignment="Center" Style="{StaticResource SubtitleTextBlock}"/>
+                                </StackPanel>
+                            </Grid>
 
-                        <CheckBox x:Name="AutoCloseCheckBox" Content="Auto-Close Overlay" Margin="0,0,0,16"
-                                  Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            <CheckBox x:Name="AutoCloseCheckBox" Content="Auto-Close Overlay" Margin="0,0,0,16"
+                                      Foreground="{DynamicResource TextPrimaryBrush}"/>
 
-                        <Grid Margin="0,0,0,16" IsEnabled="{Binding IsChecked, ElementName=AutoCloseCheckBox}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="150"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Timeout (s)" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center"/>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                <Slider x:Name="TimeoutSlider" Minimum="1" Maximum="15" Width="200" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
-                                <TextBlock Text="{Binding ElementName=TimeoutSlider, Path=Value}" Margin="10,0,0,0" VerticalAlignment="Center" Style="{StaticResource SubtitleTextBlock}"/>
-                            </StackPanel>
-                        </Grid>
+                            <Grid Margin="0,0,0,16" IsEnabled="{Binding IsChecked, ElementName=AutoCloseCheckBox}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Timeout (s)" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <Slider x:Name="TimeoutSlider" Minimum="1" Maximum="15" Width="180" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding ElementName=TimeoutSlider, Path=Value}" Margin="10,0,0,0" VerticalAlignment="Center" Style="{StaticResource SubtitleTextBlock}"/>
+                                </StackPanel>
+                            </Grid>
 
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="150"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Text Color" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center"/>
-                            <ComboBox Grid.Column="1" x:Name="TextColorComboBox" 
-                                      Style="{StaticResource ModernComboBox}"
-                                      HorizontalAlignment="Left"
-                                      Width="200"
-                                      ToolTip="Choose text color: Auto detects background, White/Black forces specific color">
-                                <ComboBoxItem Content="Auto (Smart Contrast)"/>
-                                <ComboBoxItem Content="White Text"/>
-                                <ComboBoxItem Content="Black Text"/>
-                            </ComboBox>
-                        </Grid>
-                    </StackPanel>
-                </Border>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Text Color" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
+                                <ComboBox Grid.Column="1" x:Name="TextColorComboBox" 
+                                          Style="{StaticResource ModernComboBox}"
+                                          HorizontalAlignment="Left"
+                                          Width="200"
+                                          ToolTip="Choose text color: Auto detects background, White/Black forces specific color">
+                                    <ComboBoxItem Content="Auto (Smart Contrast)"/>
+                                    <ComboBoxItem Content="White Text"/>
+                                    <ComboBoxItem Content="Black Text"/>
+                                </ComboBox>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
 
-                <!-- Button Configuration Section -->
-                <TextBlock Text="Physical Buttons (Experimental)" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
-                <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20">
-                    <StackPanel>
-                        <TextBlock Text="Configure physical buttons on your controller"
-                                   Style="{StaticResource SubtitleTextBlock}"
-                                   Margin="0,0,0,8"/>
+                <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3">
+                    <TextBlock Text="Physical Buttons (Experimental)" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
+                    <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20">
+                        <StackPanel>
+                            <TextBlock Text="Configure physical buttons on your controller"
+                                       Style="{StaticResource SubtitleTextBlock}"
+                                       Margin="0,0,0,8"/>
 
-                        <!-- Info about auto-detection -->
-                        <Border Background="{DynamicResource InfoBackgroundBrush}"
-                                BorderBrush="{DynamicResource InfoBorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="4"
-                                Padding="12"
-                                Margin="0,0,0,16">
-                            <StackPanel>
-                                <TextBlock TextWrapping="Wrap" Style="{StaticResource SubtitleTextBlock}">
+                            <Border Background="{DynamicResource InfoBackgroundBrush}"
+                                    BorderBrush="{DynamicResource InfoBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="12"
+                                    Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock TextWrapping="Wrap" Style="{StaticResource SubtitleTextBlock}">
                                     <Run Text="ℹ️ Buttons are auto-detected from your Arduino." FontWeight="SemiBold"/>
                                     <LineBreak/>
                                     <Run Text="Send 10000 (OFF) or 10001 (ON) for each button after your slider values."/>
                                     <LineBreak/>
                                     <Run Text="Example: 512|768|400|10000|10001 (3 sliders + 2 buttons)"/>
-                                </TextBlock>
-                            </StackPanel>
-                        </Border>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
 
-                        <!-- Button mappings list -->
-                        <ItemsControl x:Name="ButtonMappingsItemsControl" Margin="0,8,0,0">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border BorderBrush="{DynamicResource BorderBrush}"
-                                            BorderThickness="1"
-                                            CornerRadius="4"
-                                            Padding="12"
-                                            Margin="0,0,0,8">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="80"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="100"/>
-                                            </Grid.ColumnDefinitions>
+                            <ItemsControl x:Name="ButtonMappingsItemsControl" Margin="0,8,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border BorderBrush="{DynamicResource BorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="4"
+                                                Padding="12"
+                                                Margin="0,0,0,8">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="80"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="100"/>
+                                                </Grid.ColumnDefinitions>
 
-                                            <TextBlock Grid.Column="0"
-                                                       Text="{Binding ButtonIndexDisplay}"
-                                                       Style="{StaticResource LabelTextBlock}"
-                                                       VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{Binding ButtonIndexDisplay}"
+                                                           Style="{StaticResource LabelTextBlock}"
+                                                           VerticalAlignment="Center"/>
 
-                                            <ComboBox Grid.Column="1"
-                                                      SelectedIndex="{Binding ActionIndex, Mode=TwoWay}"
-                                                      Style="{StaticResource ModernComboBox}"
-                                                      Margin="8,0"
-                                                      SelectionChanged="ButtonAction_SelectionChanged">
-                                                <ComboBoxItem Content="None"/>
-                                                <ComboBoxItem Content="Media Play/Pause"/>
-                                                <ComboBoxItem Content="Media Next"/>
-                                                <ComboBoxItem Content="Media Previous"/>
-                                                <ComboBoxItem Content="Media Stop"/>
-                                                <ComboBoxItem Content="Mute Channel"/>
-                                                <ComboBoxItem Content="Global Mute"/>
-                                            </ComboBox>
+                                                <ComboBox Grid.Column="1"
+                                                          SelectedIndex="{Binding ActionIndex, Mode=TwoWay}"
+                                                          Style="{StaticResource ModernComboBox}"
+                                                          Margin="8,0"
+                                                          SelectionChanged="ButtonAction_SelectionChanged">
+                                                    <ComboBoxItem Content="None"/>
+                                                    <ComboBoxItem Content="Media Play/Pause"/>
+                                                    <ComboBoxItem Content="Media Next"/>
+                                                    <ComboBoxItem Content="Media Previous"/>
+                                                    <ComboBoxItem Content="Media Stop"/>
+                                                    <ComboBoxItem Content="Mute Channel"/>
+                                                    <ComboBoxItem Content="Global Mute"/>
+                                                </ComboBox>
 
-                                            <TextBox Grid.Column="2"
-                                                     Text="{Binding TargetChannelDisplay, Mode=TwoWay}"
-                                                     IsEnabled="{Binding NeedsTargetChannel}"
-                                                     ToolTip="Target channel (1-based)"
-                                                     PreviewTextInput="NumberValidationTextBox"/>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
+                                                <TextBox Grid.Column="2"
+                                                         Text="{Binding TargetChannelDisplay, Mode=TwoWay}"
+                                                         IsEnabled="{Binding NeedsTargetChannel}"
+                                                         ToolTip="Target channel (1-based)"
+                                                         PreviewTextInput="NumberValidationTextBox"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
 
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,0">
                     <Button Content="Save" Style="{StaticResource ModernButton}" Click="Save_Click" Margin="0,0,10,0"/>
                     <Button Content="Cancel" Style="{StaticResource ModernButton}" Click="Cancel_Click"/>
                 </StackPanel>
-            </StackPanel>
+
+            </Grid>
         </ScrollViewer>
     </DockPanel>
 </Window>
