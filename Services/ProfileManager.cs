@@ -79,6 +79,11 @@ namespace DeejNG.Services
 #if DEBUG
                     Debug.WriteLine($"[Profiles] Loaded {_profileCollection.Profiles.Count} profiles from disk");
                     Debug.WriteLine($"[Profiles] Active profile: {_profileCollection.ActiveProfileName}");
+                    var activeProfile = _profileCollection.GetActiveProfile();
+                    if (activeProfile != null)
+                    {
+                        Debug.WriteLine($"[Profiles] Active profile settings - PortName: '{activeProfile.Settings?.PortName}', BaudRate: {activeProfile.Settings?.BaudRate}");
+                    }
 #endif
                 }
                 else
@@ -141,7 +146,8 @@ namespace DeejNG.Services
 
 #if DEBUG
                     Debug.WriteLine("[Profiles] Migrated legacy settings to 'Default' profile");
-                    Debug.WriteLine($"[Profiles]   - Port: {legacySettings.PortName}");
+                    Debug.WriteLine($"[Profiles]   - Port: '{legacySettings.PortName}'");
+                    Debug.WriteLine($"[Profiles]   - BaudRate: {legacySettings.BaudRate}");
                     Debug.WriteLine($"[Profiles]   - Sliders: {legacySettings.SliderTargets?.Count ?? 0}");
 #endif
 

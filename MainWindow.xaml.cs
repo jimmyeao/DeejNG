@@ -418,9 +418,14 @@ namespace DeejNG
             _settingsManager.AppSettings.NumberOfButtons = newSettings.NumberOfButtons;
             _settingsManager.AppSettings.ButtonMappings = newSettings.ButtonMappings;
 
+            // BUGFIX: Update baud rate from SettingsWindow
+            // This ensures baud rate changes from the UI are persisted
+            _settingsManager.AppSettings.BaudRate = newSettings.BaudRate;
+
 #if DEBUG
             Debug.WriteLine($"[Overlay] Settings updated - Opacity: {newSettings.OverlayOpacity}, Position: ({newSettings.OverlayX}, {newSettings.OverlayY})");
             Debug.WriteLine($"[Button] Button configuration updated - Count: {newSettings.NumberOfButtons}, Mappings: {newSettings.ButtonMappings?.Count ?? 0}");
+            Debug.WriteLine($"[Serial] BaudRate updated - Rate: {newSettings.BaudRate}");
 #endif
 
             // Reconfigure button layout if button count changed
@@ -1800,6 +1805,10 @@ namespace DeejNG
                 var settings = _profileManager.GetActiveProfileSettings();
                 _settingsManager.AppSettings = settings;
 
+#if DEBUG
+                Debug.WriteLine($"[LoadSettings] Loaded from profile - PortName: '{settings.PortName}', BaudRate: {settings.BaudRate}");
+#endif
+
                 // Apply UI settings - apply saved theme if available
                 if (!string.IsNullOrEmpty(settings.SelectedTheme))
                 {
@@ -1981,8 +1990,18 @@ namespace DeejNG
                 }
 #endif
 
+                // BUGFIX: Preserve PortName from AppSettings instead of CurrentPort
+                // CurrentPort is empty when not connected, which would wipe out the saved port
+                string portToSave = !string.IsNullOrEmpty(_serialManager.CurrentPort)
+                    ? _serialManager.CurrentPort
+                    : _settingsManager.AppSettings.PortName;
+
+#if DEBUG
+                Debug.WriteLine($"[SaveSettings] Saving PortName: '{portToSave}' (CurrentPort: '{_serialManager.CurrentPort}', Stored: '{_settingsManager.AppSettings.PortName}')");
+#endif
+
                 var settings = _settingsManager.CreateSettingsFromUI(
-                    _serialManager.CurrentPort,
+                    portToSave,
                     sliderTargets,
                     isDarkTheme,
                     InvertSliderCheckBox.IsChecked ?? false,
@@ -1990,12 +2009,18 @@ namespace DeejNG
                     StartOnBootCheckBox.IsChecked ?? false,
                     StartMinimizedCheckBox.IsChecked ?? false,
                     DisableSmoothingCheckBox.IsChecked ?? false,
-                    _serialManager.CurrentBaudRate
+                    // BUGFIX: Use baud rate from AppSettings instead of CurrentBaudRate
+                    // This ensures user's baud rate selection is preserved even if not connected
+                    _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : _serialManager.CurrentBaudRate
                 );
 
-                // Update active profile and save
+                // Update active profile and save to profiles.json
                 _profileManager.UpdateActiveProfileSettings(settings);
                 _profileManager.SaveProfiles();
+
+                // BUGFIX: Also save to settings.json to maintain consistency
+                // This ensures both profile system and legacy settings file stay in sync
+                _settingsManager.SaveSettings(settings);
             }
             catch (Exception ex)
             {
@@ -2138,11 +2163,13 @@ namespace DeejNG
             attemptTimer.Tick += (s, e) =>
             {
                 connectionAttempts++;
+                int baudRate = _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600;
 #if DEBUG
                 Debug.WriteLine($"[AutoConnect] Attempt #{connectionAttempts}");
+                Debug.WriteLine($"[AutoConnect] Port: {_settingsManager.AppSettings.PortName}, BaudRate: {baudRate}");
 #endif
 
-                if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName, _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : 9600))
+                if (_serialManager.TryConnectToSavedPort(_settingsManager.AppSettings.PortName, baudRate))
                 {
 #if DEBUG
                     Debug.WriteLine("[AutoConnect] Successfully connected!");
