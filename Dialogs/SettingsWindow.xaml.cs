@@ -175,6 +175,16 @@ namespace DeejNG.Dialogs
                     int.TryParse(item.Content?.ToString(), out int baud))
                 {
                     _settings.BaudRate = baud;
+
+                    // BUGFIX: Update MainWindow's AppSettings BEFORE triggering connect
+                    // This ensures the connection uses the newly selected baud rate
+                    var currentSettings = _mainWindow.GetCurrentSettings();
+                    currentSettings.BaudRate = baud;
+                    _mainWindow.UpdateOverlaySettings(currentSettings);
+
+#if DEBUG
+                    Debug.WriteLine($"[SettingsWindow] Updated baud rate to {baud} before connect");
+#endif
                 }
 
                 // Forward the click to the main window's connect button
