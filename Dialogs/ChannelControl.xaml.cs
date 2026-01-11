@@ -240,7 +240,7 @@ namespace DeejNG.Dialogs
 
         /// <summary>
         /// Programmatically sets the muted state of the control,
-        /// updating the internal state, UI, and visuals without triggering events.
+        /// updating the internal state, UI, and visuals, then triggers volume application.
         /// </summary>
         /// <param name="muted">True to mute, false to unmute.</param>
         public void SetMuted(bool muted)
@@ -250,6 +250,9 @@ namespace DeejNG.Dialogs
             MuteButton.IsChecked = muted;  // Reflect change in the UI control
             UpdateMuteButtonVisual();      // Update any related visual styling (e.g., icon color)
             _suppressEvents = false;       // Re-enable events
+            
+            // Trigger volume application with the new mute state
+            VolumeOrMuteChanged?.Invoke(_audioTargets, CurrentVolume, _isMuted);
         }
 
         /// <summary>
