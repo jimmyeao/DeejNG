@@ -245,13 +245,16 @@ namespace DeejNG.Dialogs
         /// <param name="muted">True to mute, false to unmute.</param>
         public void SetMuted(bool muted)
         {
-            _suppressEvents = true;        // Prevent external event handling during update
+            _suppressEvents = true;        // Prevent MuteButton.Checked/Unchecked events during update
             _isMuted = muted;              // Update internal state
             MuteButton.IsChecked = muted;  // Reflect change in the UI control
             UpdateMuteButtonVisual();      // Update any related visual styling (e.g., icon color)
             _suppressEvents = false;       // Re-enable events
             
-            // Trigger volume application with the new mute state
+            // Explicitly invoke VolumeOrMuteChanged to apply mute state to audio devices
+            // Note: We don't check _suppressEvents here because this is an intentional invocation,
+            // not a side effect of UI manipulation. The _suppressEvents flag only prevents the
+            // MuteButton control's Checked/Unchecked handlers from firing during programmatic updates.
             VolumeOrMuteChanged?.Invoke(_audioTargets, CurrentVolume, _isMuted);
         }
 
