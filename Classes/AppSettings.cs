@@ -71,6 +71,16 @@ namespace DeejNG.Classes
         public bool StartOnBoot { get; set; }
 
         /// <summary>
+        /// Gets or sets a value indicating whether the application should use an exponential volume curve.
+        /// </summary>
+        public bool UseExponentialVolume { get; set; }
+
+        /// <summary>
+        /// The factor to use for the exponential volume curve. A higher factor makes the curve more agressive.
+        /// </summary>
+        public float ExponentialVolumeFactor { get; set; } = 2;
+
+        /// <summary>
         /// Gets or sets a value indicating whether VU meters are enabled.
         /// </summary>
         public bool VuMeters { get; set; } = true;

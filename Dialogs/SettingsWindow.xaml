@@ -61,7 +61,7 @@
 
                 <StackPanel Grid.Row="0" Grid.Column="0">
                     <TextBlock Text="General" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
-                    <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20" Height="207">
+                    <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20" Height="227">
                         <StackPanel>
                             <CheckBox x:Name="SettingInvertSliders" Content="Invert Sliders" Margin="0,0,0,12"
                                       Foreground="{DynamicResource TextPrimaryBrush}"/>
@@ -71,8 +71,21 @@
                                       Foreground="{DynamicResource TextPrimaryBrush}"/>
                             <CheckBox x:Name="SettingStartMinimized" Content="Start minimized" Margin="0,0,0,12"
                                       Foreground="{DynamicResource TextPrimaryBrush}"/>
-                            <CheckBox x:Name="SettingDisableSmoothing" Content="Disable Smoothing"
+                            <CheckBox x:Name="SettingDisableSmoothing" Content="Disable Smoothing" Margin="0,0,0,12"
                                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            <CheckBox x:Name="SettingUseExponentialVolume" Content="Use Exponential Volume" Margin="0,0,0,12"
+                                      Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Exp. Volume Factor" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="130"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <Slider x:Name="ExponentialVolumeFactorSlider" Minimum="1.5" Maximum="10.0" Width="180" TickFrequency="0.1" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding ElementName=ExponentialVolumeFactorSlider, Path=Value, StringFormat={}{0:F1}}" Margin="10,0,0,0" VerticalAlignment="Center" Style="{StaticResource SubtitleTextBlock}"/>
+                                </StackPanel>
+                            </Grid>
                         </StackPanel>
                     </Border>
 
