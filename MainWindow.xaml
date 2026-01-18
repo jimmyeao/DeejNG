@@ -180,6 +180,14 @@
                               Checked="StartOnBootCheckBox_Checked"
                               Unchecked="StartOnBootCheckBox_Unchecked"/>
 
+                <ToggleButton x:Name="UseExponentialVolumeCheckBox"
+                              Content="Use exponential volume curve"
+                              Style="{StaticResource SwitchToggleStyle}"
+                              Checked="UseExponentialVolumeCheckBox_Checked"
+                              Unchecked="UseExponentialVolumeCheckBox_Unchecked"/>
+
+                <Slider x:Name="ExponentialVolumeFactorSlider" ValueChanged="ExponentialVolumeFactorSlider_Changed"/>
+
                 <ToggleButton x:Name="StartMinimizedCheckBox"
                               Content="Start minimized"
                               Style="{StaticResource SwitchToggleStyle}"
