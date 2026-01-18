@@ -290,6 +290,15 @@ namespace DeejNG.Dialogs
                     ? rawLevel
                     : _smoothedVolume + (rawLevel - _smoothedVolume) * SmoothingFactor;
 
+                // BUGFIX: Snap to target if we're very close (within 2.5%)
+                // This ensures 0% and 100% can be reached despite exponential smoothing
+                // Increased from 1.5% to 2.5% to handle dial potentiometers better
+                const float snapThreshold = 0.025f;
+                if (Math.Abs(_smoothedVolume - rawLevel) < snapThreshold)
+                {
+                    _smoothedVolume = rawLevel;
+                }
+
                 // Apply the smoothed volume
                 SetVolume(_smoothedVolume);
             }

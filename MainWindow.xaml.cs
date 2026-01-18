@@ -62,6 +62,7 @@ namespace DeejNG
         private bool _hasSyncedMuteStates = false;
         private bool _isClosing = false;
         private bool _isInitializing = true;
+        private bool _isExiting = false; // Track if we're actually exiting vs minimizing
         private DateTime _lastDeviceCacheTime = DateTime.MinValue;
         private DateTime _lastForcedCleanup = DateTime.MinValue;
         private DateTime _lastMeterSessionRefresh = DateTime.MinValue;
@@ -99,6 +100,7 @@ namespace DeejNG
             RenderOptions.ProcessRenderMode = RenderMode.Default;
             InitializeComponent();
             Loaded += MainWindow_Loaded;
+            Closing += MainWindow_Closing;
 
             string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Square150x150Logo.scale-200.ico");
 
@@ -1147,6 +1149,7 @@ namespace DeejNG
 
         private async void ExitMenuItem_Click(object sender, RoutedEventArgs e)
         {
+            _isExiting = true; // Set flag to allow actual exit
             Application.Current.Shutdown();
         }
 
@@ -1925,6 +1928,53 @@ namespace DeejNG
 #if DEBUG
             Debug.WriteLine("[MainWindow] MainWindow_Loaded - overlay already initialized in constructor");
 #endif
+        }
+
+        private void MainWindow_Closing(object sender, CancelEventArgs e)
+        {
+            // If user clicked the X button (not exiting via menu), minimize to tray instead
+            if (!_isExiting)
+            {
+                e.Cancel = true; // Cancel the close operation
+                this.WindowState = WindowState.Minimized;
+                this.Hide();
+                MyNotifyIcon.Visibility = Visibility.Visible;
+
+#if DEBUG
+                Debug.WriteLine("[MainWindow] Close button clicked - minimizing to tray instead of closing");
+#endif
+                return;
+            }
+
+            // Actually exiting - perform cleanup
+#if DEBUG
+            Debug.WriteLine("[MainWindow] Exiting application - performing cleanup");
+#endif
+            _isClosing = true;
+
+            try
+            {
+                // Stop all timers
+                _timerCoordinator?.Dispose();
+
+                // Cleanup serial connection
+                _serialManager?.Dispose();
+
+                // Cleanup overlay
+                _overlayService?.Dispose();
+
+                // Dispose device enumerator
+                _deviceEnumerator?.Dispose();
+
+                // Final cleanup
+                ServiceLocator.Dispose();
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                Debug.WriteLine($"[MainWindow] Error during cleanup: {ex.Message}");
+#endif
+            }
         }
 
         private void OnOverlayPositionChanged(object sender, OverlayPositionChangedEventArgs e)
