@@ -939,7 +939,7 @@ namespace DeejNG
 
                 if (systemControl != null)
                 {
-                    systemControl.SetMuted(data.Muted);
+                    systemControl.SetMuted(data.Muted, applyToAudio: false);
                 }
             });
         }
@@ -1239,7 +1239,7 @@ namespace DeejNG
                 }
 
                 control.AudioTargets = targetsForThisControl;
-                control.SetMuted(false);
+                control.SetMuted(false, applyToAudio: false);
 
                 control.TargetChanged += (_, _) => SaveSettings();
 
@@ -1344,7 +1344,7 @@ namespace DeejNG
                                 if (!_inlineMutedChannels.Contains(i))
                                 {
                                     _inlineMutedChannels.Add(i);
-                                    ctrl.SetMuted(true);
+                                    ctrl.SetMuted(true, applyToAudio: true);
                                     UpdateMuteButtonIndicators(); // Update button indicators
 #if DEBUG
                                     Debug.WriteLine($"[InlineMute] Channel {i} muted (received {rawValue})");
@@ -1359,7 +1359,7 @@ namespace DeejNG
                                 if (_inlineMutedChannels.Contains(i))
                                 {
                                     _inlineMutedChannels.Remove(i);
-                                    ctrl.SetMuted(false);
+                                    ctrl.SetMuted(false, applyToAudio: true);
                                     UpdateMuteButtonIndicators(); // Update button indicators
 #if DEBUG
                                     Debug.WriteLine($"[InlineMute] Channel {i} unmuted (received {rawValue})");
@@ -2468,7 +2468,7 @@ namespace DeejNG
                             if (device != null)
                             {
                                 bool isMuted = device.AudioEndpointVolume.Mute;
-                                ctrl.SetMuted(isMuted);
+                                ctrl.SetMuted(isMuted, applyToAudio: false);
                             }
                             continue;
                         }
@@ -2479,7 +2479,7 @@ namespace DeejNG
                         if (targetName == "system")
                         {
                             bool isMuted = audioDevice.AudioEndpointVolume.Mute;
-                            ctrl.SetMuted(isMuted);
+                            ctrl.SetMuted(isMuted, applyToAudio: false);
                         }
                         else if (targetName == "unmapped")
                         {
@@ -2496,7 +2496,7 @@ namespace DeejNG
                                 try
                                 {
                                     bool isMuted = matchedSession.SimpleAudioVolume.Mute;
-                                    ctrl.SetMuted(isMuted);
+                                    ctrl.SetMuted(isMuted, applyToAudio: false);
                                 }
                                 catch (ArgumentException) { }
                             }
@@ -3149,7 +3149,7 @@ namespace DeejNG
                 System.Windows.Application.Current.Dispatcher.Invoke(() =>
                 {
                     var control = _mainWindow.FindControlForTarget(_targetName);
-                    control?.SetMuted(mute);
+                    control?.SetMuted(mute, applyToAudio: false);
                 });
             }
 
@@ -3170,7 +3170,7 @@ namespace DeejNG
                 System.Windows.Application.Current.Dispatcher.Invoke(() =>
                 {
                     var control = _mainWindow.FindControlForTarget(_targetName);
-                    control?.SetMuted(mute);
+                    control?.SetMuted(mute, applyToAudio: false);
                 });
             }
         }
