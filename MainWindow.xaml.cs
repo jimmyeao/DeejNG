@@ -1321,7 +1321,7 @@ namespace DeejNG
                                 if (!_inlineMutedChannels.Contains(i))
                                 {
                                     _inlineMutedChannels.Add(i);
-                                    ctrl.SetMuted(true);
+                                    ctrl.SetMuted(true, applyToAudio: true);
                                     UpdateMuteButtonIndicators(); // Update button indicators
 #if DEBUG
                                     Debug.WriteLine($"[InlineMute] Channel {i} muted (received {rawValue})");
@@ -1336,7 +1336,7 @@ namespace DeejNG
                                 if (_inlineMutedChannels.Contains(i))
                                 {
                                     _inlineMutedChannels.Remove(i);
-                                    ctrl.SetMuted(false);
+                                    ctrl.SetMuted(false, applyToAudio: true);
                                     UpdateMuteButtonIndicators(); // Update button indicators
 #if DEBUG
                                     Debug.WriteLine($"[InlineMute] Channel {i} unmuted (received {rawValue})");

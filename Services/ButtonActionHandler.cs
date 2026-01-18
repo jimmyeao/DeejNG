@@ -132,7 +132,7 @@ namespace DeejNG.Services
 
             var channel = _channelControls[channelIndex];
             bool newMuteState = !channel.IsMuted;
-            channel.SetMuted(newMuteState);
+            channel.SetMuted(newMuteState, applyToAudio: true);
 
 #if DEBUG
             Debug.WriteLine($"[ButtonAction] Toggled channel {channelIndex} mute to {newMuteState}");
@@ -160,7 +160,7 @@ namespace DeejNG.Services
 
             foreach (var channel in _channelControls)
             {
-                channel.SetMuted(newMuteState);
+                channel.SetMuted(newMuteState, applyToAudio: true);
             }
 
 #if DEBUG
