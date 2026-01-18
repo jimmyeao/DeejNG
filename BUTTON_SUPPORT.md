@@ -1,205 +1,387 @@
-# Physical Button Support - Implementation Summary
+# Add Hardware Button Support and Inline Mute Functionality
 
-## Overview
+## Summary
 
-DeejNG now supports optional physical buttons on your controller for actions like play/pause, mute, and media control. Button data is sent alongside slider values via the serial protocol.
+This adds two major hardware control features to DeejNG:
+1. **Auto-Detected Hardware Buttons** - Physical buttons automatically detected via distinct value ranges (10000/10001)
+2. **Inline Mute Trigger** - Quick channel muting by sending 9999 from the hardware controller
 
-## Serial Protocol
+These features enable sophisticated physical control interfaces beyond simple sliders, with self-documenting, robust serial protocols.
 
-### Data Format
+---
 
-Button values are appended after slider values, separated by the pipe character (`|`):
+## Feature 1: Auto-Detected Hardware Buttons
 
+### Overview
+
+DeejNG now auto-detects and supports physical buttons from your Arduino/controller. Buttons use distinct value ranges (10000=OFF, 10001=ON) that are instantly recognizable and self-documenting - no manual configuration of button counts needed!
+
+### Serial Protocol
+
+**Format:**
 ```
-slider1|slider2|slider3|slider4|slider5|button1|button2
+<slider1>|<slider2>|...|<sliderN>|<button1>|<button2>|...|<buttonM>
 ```
 
-**Example with 5 sliders and 2 buttons:**
+**Button Values:**
+- `10000` = Button not pressed (OFF)
+- `10001` = Button pressed (ON)
+
+**Slider Values:**
+- `0-1023` = Normal ADC range
+- `9999` = Inline mute trigger (see Feature 2)
+
+**Example with 5 sliders and 3 buttons:**
 ```
-123|200|90|124|54|0|1
+512|1023|0|800|400|10000|10001|10000
 ```
+- Sliders: `512|1023|0|800|400` (5 slider values)
+- Buttons: `10000|10001|10000` (3 buttons - button 1 is pressed)
 
-- First 5 values (123, 200, 90, 124, 54) = Slider positions (0-1023)
-- Last 2 values (0, 1) = Button states (0=not pressed, 1=pressed)
+### Why 10000/10001?
 
-### Button Values
+✅ **Self-Documenting** - Values instantly distinguish buttons from sliders
+✅ **Auto-Detection** - App automatically counts and separates sliders vs buttons
+✅ **No Configuration** - No need to manually set "number of buttons"
+✅ **Robust** - Works even if channel count changes dynamically
+✅ **Debug-Friendly** - Serial monitor shows clear distinction between data types
 
-- `0` = Button not pressed (or released)
-- `1` = Button pressed
+### Configuration
 
-### Backward Compatibility
+**In Settings → Physical Buttons:**
 
-If you don't configure buttons (NumberOfButtons = 0), the system works exactly as before. The serial protocol is fully backward compatible.
+Configure up to 8 button actions (buttons auto-detect when hardware sends data):
 
-## Configuration
+#### Transport Controls
+- **Play/Pause** - Toggle media playback
+- **Next Track** - Skip to next track
+- **Previous Track** - Skip to previous track
 
-### Settings Window
+#### Mute Controls
+- **Mute Channel 0-N** - Toggle mute for specific slider channel
+- **Mute All** - Toggle mute for all channels
 
-1. Open **Settings** from the main window
-2. Scroll to the **Physical Buttons** section
-3. Set **Number of Buttons** (0-8)
-4. For each button, configure:
-   - **Action**: What the button should do
-   - **Target Channel**: Which channel to affect (for channel-specific actions)
+### UI Indicators
 
-### Available Actions
+- Button states displayed as colored indicators below channel sliders
+- **Green** = Button pressed
+- **Gray** = Button not pressed
+- Hover to see button action assignments
+- Only appears when buttons are configured
 
-1. **None** - Button does nothing
-2. **Media Play/Pause** - Simulates media play/pause key
-3. **Media Next** - Skip to next track
-4. **Media Previous** - Skip to previous track
-5. **Media Stop** - Stop media playback
-6. **Mute Channel** - Toggle mute for a specific channel (requires target channel)
-7. **Global Mute** - Toggle mute for all channels
-8. **Toggle Input/Output** - Reserved for future use (not yet implemented)
-
-### Example Configuration
-
-**For a 5-channel mixer with 2 buttons:**
-
-- **Number of Buttons**: 2
-- **Button 1**:
-  - Action: Media Play/Pause
-  - Target Channel: N/A
-- **Button 2**:
-  - Action: Mute Channel
-  - Target Channel: 1
-
-## Arduino Example Code
+### Hardware Example (Arduino)
 
 ```cpp
+// 5 sliders + 3 buttons example
 const int NUM_SLIDERS = 5;
-const int NUM_BUTTONS = 2;
-const int sliderPins[] = {A0, A1, A2, A3, A4};
-const int buttonPins[] = {2, 3}; // Digital pins for buttons
+const int NUM_BUTTONS = 3;
+
+int sliderPins[NUM_SLIDERS] = {A0, A1, A2, A3, A4};
+int buttonPins[NUM_BUTTONS] = {2, 3, 4}; // Digital pins with INPUT_PULLUP
 
 void setup() {
   Serial.begin(9600);
-
-  // Setup button pins with pullup resistors
   for (int i = 0; i < NUM_BUTTONS; i++) {
     pinMode(buttonPins[i], INPUT_PULLUP);
   }
 }
 
 void loop() {
-  // Read and send slider values
+  // Send slider values (0-1023)
   for (int i = 0; i < NUM_SLIDERS; i++) {
-    int value = analogRead(sliderPins[i]);
-    Serial.print(value);
-    Serial.print("|");
+    Serial.print(analogRead(sliderPins[i]));
+    Serial.print('|');
   }
 
-  // Read and send button values
+  // Send button states (10000 or 10001)
   for (int i = 0; i < NUM_BUTTONS; i++) {
-    // Note: INPUT_PULLUP means LOW = pressed, HIGH = not pressed
-    int buttonState = digitalRead(buttonPins[i]) == LOW ? 1 : 0;
-    Serial.print(buttonState);
+    // INPUT_PULLUP is inverted: LOW when pressed
+    bool pressed = (digitalRead(buttonPins[i]) == LOW);
+    Serial.print(pressed ? 10001 : 10000);
 
     if (i < NUM_BUTTONS - 1) {
-      Serial.print("|");
+      Serial.print('|');
     }
   }
 
-  Serial.println(); // End of line
+  Serial.println(); // End of message
   delay(10);
 }
 ```
 
+---
+
+## Feature 2: Inline Mute Trigger
+
+### Overview
+
+Channels can be instantly muted by sending **9999** from the hardware controller. This enables hardware-level mute buttons without using the button protocol - perfect for momentary mute controls.
+
+### How It Works
+
+**Normal operation:**
+```
+512|768|400|1020|600
+```
+All channels update normally.
+
+**Mute Channel 2:**
+```
+512|768|9999|1020|600
+```
+- Channels 0, 1, 3, 4: Update normally
+- **Channel 2: Instantly muted** (slider position frozen, audio muted)
+
+**Unmute Channel 2:**
+```
+512|768|400|1020|600
+```
+- Channel 2: Automatically **unmutes** and resumes at value `400`
+
+### Behavior
+
+✅ **When 9999 received:**
+- Channel immediately muted
+- Slider UI stays at current position (doesn't jump to 9999)
+- Audio output muted
+- State tracked internally
+
+✅ **When normal value resumes (0-1023):**
+- Channel automatically unmutes
+- Slider updates to new position
+- Audio output resumes
+
+✅ **Multiple channels:**
+- Each channel independently inline-muted
+- Example: `9999|9999|500|1020|9999` mutes channels 0, 1, and 4
+
+### Use Cases
+
+**1. Momentary Mute Button per Channel:**
+```cpp
+// Hold button to mute, release to unmute
+int muteButton = digitalRead(MUTE_PIN_1);
+if (muteButton == LOW) {  // Pressed (INPUT_PULLUP)
+  Serial.print("9999");   // Mute while held
+} else {
+  Serial.print(analogRead(A0));  // Normal slider control
+}
+```
+
+**2. Toggle Mute with Encoder Click:**
+```cpp
+bool channel1Muted = false;
+
+if (encoderButtonClicked()) {
+  channel1Muted = !channel1Muted;
+}
+
+Serial.print(channel1Muted ? 9999 : analogRead(A0));
+```
+
+**3. Mix Both Features:**
+```
+512|9999|400|10000|10001
+```
+- Slider 0: Normal (512)
+- Slider 1: Inline-muted (9999)
+- Slider 2: Normal (400)
+- Button 0: Not pressed (10000)
+- Button 1: Pressed (10001)
+
+### Protocol Validation
+
+Both button values (10000/10001) and inline mute (9999) are recognized as valid DeejNG protocol and won't cause connection validation failures.
+
+---
+
 ## Technical Implementation
 
-### New Files Created
+### Files Changed
 
-1. **Models/ButtonAction.cs** - Enum defining available button actions
-2. **Models/ButtonMapping.cs** - Model for button configuration
-3. **Services/ButtonActionHandler.cs** - Handles button action execution
+**Hardware Button Support:**
+- `Services/SerialConnectionManager.cs` - Auto-detection of buttons by value range, protocol validation
+- `MainWindow.xaml.cs` - Button event handling, lazy initialization
+- `Dialogs/SettingsWindow.xaml` - Updated UI with auto-detection info, removed manual count configuration
+- `Dialogs/SettingsWindow.xaml.cs` - Simplified button configuration (8 slots, auto-detect)
+- `Services/ButtonActionHandler.cs` - Transport control and channel mute logic
+- `Models/ButtonAction.cs` - Button action enumeration
+- `Models/ButtonIndicatorViewModel.cs` - UI indicator state management
 
-### Modified Files
+**Inline Mute:**
+- `MainWindow.xaml.cs` - Inline mute detection and channel state tracking (9999 value handling)
+- `Services/SerialConnectionManager.cs` - Protocol validation for 9999 and 10000/10001 values
 
-1. **Classes/AppSettings.cs** - Added `NumberOfButtons` and `ButtonMappings` properties
-2. **Services/SerialConnectionManager.cs** - Added button parsing and event raising
-3. **MainWindow.xaml.cs** - Added button event handling and layout configuration
-4. **Dialogs/SettingsWindow.xaml** - Added button configuration UI
-5. **Dialogs/SettingsWindow.xaml.cs** - Added button configuration logic
+### Backwards Compatibility
 
-### Key Features
+✅ **Fully backwards compatible:**
+- Slider-only mode works exactly as before
+- No breaking changes to existing serial protocol
+- Settings files from older versions load correctly
+- Apps without buttons send only slider data (0-1023)
 
-- **Debouncing**: Buttons only trigger on press (not on release) to prevent double-triggering
-- **Media Key Simulation**: Uses Windows keyboard simulation (keybd_event) for media keys
-- **Channel-Specific Actions**: Some actions (like Mute Channel) can target specific channels
-- **Profile Support**: Button configuration is saved per profile
-- **Hot Reload**: Changing button configuration in settings takes effect immediately
+---
 
-## Troubleshooting
+## Protocol Value Ranges
 
-### Buttons Not Working
+| Value Range | Purpose | Example |
+|------------|---------|---------|
+| `0 - 1023` | Slider (normal ADC) | `512` = ~50% volume |
+| `9999` | Inline mute trigger | Mute this specific channel |
+| `10000` | Button OFF | Button not pressed |
+| `10001` | Button ON | Button pressed |
 
-1. **Check Configuration**:
-   - Open Settings → Physical Buttons
-   - Verify NumberOfButtons matches your hardware
-   - Verify button mappings are set
+**Auto-Detection Logic:**
+- Values < 9999.5 → Slider data
+- Values >= 9999.5 → Button or inline mute
 
-2. **Check Serial Data**:
-   - In DEBUG mode, check the console for `[Serial] Button X pressed` messages
-   - Verify your Arduino is sending the correct number of values
+---
 
-3. **Check Serial Format**:
-   - Format must be: `slider1|slider2|...|button1|button2|...`
-   - Button values must be 0 or 1
-   - Total values = Number of Sliders + Number of Buttons
+## Testing
 
-### Media Keys Not Working
+### Button Support
+- [x] Send button data with 1-5 buttons using 10000/10001 values
+- [x] Verify buttons auto-detected without configuration
+- [x] Verify button indicators display in UI
+- [x] Test transport controls (Play/Pause, Next, Previous)
+- [x] Test channel mute assignments
+- [x] Verify button state changes reflected in real-time
+- [x] Test button configuration persistence
 
-- Media keys work globally and control the currently focused media player
-- Some applications may not respond to simulated media keys
-- Ensure your media player is running and has media loaded
+### Inline Mute
+- [x] Send 9999 to individual channels
+- [x] Verify channel mutes immediately
+- [x] Verify slider position doesn't jump
+- [x] Send normal value and verify automatic unmute
+- [x] Test multiple channels muted simultaneously
+- [x] Verify protocol validation accepts 9999
 
-### Mute Not Working
+### Mixed Usage
+- [x] Mix sliders, buttons (10000/10001), and inline mute (9999)
+- [x] Change channel count dynamically
+- [x] Handle rapid button press/release
+- [x] Test with all channels inline-muted
 
-- Verify the target channel index is correct (1-based in UI, 0-based internally)
-- Ensure the channel has audio targets assigned
-- Check that the channel exists (don't target channel 5 if you only have 4 channels)
+---
 
-## Debug Logging
+## Configuration
 
-When built in DEBUG mode, the application logs button events:
+No manual configuration required for button detection!
 
+Buttons are automatically detected when hardware sends 10000/10001 values. Users can pre-configure button actions in Settings → Physical Buttons (up to 8 buttons supported).
+
+**Settings Storage:**
+- Button action mappings stored in `ButtonMappings` list
+- Only saves mappings with configured actions (not "None")
+- `NumberOfButtons` field deprecated (auto-detection used instead)
+
+---
+
+## Documentation
+
+### Updated Arduino Example
+
+```cpp
+// Complete example: 3 sliders, 2 buttons, 1 inline mute
+const int SLIDER_PINS[] = {A0, A1, A2};
+const int BUTTON_PINS[] = {2, 3};
+const int MUTE_PIN = 4;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(BUTTON_PINS[0], INPUT_PULLUP);
+  pinMode(BUTTON_PINS[1], INPUT_PULLUP);
+  pinMode(MUTE_PIN, INPUT_PULLUP);
+}
+
+void loop() {
+  // Slider 0: Normal
+  Serial.print(analogRead(SLIDER_PINS[0]));
+  Serial.print('|');
+
+  // Slider 1: Inline mute if button pressed
+  if (digitalRead(MUTE_PIN) == LOW) {
+    Serial.print("9999");  // Inline mute
+  } else {
+    Serial.print(analogRead(SLIDER_PINS[1]));
+  }
+  Serial.print('|');
+
+  // Slider 2: Normal
+  Serial.print(analogRead(SLIDER_PINS[2]));
+  Serial.print('|');
+
+  // Button 0: Play/Pause (10000 or 10001)
+  Serial.print((digitalRead(BUTTON_PINS[0]) == LOW) ? 10001 : 10000);
+  Serial.print('|');
+
+  // Button 1: Next Track (10000 or 10001)
+  Serial.print((digitalRead(BUTTON_PINS[1]) == LOW) ? 10001 : 10000);
+
+  Serial.println();
+  delay(10);
+}
 ```
-[Serial] Configured for 5 sliders and 2 buttons
-[Serial] Button 0 pressed
-[ButtonAction] Executing MediaPlayPause for button 0
-[ButtonAction] Sent media key: 0xB3
-```
+
+**Output examples:**
+- All off: `512|768|400|10000|10000`
+- Button 0 pressed: `512|768|400|10001|10000`
+- Slider 1 inline-muted: `512|9999|400|10000|10000`
+- Both features: `512|9999|400|10001|10000`
+
+---
+
+## Related Issues
+
+Closes #79 - Serial port prioritization issue (also fixed in this PR with protocol validation and auto-detection)
+
+---
 
 ## Future Enhancements
 
-Potential improvements for future versions:
+Potential additions for future PRs:
+- [ ] Rotary encoder support for volume control
+- [ ] LED feedback protocol (send state back to hardware)
+- [ ] Long-press button actions (hold for 2s = different action)
+- [ ] Button macros (sequence of actions)
+- [ ] Configurable inline mute trigger value
+- [ ] MIDI controller support using similar protocol
 
-1. **Toggle Input/Output** - Complete implementation for switching channels between input/output devices
-2. **Volume Adjustment** - Buttons to increase/decrease volume on specific channels
-3. **Profile Switching** - Use buttons to switch between profiles
-4. **Macro Support** - Execute multiple actions with a single button press
-5. **Long Press Detection** - Different actions for short vs. long press
-6. **Button Combinations** - Hold one button and press another for advanced actions
+---
 
-## Implementation Notes
+## Migration Notes
 
-- Button state is tracked internally to detect press/release transitions
-- Only press events trigger actions (release is ignored)
-- Media keys use Win32 `keybd_event` API for maximum compatibility
-- Button actions execute on the UI thread to safely interact with WPF controls
-- The serial layout (slider count + button count) is configured automatically when sliders are generated
+**Upgrading from button-less versions:**
+- No changes needed - everything works as before
 
-## UI Button Indicators (New!)
+**If you had buttons configured with old protocol (0/1 values):**
+- Update Arduino code to send `10000` instead of `0`
+- Update Arduino code to send `10001` instead of `1`
+- Button configurations preserved, just update hardware
 
-The main window now shows visual indicators for configured buttons:
+**Key Change:**
+```cpp
+// OLD (ambiguous with slider value 0 and 1)
+Serial.print(digitalRead(buttonPin));  // Sends 0 or 1
 
-- **Button indicators panel** appears below the sliders when buttons are configured
-- Each button shows:
-  - Icon representing the action (⏯ for Play/Pause, 🔇 for Mute, etc.)
-  - Button label (BTN 1, BTN 2, etc.)
-  - Action description (e.g., "Play/Pause", "Mute Ch1")
-- **Visual feedback**: Button lights up when pressed (highlighted in accent color)
-- **Tooltips**: Hover over a button to see its full configuration
+// NEW (self-documenting, auto-detected)
+Serial.print(digitalRead(buttonPin) == LOW ? 10001 : 10000);
+```
 
-The panel automatically hides when no buttons are configured.
+---
+
+## Benefits Summary
+
+### Before
+- ❌ Had to manually configure "number of buttons"
+- ❌ Button values (0/1) identical to valid slider values
+- ❌ Hard to debug - couldn't tell sliders from buttons in serial data
+- ❌ Fragile - changing button count broke configuration
+
+### After
+- ✅ Buttons auto-detected - zero configuration
+- ✅ Button values (10000/10001) instantly recognizable
+- ✅ Self-documenting protocol - debug by reading serial monitor
+- ✅ Robust - dynamically adapts to hardware changes
+- ✅ Inline mute (9999) for quick hardware muting
+- ✅ All special values validated and accepted by protocol
