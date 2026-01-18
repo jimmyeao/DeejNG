@@ -55,6 +55,8 @@ namespace DeejNG
         private MMDevice _cachedAudioDevice;
         private SessionCollection _cachedSessionsForMeters;
         private bool _disableSmoothing = false;
+        private bool _useExponentialVolume = false;
+        private float _exponentialVolumeFactor = 2f;
         private int _expectedSliderCount = -1;
         private bool _hasLoadedInitialSettings = false;
         private bool _hasSyncedMuteStates = false;
@@ -1127,6 +1129,24 @@ namespace DeejNG
             SaveSettings();
         }
 
+        private void UseExponentialVolumeCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            _useExponentialVolume = true;
+            SaveSettings();
+        }
+
+        private void UseExponentialVolumeCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _useExponentialVolume = false;
+            SaveSettings();
+        }
+
+        private void ExponentialVolumeFactorSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            _exponentialVolumeFactor = (float)e.NewValue;
+            SaveSettings();
+        }
+
         private async void ExitMenuItem_Click(object sender, RoutedEventArgs e)
         {
             _isExiting = true; // Set flag to allow actual exit
@@ -1355,6 +1375,9 @@ namespace DeejNG
                             level = Math.Clamp(level / 1023f, 0f, 1f);
                             if (InvertSliderCheckBox.IsChecked ?? false)
                                 level = 1f - level;
+
+                            if (_useExponentialVolume)
+                                level = (MathF.Pow(_exponentialVolumeFactor, level) / (_exponentialVolumeFactor - 1)) - (1 / (_exponentialVolumeFactor - 1));
 
                             float currentVolume = ctrl.CurrentVolume;
                             if (Math.Abs(currentVolume - level) < 0.01f) continue;
@@ -1828,6 +1851,9 @@ namespace DeejNG
 
                 SetMeterVisibilityForAll(settings.VuMeters);
                 DisableSmoothingCheckBox.IsChecked = settings.DisableSmoothing;
+                UseExponentialVolumeCheckBox.IsChecked = settings.UseExponentialVolume;
+
+                ExponentialVolumeFactorSlider.Value = settings.ExponentialVolumeFactor;
 
                 _settingsManager.ValidateOverlayPosition();
 
@@ -2059,6 +2085,8 @@ namespace DeejNG
                     StartOnBootCheckBox.IsChecked ?? false,
                     StartMinimizedCheckBox.IsChecked ?? false,
                     DisableSmoothingCheckBox.IsChecked ?? false,
+                    UseExponentialVolumeCheckBox.IsChecked ?? false,
+                    (float)ExponentialVolumeFactorSlider.Value,
                     // BUGFIX: Use baud rate from AppSettings instead of CurrentBaudRate
                     // This ensures user's baud rate selection is preserved even if not connected
                     _settingsManager.AppSettings.BaudRate > 0 ? _settingsManager.AppSettings.BaudRate : _serialManager.CurrentBaudRate
