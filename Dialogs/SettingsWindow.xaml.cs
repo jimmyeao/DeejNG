@@ -57,6 +57,7 @@ namespace DeejNG.Dialogs
             OpacitySlider.Value = _settings.OverlayOpacity;
             AutoCloseCheckBox.IsChecked = _settings.OverlayTimeoutSeconds > 0;
             TimeoutSlider.Value = _settings.OverlayTimeoutSeconds;
+            ExponentialVolumeFactorSlider.Value = _settings.ExponentialVolumeFactor;
 
             SetTextColorSelection(_settings.OverlayTextColor); // Set ComboBox for text color
 
@@ -68,6 +69,8 @@ namespace DeejNG.Dialogs
                 SettingStartOnBoot.IsChecked = _mainWindow.StartOnBootCheckBox.IsChecked;
                 SettingStartMinimized.IsChecked = _mainWindow.StartMinimizedCheckBox.IsChecked;
                 SettingDisableSmoothing.IsChecked = _mainWindow.DisableSmoothingCheckBox.IsChecked;
+                SettingUseExponentialVolume.IsChecked = _mainWindow.UseExponentialVolumeCheckBox.IsChecked;
+                ExponentialVolumeFactorSlider.Value = _mainWindow.ExponentialVolumeFactorSlider.Value;
 
                 // Initialize COM port controls from main window
                 SettingComPortSelector.ItemsSource = _mainWindow.ComPortSelector.ItemsSource;
@@ -98,6 +101,9 @@ namespace DeejNG.Dialogs
             SettingStartMinimized.Unchecked += ForwardGeneralCheckbox;
             SettingDisableSmoothing.Checked += ForwardGeneralCheckbox;
             SettingDisableSmoothing.Unchecked += ForwardGeneralCheckbox;
+            SettingUseExponentialVolume.Checked += ForwardGeneralCheckbox;
+            SettingUseExponentialVolume.Unchecked += ForwardGeneralCheckbox;
+            ExponentialVolumeFactorSlider.ValueChanged += ForwardGeneralSlider;
 
             // Wire COM port selection changes
             SettingComPortSelector.SelectionChanged += SettingComPortSelector_SelectionChanged;
@@ -141,6 +147,16 @@ namespace DeejNG.Dialogs
                 _mainWindow.StartMinimizedCheckBox.IsChecked = SettingStartMinimized.IsChecked;
             else if (sender == SettingDisableSmoothing)
                 _mainWindow.DisableSmoothingCheckBox.IsChecked = SettingDisableSmoothing.IsChecked;
+            else if (sender == SettingUseExponentialVolume)
+                _mainWindow.UseExponentialVolumeCheckBox.IsChecked = SettingUseExponentialVolume.IsChecked;
+        }
+
+        private void ForwardGeneralSlider(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_mainWindow == null) return;
+
+            if (sender == ExponentialVolumeFactorSlider)
+                _mainWindow.ExponentialVolumeFactorSlider.Value = ExponentialVolumeFactorSlider.Value;
         }
 
         private void SettingComPortSelector_DropDownOpened(object sender, EventArgs e)

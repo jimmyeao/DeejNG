@@ -459,6 +459,8 @@ namespace DeejNG.Services
             bool startOnBoot,
             bool startMinimized,
             bool disableSmoothing,
+            bool exponentialVolume,
+            float exponentialVolumeFactor,
             int baudRate)
         {
             return new AppSettings
@@ -471,6 +473,8 @@ namespace DeejNG.Services
                 StartOnBoot = startOnBoot,
                 StartMinimized = startMinimized,
                 DisableSmoothing = disableSmoothing,
+                UseExponentialVolume = exponentialVolume,
+                ExponentialVolumeFactor = exponentialVolumeFactor,
                 BaudRate = baudRate,
 
                 // Preserve overlay settings from current settings
