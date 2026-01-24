@@ -25,23 +25,35 @@ namespace DeejNG.Dialogs
             // Initialize the XAML UI components
             InitializeComponent();
 
-            // Convert the list of current target names to a HashSet for fast lookups (case-insensitive)
-            HashSet<string> selectedNames = new(
-                currentTargets.Select(t => t.Name.ToLowerInvariant()),
+            // BUGFIX: Separate device names by type to avoid VAC devices being selected in both input and output lists
+            // Build sets of names for each category based on their actual type
+            HashSet<string> selectedSessions = new(
+                currentTargets.Where(t => !t.IsInputDevice && !t.IsOutputDevice)
+                    .Select(t => t.Name.ToLowerInvariant()),
+                StringComparer.OrdinalIgnoreCase);
+
+            HashSet<string> selectedInputDevices = new(
+                currentTargets.Where(t => t.IsInputDevice)
+                    .Select(t => t.Name.ToLowerInvariant()),
+                StringComparer.OrdinalIgnoreCase);
+
+            HashSet<string> selectedOutputDevices = new(
+                currentTargets.Where(t => t.IsOutputDevice)
+                    .Select(t => t.Name.ToLowerInvariant()),
                 StringComparer.OrdinalIgnoreCase);
 
             // Load and pre-select matching sessions, input devices, and output devices
-            LoadSessions(selectedNames);
-            LoadInputDevices(selectedNames);
-            LoadOutputDevices(selectedNames);
+            LoadSessions(selectedSessions);
+            LoadInputDevices(selectedInputDevices);
+            LoadOutputDevices(selectedOutputDevices);
 
             // Separate manually specified apps (not in sessions/devices) and pre-populate the text box
             var manuallySpecifiedApps = new List<string>();
-            foreach (var target in currentTargets)
+            // Only look at non-device targets for manual apps
+            foreach (var target in currentTargets.Where(t => !t.IsInputDevice && !t.IsOutputDevice))
             {
-                // Skip special targets and devices
-                if (target.IsInputDevice || target.IsOutputDevice ||
-                    target.Name.Equals("system", StringComparison.OrdinalIgnoreCase) ||
+                // Skip special targets
+                if (target.Name.Equals("system", StringComparison.OrdinalIgnoreCase) ||
                     target.Name.Equals("unmapped", StringComparison.OrdinalIgnoreCase) ||
                     target.Name.Equals("current", StringComparison.OrdinalIgnoreCase))
                 {
