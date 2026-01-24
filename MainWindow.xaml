@@ -231,20 +231,37 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border Background="{DynamicResource BackgroundBrush}"
-                                        BorderBrush="{DynamicResource BorderBrush}"
-                                        BorderThickness="1"
+                                <Border BorderThickness="1"
                                         CornerRadius="4"
                                         Padding="8,4"
                                         Margin="0,0,8,4"
-                                        ToolTip="{Binding ToolTip}">
+                                        ToolTip="{Binding ToolTip}"
+                                        Cursor="Hand"
+                                        MouseLeftButtonDown="ButtonIndicator_Click">
                                     <Border.Style>
                                         <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource BackgroundBrush}"/>
+                                            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsPressed}" Value="True">
-                                                    <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
-                                                    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                                <DataTrigger Binding="{Binding ActiveBackgroundColor, TargetNullValue=''}" Value="">
+                                                    <Setter Property="Background" Value="{DynamicResource BackgroundBrush}"/>
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
                                                 </DataTrigger>
+                                                <DataTrigger Binding="{Binding ActiveBackgroundColor}" Value="#D13438">
+                                                    <Setter Property="Background" Value="#D13438"/>
+                                                    <Setter Property="BorderBrush" Value="#D13438"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding ActiveBackgroundColor}" Value="#3B82F6">
+                                                    <Setter Property="Background" Value="#3B82F6"/>
+                                                    <Setter Property="BorderBrush" Value="#3B82F6"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding ActiveBackgroundColor}" Value="#10B981">
+                                                    <Setter Property="Background" Value="#10B981"/>
+                                                    <Setter Property="BorderBrush" Value="#10B981"/>
+                                                </DataTrigger>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter Property="Opacity" Value="0.8"/>
+                                                </Trigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
@@ -252,16 +269,33 @@
                                         <TextBlock Text="{Binding Icon}"
                                                    FontSize="14"
                                                    Margin="0,0,6,0"
-                                                   VerticalAlignment="Center"/>
-                                        <StackPanel>
-                                            <TextBlock Text="{Binding Label}"
-                                                       Style="{StaticResource LabelTextBlock}"
-                                                       FontSize="10"/>
-                                            <TextBlock Text="{Binding ActionText}"
-                                                       Style="{StaticResource SubtitleTextBlock}"
-                                                       FontSize="9"
-                                                       Opacity="0.7"/>
-                                        </StackPanel>
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsPressed}" Value="True">
+                                                            <Setter Property="Foreground" Value="White"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding ActionText}"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsPressed}" Value="True">
+                                                            <Setter Property="Foreground" Value="White"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                     </StackPanel>
                                 </Border>
                             </DataTemplate>

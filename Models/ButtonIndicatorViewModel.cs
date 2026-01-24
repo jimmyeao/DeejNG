@@ -14,6 +14,7 @@ namespace DeejNG.Models
         public string ActionText { get; set; } = string.Empty;
         public string Icon { get; set; } = string.Empty;
         public string ToolTip { get; set; } = string.Empty;
+        public ButtonAction Action { get; set; } = ButtonAction.None;
 
         public bool IsPressed
         {
@@ -24,7 +25,32 @@ namespace DeejNG.Models
                 {
                     _isPressed = value;
                     OnPropertyChanged(nameof(IsPressed));
+                    OnPropertyChanged(nameof(ActiveBackgroundColor));
                 }
+            }
+        }
+
+        /// <summary>
+        /// Gets the background color based on button action and pressed state.
+        /// Returns color string for pressed state, null for unpressed (uses default).
+        /// </summary>
+        public string? ActiveBackgroundColor
+        {
+            get
+            {
+                if (!IsPressed)
+                    return null;
+
+                return Action switch
+                {
+                    ButtonAction.MuteChannel => "#D13438",      // Red for mute
+                    ButtonAction.GlobalMute => "#D13438",       // Red for global mute
+                    ButtonAction.MediaPlayPause => "#3B82F6",   // Blue for play/pause
+                    ButtonAction.MediaNext => "#10B981",        // Green for next
+                    ButtonAction.MediaPrevious => "#10B981",    // Green for previous
+                    ButtonAction.MediaStop => "#10B981",        // Green for stop
+                    _ => null
+                };
             }
         }
 

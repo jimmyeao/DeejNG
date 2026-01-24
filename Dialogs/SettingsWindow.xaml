@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        Title="Settings" Height="1204" Width="900"
+        Title="Settings" Height="769" Width="900"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -173,69 +173,14 @@
                         <StackPanel>
                             <TextBlock Text="Configure physical buttons on your controller"
                                        Style="{StaticResource SubtitleTextBlock}"
-                                       Margin="0,0,0,8"/>
+                                       Margin="0,0,0,12"/>
 
-                            <Border Background="{DynamicResource InfoBackgroundBrush}"
-                                    BorderBrush="{DynamicResource InfoBorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="4"
-                                    Padding="12"
-                                    Margin="0,0,0,16">
-                                <StackPanel>
-                                    <TextBlock TextWrapping="Wrap" Style="{StaticResource SubtitleTextBlock}">
-                                    <Run Text="ℹ️ Buttons are auto-detected from your Arduino." FontWeight="SemiBold"/>
-                                    <LineBreak/>
-                                    <Run Text="Send 10000 (OFF) or 10001 (ON) for each button after your slider values."/>
-                                    <LineBreak/>
-                                    <Run Text="Example: 512|768|400|10000|10001 (3 sliders + 2 buttons)"/>
-                                    </TextBlock>
-                                </StackPanel>
-                            </Border>
-
-                            <ItemsControl x:Name="ButtonMappingsItemsControl" Margin="0,8,0,0">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border BorderBrush="{DynamicResource BorderBrush}"
-                                                BorderThickness="1"
-                                                CornerRadius="4"
-                                                Padding="12"
-                                                Margin="0,0,0,8">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="80"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="100"/>
-                                                </Grid.ColumnDefinitions>
-
-                                                <TextBlock Grid.Column="0"
-                                                           Text="{Binding ButtonIndexDisplay}"
-                                                           Style="{StaticResource LabelTextBlock}"
-                                                           VerticalAlignment="Center"/>
-
-                                                <ComboBox Grid.Column="1"
-                                                          SelectedIndex="{Binding ActionIndex, Mode=TwoWay}"
-                                                          Style="{StaticResource ModernComboBox}"
-                                                          Margin="8,0"
-                                                          SelectionChanged="ButtonAction_SelectionChanged">
-                                                    <ComboBoxItem Content="None"/>
-                                                    <ComboBoxItem Content="Media Play/Pause"/>
-                                                    <ComboBoxItem Content="Media Next"/>
-                                                    <ComboBoxItem Content="Media Previous"/>
-                                                    <ComboBoxItem Content="Media Stop"/>
-                                                    <ComboBoxItem Content="Mute Channel"/>
-                                                    <ComboBoxItem Content="Global Mute"/>
-                                                </ComboBox>
-
-                                                <TextBox Grid.Column="2"
-                                                         Text="{Binding TargetChannelDisplay, Mode=TwoWay}"
-                                                         IsEnabled="{Binding NeedsTargetChannel}"
-                                                         ToolTip="Target channel (1-based)"
-                                                         PreviewTextInput="NumberValidationTextBox"/>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <Button Content="Configure Buttons..."
+                                    Style="{StaticResource ModernButton}"
+                                    Click="ConfigureButtons_Click"
+                                    HorizontalAlignment="Left"
+                                    Padding="16,8"
+                                    ToolTip="Open button configuration dialog"/>
                         </StackPanel>
                     </Border>
                 </StackPanel>

@@ -1,11 +1,8 @@
 ﻿using DeejNG.Classes;
 using DeejNG.Models;
-using System.Collections.ObjectModel;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -28,9 +25,6 @@ namespace DeejNG.Dialogs
 
         // Current instance of the settings object
         private AppSettings _settings;
-
-        // Button mappings collection for UI binding
-        private ObservableCollection<ButtonMappingViewModel> _buttonMappings = new();
 
         #endregion
 
@@ -108,15 +102,6 @@ namespace DeejNG.Dialogs
             // Wire COM port selection changes
             SettingComPortSelector.SelectionChanged += SettingComPortSelector_SelectionChanged;
             // Baud rate changes are persisted on Save; no live wiring needed here
-
-            // Initialize button configuration after window loads
-            this.Loaded += SettingsWindow_Loaded;
-        }
-
-        private void SettingsWindow_Loaded(object sender, RoutedEventArgs e)
-        {
-            // Load button configuration after all controls are initialized
-            LoadButtonConfiguration();
         }
 
         #endregion
@@ -433,8 +418,6 @@ namespace DeejNG.Dialogs
             {
                 _settings.BaudRate = baud;
             }
-            // Save button configuration
-            SaveButtonConfiguration();
 
             try
             {
@@ -568,178 +551,22 @@ namespace DeejNG.Dialogs
         #region Button Configuration
 
         /// <summary>
-        /// Loads button configuration from settings and initializes UI.
-        /// Buttons are now auto-detected (10000/10001 values), so we show all 8 slots for configuration.
+        /// Opens the button configuration dialog.
         /// </summary>
-        private void LoadButtonConfiguration()
+        private void ConfigureButtons_Click(object sender, RoutedEventArgs e)
         {
-            try
+            var buttonDialog = new ButtonSettingsDialog(_settings)
             {
-                // Always show 8 button slots (max supported)
-                // Users can configure ahead of time; only buttons detected from hardware will activate
-                LoadButtonMappingSlots();
-            }
-            catch (Exception ex)
+                Owner = this
+            };
+
+            if (buttonDialog.ShowDialog() == true)
             {
-                Debug.WriteLine($"[ERROR] LoadButtonConfiguration: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Loads 8 button mapping slots for configuration.
-        /// Buttons are auto-detected from hardware (10000/10001 protocol).
-        /// </summary>
-        private void LoadButtonMappingSlots()
-        {
-            _buttonMappings.Clear();
-
-            // Show all 8 button slots (users can configure ahead of time)
-            const int maxButtons = 8;
-
-            for (int i = 0; i < maxButtons; i++)
-            {
-                var existingMapping = _settings?.ButtonMappings?.FirstOrDefault(m => m.ButtonIndex == i);
-
-                var viewModel = new ButtonMappingViewModel
-                {
-                    ButtonIndex = i,
-                    Action = existingMapping?.Action ?? ButtonAction.None,
-                    TargetChannelIndex = existingMapping?.TargetChannelIndex ?? -1
-                };
-
-                _buttonMappings.Add(viewModel);
-            }
-
-            // Set ItemsSource if the control is initialized
-            if (ButtonMappingsItemsControl != null)
-            {
-                ButtonMappingsItemsControl.ItemsSource = _buttonMappings;
-            }
-        }
-
-        /// <summary>
-        /// Handles button action selection changes to enable/disable channel selector.
-        /// </summary>
-        private void ButtonAction_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            // The binding handles this automatically via NeedsTargetChannel property
-        }
-
-        /// <summary>
-        /// Validates that only numbers can be entered in numeric text boxes.
-        /// </summary>
-        private void NumberValidationTextBox(object sender, TextCompositionEventArgs e)
-        {
-            Regex regex = new Regex("[^0-9]+");
-            e.Handled = regex.IsMatch(e.Text);
-        }
-
-        /// <summary>
-        /// Saves button configuration to settings.
-        /// Only saves button mappings that have actions assigned.
-        /// Buttons are auto-detected from hardware (10000/10001 protocol).
-        /// </summary>
-        private void SaveButtonConfiguration()
-        {
-            _settings.ButtonMappings = new List<ButtonMapping>();
-
-            // Only save button mappings that have actions configured
-            foreach (var viewModel in _buttonMappings.Where(vm => vm.Action != ButtonAction.None))
-            {
-                _settings.ButtonMappings.Add(new ButtonMapping
-                {
-                    ButtonIndex = viewModel.ButtonIndex,
-                    Action = viewModel.Action,
-                    TargetChannelIndex = viewModel.TargetChannelIndex,
-                    FriendlyName = $"Button {viewModel.ButtonIndex + 1}"
-                });
-            }
-        }
-
-        #endregion
-
-        #region Button Mapping View Model
-
-        /// <summary>
-        /// View model for button mapping UI.
-        /// </summary>
-        public class ButtonMappingViewModel : INotifyPropertyChanged
-        {
-            private int _buttonIndex;
-            private ButtonAction _action;
-            private int _targetChannelIndex;
-
-            public int ButtonIndex
-            {
-                get => _buttonIndex;
-                set
-                {
-                    _buttonIndex = value;
-                    OnPropertyChanged(nameof(ButtonIndex));
-                    OnPropertyChanged(nameof(ButtonIndexDisplay));
-                }
-            }
-
-            public string ButtonIndexDisplay => $"Button {ButtonIndex + 1}";
-
-            public ButtonAction Action
-            {
-                get => _action;
-                set
-                {
-                    _action = value;
-                    OnPropertyChanged(nameof(Action));
-                    OnPropertyChanged(nameof(ActionIndex));
-                    OnPropertyChanged(nameof(NeedsTargetChannel));
-                }
-            }
-
-            public int ActionIndex
-            {
-                get => (int)_action;
-                set
-                {
-                    _action = (ButtonAction)value;
-                    OnPropertyChanged(nameof(Action));
-                    OnPropertyChanged(nameof(ActionIndex));
-                    OnPropertyChanged(nameof(NeedsTargetChannel));
-                }
-            }
-
-            public int TargetChannelIndex
-            {
-                get => _targetChannelIndex;
-                set
-                {
-                    _targetChannelIndex = value;
-                    OnPropertyChanged(nameof(TargetChannelIndex));
-                    OnPropertyChanged(nameof(TargetChannelDisplay));
-                }
-            }
-
-            public string TargetChannelDisplay
-            {
-                get => _targetChannelIndex >= 0 ? (_targetChannelIndex + 1).ToString() : "";
-                set
-                {
-                    if (int.TryParse(value, out int channelNum) && channelNum > 0)
-                    {
-                        TargetChannelIndex = channelNum - 1;
-                    }
-                    else
-                    {
-                        TargetChannelIndex = -1;
-                    }
-                }
-            }
-
-            public bool NeedsTargetChannel => _action == ButtonAction.MuteChannel;
-
-            public event PropertyChangedEventHandler? PropertyChanged;
-
-            protected void OnPropertyChanged(string propertyName)
-            {
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+                // Button settings are saved directly to _settings by the dialog
+                // No additional action needed here
+#if DEBUG
+                Debug.WriteLine($"[SettingsWindow] Button configuration updated - {_settings.ButtonMappings?.Count ?? 0} mappings saved");
+#endif
             }
         }
 

@@ -18,6 +18,7 @@ using System.IO.Ports;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -1545,6 +1546,91 @@ namespace DeejNG
         }
 
         /// <summary>
+        /// Handles UI button indicator clicks to execute button actions.
+        /// </summary>
+        private void ButtonIndicator_Click(object sender, MouseButtonEventArgs e)
+        {
+            try
+            {
+                if (sender is Border border && border.DataContext is ButtonIndicatorViewModel viewModel)
+                {
+                    var settings = _settingsManager.AppSettings;
+                    if (settings == null || settings.ButtonMappings == null) return;
+
+                    // Find the mapping for this button
+                    var mapping = settings.ButtonMappings.FirstOrDefault(m => m.ButtonIndex == viewModel.ButtonIndex);
+                    if (mapping == null || mapping.Action == ButtonAction.None) return;
+
+                    // Ensure button handler is initialized
+                    if (_buttonActionHandler == null)
+                    {
+                        _buttonActionHandler = new ButtonActionHandler(_channelControls);
+                    }
+
+                    // Determine button type
+                    bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
+                                       mapping.Action == ButtonAction.GlobalMute;
+                    bool isPlayPauseAction = mapping.Action == ButtonAction.MediaPlayPause;
+                    bool isMomentaryAction = mapping.Action == ButtonAction.MediaNext ||
+                                            mapping.Action == ButtonAction.MediaPrevious ||
+                                            mapping.Action == ButtonAction.MediaStop;
+
+                    // For momentary buttons, briefly show pressed state
+                    if (isMomentaryAction)
+                    {
+                        viewModel.IsPressed = true;
+
+                        // Reset after a brief delay
+                        Task.Delay(150).ContinueWith(_ =>
+                        {
+                            Dispatcher.BeginInvoke(() =>
+                            {
+                                viewModel.IsPressed = false;
+                            });
+                        });
+                    }
+
+#if DEBUG
+                    Debug.WriteLine($"[Button] UI click for button {viewModel.ButtonIndex} - Action: {mapping.Action}");
+#endif
+
+                    // Execute the action
+                    _buttonActionHandler.ExecuteAction(mapping);
+
+                    // Update indicator for latched buttons
+                    if (isMuteAction)
+                    {
+                        bool muteState = false;
+
+                        if (mapping.Action == ButtonAction.MuteChannel &&
+                            mapping.TargetChannelIndex >= 0 &&
+                            mapping.TargetChannelIndex < _channelControls.Count)
+                        {
+                            muteState = _channelControls[mapping.TargetChannelIndex].IsMuted;
+                        }
+                        else if (mapping.Action == ButtonAction.GlobalMute)
+                        {
+                            muteState = _channelControls.Any(c => c.IsMuted);
+                        }
+
+                        viewModel.IsPressed = muteState;
+                    }
+                    else if (isPlayPauseAction)
+                    {
+                        _playPauseState = !_playPauseState;
+                        viewModel.IsPressed = _playPauseState;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                Debug.WriteLine($"[ERROR] Handling button indicator click: {ex.Message}");
+#endif
+            }
+        }
+
+        /// <summary>
         /// Configures button indicators UI. Buttons are now auto-detected from serial data.
         /// </summary>
         private void ConfigureButtonLayout()
@@ -1616,7 +1702,7 @@ namespace DeejNG
                             var indicator = new ButtonIndicatorViewModel
                             {
                                 ButtonIndex = mapping.ButtonIndex,
-                                Label = $"BTN {mapping.ButtonIndex + 1}",
+                                Action = mapping.Action,
                                 ActionText = GetButtonActionText(mapping),
                                 Icon = GetButtonActionIcon(mapping.Action),
                                 ToolTip = GetButtonActionTooltip(mapping),
