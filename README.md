@@ -9,7 +9,7 @@
 <img width="772" height="561" alt="image" src="https://github.com/user-attachments/assets/988c1148-2e28-4be7-b430-7425d8209647" />
 
 
-
+We now support buttons! You can use our fork of Deej to add button support here https://github.com/jimmyeao/ButtonDeej
 
 
 DeejNG is a modern, extensible audio mixer and controller for Windows, built with WPF (.NET 9), NAudio, and SkiaSharp. It allows real-time control over system and app volumes using physical sliders (e.g. Arduino), complete with VU meters, mute toggles, and persistent target mappings. This is meant as a companion app to the hardware, the code for which can be found here https://github.com/omriharel/deej
