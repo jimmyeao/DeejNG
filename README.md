@@ -6,7 +6,8 @@
 
 # DeejNG - We've had a UI Update!
 
-<img width="772" height="482" alt="image" src="https://github.com/user-attachments/assets/33b1a316-42a5-4dbb-a2b6-2537da202a42" />
+<img width="772" height="561" alt="image" src="https://github.com/user-attachments/assets/988c1148-2e28-4be7-b430-7425d8209647" />
+
 
 
 
@@ -15,7 +16,8 @@ DeejNG is a modern, extensible audio mixer and controller for Windows, built wit
 
 ##  New!
 Configurable transpartent overaly with adjustable time out
-<img width="660" height="175" alt="image" src="https://github.com/user-attachments/assets/ae969b20-cc6d-4325-ba38-d542a2ffc395" />
+<img width="654" height="166" alt="image" src="https://github.com/user-attachments/assets/2ab966f9-1fac-45ad-8978-177e7e76a214" />
+
 
 Profiles - configure multiple profiles for different scenarios
 
@@ -24,6 +26,7 @@ Add applicaiotn manually by name
 ## 🚀 Features
 
 - 🎛️ **Physical Slider Control** via serial input
+- **Button Support** for toggle or momentary press buttons
 - 🎚️ **Multiple Channels** with per-channel volume and mute
 - 🎧 **Supports Applications, System Audio, and Microphones**
 - 🔇 **Per-Channel Mute with Visual Feedback**
@@ -85,7 +88,8 @@ Add applicaiotn manually by name
 - Meters update live with peak-hold animation.
 
 ### ⚙️ Settings
-<img width="520" height="784" alt="image" src="https://github.com/user-attachments/assets/db2159a8-27be-406e-975a-9dd47f5a11c4" />
+<img width="900" height="769" alt="image" src="https://github.com/user-attachments/assets/52eb9539-72e8-4003-b7e3-9db4d1fbc586" />
+
 
 Settings are saved automatically and include:
 - Assigned targets per slider
@@ -95,6 +99,13 @@ Settings are saved automatically and include:
 - Smoothing toggle
 - Start on boot
 - Start minimized
+- 
+### ⚙️ Button Settings
+
+<img width="800" height="901" alt="image" src="https://github.com/user-attachments/assets/c73522f1-d8ef-4250-9f9e-4c96fc578ff4" />
+
+Configure Buttons for Media Control or Mute
+
 
 ---
 
