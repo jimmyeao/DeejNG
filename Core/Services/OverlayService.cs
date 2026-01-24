@@ -94,7 +94,22 @@ namespace DeejNG.Core.Services
             if (a.Count != b.Count) return false;
             for (int i = 0; i < a.Count; i++)
             {
-                if (Math.Abs(a[i] - b[i]) > 0.005f) return false; // small tolerance
+                float diff = Math.Abs(a[i] - b[i]);
+
+                // BUGFIX for issue #97: Allow extremes (0% and 100%) to always update
+                // This prevents smoothing from causing values to get stuck at 1% or 99%
+                bool isAtExtreme = (a[i] <= 0.01f || a[i] >= 0.99f) || (b[i] <= 0.01f || b[i] >= 0.99f);
+
+                if (isAtExtreme)
+                {
+                    // Use tighter tolerance near extremes to ensure 0% and 100% are shown
+                    if (diff > 0.001f) return false; // 0.1% tolerance at extremes
+                }
+                else
+                {
+                    // Normal tolerance for mid-range values (performance optimization)
+                    if (diff > 0.005f) return false; // 0.5% tolerance
+                }
             }
             return true;
         }
