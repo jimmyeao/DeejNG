@@ -7,15 +7,7 @@ namespace DeejNG.Dialogs
     /// </summary>
     public partial class ConfirmationDialog : Window
     {
-        public enum ButtonResult
-        {
-            Yes,
-            No,
-            Cancel,
-            OK
-        }
-
-        public ButtonResult Result { get; private set; } = ButtonResult.Cancel;
+        #region Private Constructors
 
         private ConfirmationDialog(string title, string message, bool showCancel = true, bool showNo = true)
         {
@@ -35,6 +27,78 @@ namespace DeejNG.Dialogs
             }
         }
 
+        #endregion Private Constructors
+
+        #region Public Enums
+
+        public enum ButtonResult
+        {
+            Yes,
+            No,
+            Cancel,
+            OK
+        }
+
+        #endregion Public Enums
+
+        #region Public Properties
+
+        public ButtonResult Result { get; private set; } = ButtonResult.Cancel;
+
+        #endregion Public Properties
+
+        #region Public Methods
+
+        /// <summary>
+        /// Shows an OK dialog (information)
+        /// </summary>
+        public static void ShowOK(string title, string message, Window owner = null)
+        {
+            var dialog = new ConfirmationDialog(title, message, showCancel: false, showNo: false);
+            if (owner != null) dialog.Owner = owner;
+            dialog.ShowDialog();
+        }
+
+        /// <summary>
+        /// Shows a Yes/No dialog
+        /// </summary>
+        public static ButtonResult ShowYesNo(string title, string message, Window owner = null)
+        {
+            var dialog = new ConfirmationDialog(title, message, showCancel: false, showNo: true);
+            if (owner != null) dialog.Owner = owner;
+            dialog.ShowDialog();
+            return dialog.Result;
+        }
+
+        /// <summary>
+        /// Shows a Yes/No/Cancel dialog
+        /// </summary>
+        public static ButtonResult ShowYesNoCancel(string title, string message, Window owner = null)
+        {
+            var dialog = new ConfirmationDialog(title, message, showCancel: true, showNo: true);
+            if (owner != null) dialog.Owner = owner;
+            dialog.ShowDialog();
+            return dialog.Result;
+        }
+
+        #endregion Public Methods
+
+        #region Private Methods
+
+        private void CancelButton_Click(object sender, RoutedEventArgs e)
+        {
+            Result = ButtonResult.Cancel;
+            base.DialogResult = false;
+            Close();
+        }
+
+        private void NoButton_Click(object sender, RoutedEventArgs e)
+        {
+            Result = ButtonResult.No;
+            base.DialogResult = false;
+            Close();
+        }
+
         private void TitleBar_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
             if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
@@ -50,50 +114,6 @@ namespace DeejNG.Dialogs
             Close();
         }
 
-        private void NoButton_Click(object sender, RoutedEventArgs e)
-        {
-            Result = ButtonResult.No;
-            base.DialogResult = false;
-            Close();
-        }
-
-        private void CancelButton_Click(object sender, RoutedEventArgs e)
-        {
-            Result = ButtonResult.Cancel;
-            base.DialogResult = false;
-            Close();
-        }
-
-        /// <summary>
-        /// Shows a Yes/No/Cancel dialog
-        /// </summary>
-        public static ButtonResult ShowYesNoCancel(string title, string message, Window owner = null)
-        {
-            var dialog = new ConfirmationDialog(title, message, showCancel: true, showNo: true);
-            if (owner != null) dialog.Owner = owner;
-            dialog.ShowDialog();
-            return dialog.Result;
-        }
-
-        /// <summary>
-        /// Shows a Yes/No dialog
-        /// </summary>
-        public static ButtonResult ShowYesNo(string title, string message, Window owner = null)
-        {
-            var dialog = new ConfirmationDialog(title, message, showCancel: false, showNo: true);
-            if (owner != null) dialog.Owner = owner;
-            dialog.ShowDialog();
-            return dialog.Result;
-        }
-
-        /// <summary>
-        /// Shows an OK dialog (information)
-        /// </summary>
-        public static void ShowOK(string title, string message, Window owner = null)
-        {
-            var dialog = new ConfirmationDialog(title, message, showCancel: false, showNo: false);
-            if (owner != null) dialog.Owner = owner;
-            dialog.ShowDialog();
-        }
+        #endregion Private Methods
     }
 }

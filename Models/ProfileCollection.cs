@@ -9,6 +9,8 @@ namespace DeejNG.Models
     /// </summary>
     public class ProfileCollection
     {
+        #region Public Properties
+
         /// <summary>
         /// Gets or sets the name of the currently active profile
         /// </summary>
@@ -18,6 +20,24 @@ namespace DeejNG.Models
         /// Gets or sets the list of all available profiles
         /// </summary>
         public List<Profile> Profiles { get; set; } = new List<Profile>();
+
+        #endregion Public Properties
+
+        #region Public Methods
+
+        /// <summary>
+        /// Adds a new profile to the collection
+        /// </summary>
+        public bool AddProfile(Profile profile)
+        {
+            if (Profiles.Any(p => p.Name.Equals(profile.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                return false; // Profile with this name already exists
+            }
+
+            Profiles.Add(profile);
+            return true;
+        }
 
         /// <summary>
         /// Gets the currently active profile
@@ -45,31 +65,11 @@ namespace DeejNG.Models
         }
 
         /// <summary>
-        /// Sets the active profile by name
+        /// Gets a profile by name
         /// </summary>
-        public bool SetActiveProfile(string profileName)
+        public Profile GetProfile(string name)
         {
-            var profile = Profiles.FirstOrDefault(p => p.Name == profileName);
-            if (profile != null)
-            {
-                ActiveProfileName = profileName;
-                return true;
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// Adds a new profile to the collection
-        /// </summary>
-        public bool AddProfile(Profile profile)
-        {
-            if (Profiles.Any(p => p.Name.Equals(profile.Name, StringComparison.OrdinalIgnoreCase)))
-            {
-                return false; // Profile with this name already exists
-            }
-
-            Profiles.Add(profile);
-            return true;
+            return Profiles.FirstOrDefault(p => p.Name == name);
         }
 
         /// <summary>
@@ -133,11 +133,19 @@ namespace DeejNG.Models
         }
 
         /// <summary>
-        /// Gets a profile by name
+        /// Sets the active profile by name
         /// </summary>
-        public Profile GetProfile(string name)
+        public bool SetActiveProfile(string profileName)
         {
-            return Profiles.FirstOrDefault(p => p.Name == name);
+            var profile = Profiles.FirstOrDefault(p => p.Name == profileName);
+            if (profile != null)
+            {
+                ActiveProfileName = profileName;
+                return true;
+            }
+            return false;
         }
+
+        #endregion Public Methods
     }
 }

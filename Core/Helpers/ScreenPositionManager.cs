@@ -12,6 +12,26 @@ namespace DeejNG.Core.Helpers
     /// </summary>
     public static class ScreenPositionManager
     {
+        #region Public Methods
+
+        /// <summary>
+        /// Gets diagnostic information about current screen configuration
+        /// </summary>
+        public static string GetScreenDiagnostics()
+        {
+            var screens = Screen.AllScreens;
+            var diagnostics = $"Screen Count: {screens.Length}\n";
+            diagnostics += $"Virtual Screen: {SystemParameters.VirtualScreenLeft},{SystemParameters.VirtualScreenTop} {SystemParameters.VirtualScreenWidth}x{SystemParameters.VirtualScreenHeight}\n";
+
+            for (int i = 0; i < screens.Length; i++)
+            {
+                var screen = screens[i];
+                diagnostics += $"Screen {i}: {screen.DeviceName} - {screen.Bounds} {(screen.Primary ? "(Primary)" : "")}\n";
+            }
+
+            return diagnostics;
+        }
+
         /// <summary>
         /// Gets information about the screen at the specified coordinates
         /// </summary>
@@ -38,18 +58,9 @@ namespace DeejNG.Core.Helpers
             correctedX = settings.OverlayX;
             correctedY = settings.OverlayY;
 
-#if DEBUG
-            Debug.WriteLine($"[ScreenPositionManager] Validating position: ({settings.OverlayX}, {settings.OverlayY})");
-            Debug.WriteLine($"[ScreenPositionManager] Saved screen device: {settings.OverlayScreenDevice}");
-            Debug.WriteLine($"[ScreenPositionManager] Saved screen bounds: {settings.OverlayScreenBounds}");
-#endif
-
             // If no screen information was saved, validate against virtual screen bounds
             if (string.IsNullOrEmpty(settings.OverlayScreenDevice))
             {
-#if DEBUG
-                Debug.WriteLine("[ScreenPositionManager] No saved screen info, using basic validation");
-#endif
                 return ValidateAgainstVirtualScreen(settings.OverlayX, settings.OverlayY, out correctedX, out correctedY);
             }
 
@@ -60,22 +71,17 @@ namespace DeejNG.Core.Helpers
             {
                 // Screen exists - check if bounds have changed
                 var currentBounds = $"{savedScreen.Bounds.Left},{savedScreen.Bounds.Top},{savedScreen.Bounds.Width},{savedScreen.Bounds.Height}";
-                
+
                 if (currentBounds == settings.OverlayScreenBounds)
                 {
                     // Screen exists with same bounds - position is valid
-#if DEBUG
-                    Debug.WriteLine("[ScreenPositionManager] Screen found with matching bounds, position is valid");
-#endif
+
                     return false; // No correction needed
                 }
                 else
                 {
                     // Screen exists but bounds changed - adjust position proportionally
-#if DEBUG
-                    Debug.WriteLine($"[ScreenPositionManager] Screen found but bounds changed: {settings.OverlayScreenBounds} -> {currentBounds}");
-#endif
-                    
+
                     var oldBounds = ParseBounds(settings.OverlayScreenBounds);
                     var newBounds = savedScreen.Bounds;
 
@@ -87,19 +93,13 @@ namespace DeejNG.Core.Helpers
                     correctedX = newBounds.Left + (relativeX * newBounds.Width);
                     correctedY = newBounds.Top + (relativeY * newBounds.Height);
 
-#if DEBUG
-                    Debug.WriteLine($"[ScreenPositionManager] Position adjusted proportionally: ({settings.OverlayX}, {settings.OverlayY}) -> ({correctedX}, {correctedY})");
-#endif
                     return true; // Correction applied
                 }
             }
             else
             {
                 // Screen no longer exists - move to primary screen
-#if DEBUG
-                Debug.WriteLine($"[ScreenPositionManager] Screen '{settings.OverlayScreenDevice}' not found, moving to primary screen");
-#endif
-                
+
                 var primaryScreen = Screen.PrimaryScreen;
                 var oldBounds = ParseBounds(settings.OverlayScreenBounds);
 
@@ -115,11 +115,40 @@ namespace DeejNG.Core.Helpers
                 correctedX = Math.Max(primaryScreen.Bounds.Left, Math.Min(correctedX, primaryScreen.Bounds.Right - 200));
                 correctedY = Math.Max(primaryScreen.Bounds.Top, Math.Min(correctedY, primaryScreen.Bounds.Bottom - 100));
 
-#if DEBUG
-                Debug.WriteLine($"[ScreenPositionManager] Position moved to primary screen: ({correctedX}, {correctedY})");
-#endif
                 return true; // Correction applied
             }
+        }
+
+        #endregion Public Methods
+
+        #region Private Methods
+
+        /// <summary>
+        /// Parses bounds string in format "Left,Top,Width,Height"
+        /// </summary>
+        private static System.Drawing.Rectangle ParseBounds(string boundsString)
+        {
+            if (string.IsNullOrEmpty(boundsString))
+                return System.Drawing.Rectangle.Empty;
+
+            try
+            {
+                var parts = boundsString.Split(',');
+                if (parts.Length == 4)
+                {
+                    return new System.Drawing.Rectangle(
+                        int.Parse(parts[0]),  // Left
+                        int.Parse(parts[1]),  // Top
+                        int.Parse(parts[2]),  // Width
+                        int.Parse(parts[3])   // Height
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+            }
+
+            return System.Drawing.Rectangle.Empty;
         }
 
         /// <summary>
@@ -161,64 +190,10 @@ namespace DeejNG.Core.Helpers
                 needsCorrection = true;
             }
 
-#if DEBUG
-            if (needsCorrection)
-            {
-                Debug.WriteLine($"[ScreenPositionManager] Position corrected to virtual screen bounds: ({x}, {y}) -> ({correctedX}, {correctedY})");
-            }
-#endif
-
             return needsCorrection;
         }
 
-        /// <summary>
-        /// Parses bounds string in format "Left,Top,Width,Height"
-        /// </summary>
-        private static System.Drawing.Rectangle ParseBounds(string boundsString)
-        {
-            if (string.IsNullOrEmpty(boundsString))
-                return System.Drawing.Rectangle.Empty;
-
-            try
-            {
-                var parts = boundsString.Split(',');
-                if (parts.Length == 4)
-                {
-                    return new System.Drawing.Rectangle(
-                        int.Parse(parts[0]),  // Left
-                        int.Parse(parts[1]),  // Top
-                        int.Parse(parts[2]),  // Width
-                        int.Parse(parts[3])   // Height
-                    );
-                }
-            }
-            catch (Exception ex)
-            {
-#if DEBUG
-                Debug.WriteLine($"[ScreenPositionManager] Error parsing bounds '{boundsString}': {ex.Message}");
-#endif
-            }
-
-            return System.Drawing.Rectangle.Empty;
-        }
-
-        /// <summary>
-        /// Gets diagnostic information about current screen configuration
-        /// </summary>
-        public static string GetScreenDiagnostics()
-        {
-            var screens = Screen.AllScreens;
-            var diagnostics = $"Screen Count: {screens.Length}\n";
-            diagnostics += $"Virtual Screen: {SystemParameters.VirtualScreenLeft},{SystemParameters.VirtualScreenTop} {SystemParameters.VirtualScreenWidth}x{SystemParameters.VirtualScreenHeight}\n";
-            
-            for (int i = 0; i < screens.Length; i++)
-            {
-                var screen = screens[i];
-                diagnostics += $"Screen {i}: {screen.DeviceName} - {screen.Bounds} {(screen.Primary ? "(Primary)" : "")}\n";
-            }
-
-            return diagnostics;
-        }
+        #endregion Private Methods
     }
 
     /// <summary>
@@ -226,9 +201,13 @@ namespace DeejNG.Core.Helpers
     /// </summary>
     public class ScreenInfo
     {
-        public string DeviceName { get; set; }
+        #region Public Properties
+
         public string Bounds { get; set; }
-        public System.Drawing.Rectangle WorkingArea { get; set; }
+        public string DeviceName { get; set; }
         public bool IsPrimary { get; set; }
+        public System.Drawing.Rectangle WorkingArea { get; set; }
+
+        #endregion Public Properties
     }
 }

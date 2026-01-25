@@ -13,7 +13,8 @@
       "Bash(echo:*)",
       "Bash(if exist \"C:\\Users\\jimmy\\source\\repos\\DeejNG\\Dialogs\\ThemeEditorDialog.xaml\" type \"C:\\Users\\jimmy\\source\\repos\\DeejNG\\Dialogs\\ThemeEditorDialog.xaml\")",
       "Bash(del \"C:\\Users\\jimmy\\source\\repos\\DeejNG\\Dialogs\\ThemeEditorDialog.xaml\" \"C:\\Users\\jimmy\\source\\repos\\DeejNG\\Dialogs\\ThemeEditorDialog.xaml.cs\" \"C:\\Users\\jimmy\\source\\repos\\DeejNG\\Views\\ThemeEditorWindow.xaml\" \"C:\\Users\\jimmy\\source\\repos\\DeejNG\\Views\\ThemeEditorWindow.xaml.cs\")",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(gh issue view:*)"
     ],
     "deny": [],
     "ask": []

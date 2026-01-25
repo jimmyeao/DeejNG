@@ -8,24 +8,106 @@ namespace DeejNG.Services
 {
     public class DeviceCacheManager : IDisposable
     {
-        private readonly Dictionary<string, MMDevice> _inputDeviceMap = new();
-        private readonly Dictionary<string, MMDevice> _outputDeviceMap = new();
-        private readonly Dictionary<string, float?> _lastInputVolume = new(StringComparer.OrdinalIgnoreCase);
+        #region Private Fields
+
         private const int CacheRefreshIntervalSeconds = 30;
         private const float VolumeChangeThreshold = 0.01f;
-        private readonly MMDeviceEnumerator _deviceEnumerator = new();
-        private DateTime _lastDeviceCacheTime = DateTime.MinValue;
+        private static readonly TimeSpan RemovalBackoff = TimeSpan.FromSeconds(5);
         private readonly object _cacheLock = new object();
-
+        private readonly MMDeviceEnumerator _deviceEnumerator = new();
         // Backoff handling to avoid repeated work on removed devices
         private readonly Dictionary<string, DateTime> _inputBackoffUntil = new(StringComparer.OrdinalIgnoreCase);
+
+        private readonly Dictionary<string, MMDevice> _inputDeviceMap = new();
+        private readonly Dictionary<string, float?> _lastInputVolume = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, DateTime> _outputBackoffUntil = new(StringComparer.OrdinalIgnoreCase);
-        private static readonly TimeSpan RemovalBackoff = TimeSpan.FromSeconds(5);
+        private readonly Dictionary<string, MMDevice> _outputDeviceMap = new();
+        private DateTime _lastDeviceCacheTime = DateTime.MinValue;
+
+        #endregion Private Fields
+
+        #region Public Constructors
 
         public DeviceCacheManager()
         {
             BuildInputDeviceCache();
             BuildOutputDeviceCache();
+        }
+
+        #endregion Public Constructors
+
+        #region Public Methods
+
+        public void ApplyInputDeviceVolume(string deviceName, float level, bool isMuted)
+        {
+            var key = deviceName.ToLowerInvariant();
+            if (_inputBackoffUntil.TryGetValue(key, out var until) && DateTime.Now < until)
+                return;
+
+            if (!_inputDeviceMap.TryGetValue(key, out var mic))
+            {
+                mic = GetInputDevice(deviceName);
+            }
+
+            if (mic != null)
+            {
+                // FIX: Use nullable float instead of -1f sentinel
+                float? previous = _lastInputVolume.TryGetValue(deviceName, out var lastVol) ? lastVol : null;
+
+                // Check if this is first time setting volume or if volume changed significantly
+                if (previous == null || Math.Abs(previous.Value - level) > VolumeChangeThreshold)
+                {
+                    try
+                    {
+                        mic.AudioEndpointVolume.Mute = isMuted || level <= VolumeChangeThreshold;
+                        mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                        _lastInputVolume[deviceName] = level;
+                    }
+                    catch (Exception ex)
+                    {
+
+                        RemoveInputDevice(deviceName);
+                        _inputBackoffUntil[key] = DateTime.Now + RemovalBackoff;
+                    }
+                }
+            }
+        }
+
+        public void ApplyOutputDeviceVolume(string deviceName, float level, bool isMuted)
+        {
+            var key = deviceName.ToLowerInvariant();
+            if (_outputBackoffUntil.TryGetValue(key, out var until) && DateTime.Now < until)
+                return;
+
+            if (!_outputDeviceMap.TryGetValue(key, out var spkr))
+            {
+                spkr = GetOutputDevice(deviceName);
+            }
+
+            if (spkr != null)
+            {
+                try
+                {
+                    spkr.AudioEndpointVolume.Mute = isMuted;
+                    spkr.AudioEndpointVolume.MasterVolumeLevelScalar = level;
+                }
+                catch (Exception ex)
+                {
+
+                    RemoveOutputDevice(deviceName);
+                    _outputBackoffUntil[key] = DateTime.Now + RemovalBackoff;
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            _deviceEnumerator?.Dispose();
+            _inputDeviceMap.Clear();
+            _outputDeviceMap.Clear();
+            _lastInputVolume.Clear();
+            _inputBackoffUntil.Clear();
+            _outputBackoffUntil.Clear();
         }
 
         public MMDevice GetInputDevice(string deviceName)
@@ -97,71 +179,32 @@ namespace DeejNG.Services
 
             return foundDevice;
         }
-
-        public void ApplyInputDeviceVolume(string deviceName, float level, bool isMuted)
+        public void RefreshCaches()
         {
-            var key = deviceName.ToLowerInvariant();
-            if (_inputBackoffUntil.TryGetValue(key, out var until) && DateTime.Now < until)
-                return;
-
-            if (!_inputDeviceMap.TryGetValue(key, out var mic))
+            lock (_cacheLock)
             {
-                mic = GetInputDevice(deviceName);
-            }
-
-            if (mic != null)
-            {
-                // FIX: Use nullable float instead of -1f sentinel
-                float? previous = _lastInputVolume.TryGetValue(deviceName, out var lastVol) ? lastVol : null;
-
-                // Check if this is first time setting volume or if volume changed significantly
-                if (previous == null || Math.Abs(previous.Value - level) > VolumeChangeThreshold)
+                try
                 {
-                    try
-                    {
-                        mic.AudioEndpointVolume.Mute = isMuted || level <= VolumeChangeThreshold;
-                        mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
-                        _lastInputVolume[deviceName] = level;
-                    }
-                    catch (Exception ex)
-                    {
-#if DEBUG
-                        Debug.WriteLine($"[ERROR] Setting input device volume for '{deviceName}': {ex.Message}");
-#endif
-                        RemoveInputDevice(deviceName);
-                        _inputBackoffUntil[key] = DateTime.Now + RemovalBackoff;
-                    }
+                    _inputDeviceMap.Clear();
+                    _outputDeviceMap.Clear();
+                    _lastInputVolume.Clear(); // Clear the volume cache too
+                    _inputBackoffUntil.Clear();
+                    _outputBackoffUntil.Clear();
+                    BuildInputDeviceCache();
+                    BuildOutputDeviceCache();
+                    _lastDeviceCacheTime = DateTime.Now;
+
+                }
+                catch (Exception ex)
+                {
+
                 }
             }
         }
 
-        public void ApplyOutputDeviceVolume(string deviceName, float level, bool isMuted)
+        public bool ShouldRefreshCache()
         {
-            var key = deviceName.ToLowerInvariant();
-            if (_outputBackoffUntil.TryGetValue(key, out var until) && DateTime.Now < until)
-                return;
-
-            if (!_outputDeviceMap.TryGetValue(key, out var spkr))
-            {
-                spkr = GetOutputDevice(deviceName);
-            }
-
-            if (spkr != null)
-            {
-                try
-                {
-                    spkr.AudioEndpointVolume.Mute = isMuted;
-                    spkr.AudioEndpointVolume.MasterVolumeLevelScalar = level;
-                }
-                catch (Exception ex)
-                {
-#if DEBUG
-                    Debug.WriteLine($"[ERROR] Setting output device volume for '{deviceName}': {ex.Message}");
-#endif
-                    RemoveOutputDevice(deviceName);
-                    _outputBackoffUntil[key] = DateTime.Now + RemovalBackoff;
-                }
-            }
+            return (DateTime.Now - _lastDeviceCacheTime).TotalSeconds > CacheRefreshIntervalSeconds;
         }
 
         // NEW: Safe helpers for meter reads to avoid repeated exceptions on unplugged devices
@@ -217,37 +260,9 @@ namespace DeejNG.Services
             }
         }
 
-        public void RefreshCaches()
-        {
-            lock (_cacheLock)
-            {
-                try
-                {
-                    _inputDeviceMap.Clear();
-                    _outputDeviceMap.Clear();
-                    _lastInputVolume.Clear(); // Clear the volume cache too
-                    _inputBackoffUntil.Clear();
-                    _outputBackoffUntil.Clear();
-                    BuildInputDeviceCache();
-                    BuildOutputDeviceCache();
-                    _lastDeviceCacheTime = DateTime.Now;
-#if DEBUG
-                    Debug.WriteLine("[DeviceCache] Caches refreshed");
-#endif
-                }
-                catch (Exception ex)
-                {
-#if DEBUG
-                    Debug.WriteLine($"[DeviceCache] Error refreshing caches: {ex.Message}");
-#endif
-                }
-            }
-        }
+        #endregion Public Methods
 
-        public bool ShouldRefreshCache()
-        {
-            return (DateTime.Now - _lastDeviceCacheTime).TotalSeconds > CacheRefreshIntervalSeconds;
-        }
+        #region Private Methods
 
         private void BuildInputDeviceCache()
         {
@@ -262,15 +277,11 @@ namespace DeejNG.Services
                         _inputDeviceMap[key] = device;
                     }
                 }
-#if DEBUG
-                Debug.WriteLine($"[DeviceCache] Cached {_inputDeviceMap.Count} input devices.");
-#endif
+
             }
             catch (Exception ex)
             {
-#if DEBUG
-                Debug.WriteLine($"[DeviceCache] Failed to build input device cache: {ex.Message}");
-#endif
+
             }
         }
 
@@ -287,15 +298,11 @@ namespace DeejNG.Services
                         _outputDeviceMap[key] = device;
                     }
                 }
-#if DEBUG
-                Debug.WriteLine($"[DeviceCache] Cached {_outputDeviceMap.Count} output devices.");
-#endif
+
             }
             catch (Exception ex)
             {
-#if DEBUG
-                Debug.WriteLine($"[DeviceCache] Failed to build output device cache: {ex.Message}");
-#endif
+
             }
         }
 
@@ -315,14 +322,6 @@ namespace DeejNG.Services
             }
         }
 
-        public void Dispose()
-        {
-            _deviceEnumerator?.Dispose();
-            _inputDeviceMap.Clear();
-            _outputDeviceMap.Clear();
-            _lastInputVolume.Clear();
-            _inputBackoffUntil.Clear();
-            _outputBackoffUntil.Clear();
-        }
+        #endregion Private Methods
     }
 }

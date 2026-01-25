@@ -12,33 +12,97 @@ namespace DeejNG.Core.Services
     /// </summary>
     public class PowerManagementService : IPowerManagementService
     {
+        #region Private Fields
+
+        private const int RESUME_STABILIZATION_DELAY_MS = 2000;
         private bool _isResuming = false;
         private DateTime _lastResumeTime = DateTime.MinValue;
-        private const int RESUME_STABILIZATION_DELAY_MS = 2000; // 2 seconds
-        
-        public event EventHandler SystemSuspending;
-        public event EventHandler SystemResuming;
-        public event EventHandler SystemResumed; // After stabilization
-        public event EventHandler SessionEnding;
-        
-        public bool IsInResumeState => _isResuming;
+
+        #endregion Private Fields
+
+        #region Public Constructors
 
         public PowerManagementService()
         {
             // Register for Windows power events
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
             SystemEvents.SessionEnding += OnSessionEnding;
-            
-#if DEBUG
-            Debug.WriteLine("[PowerManagement] Service initialized");
-#endif
+
+
+        }
+
+        #endregion Public Constructors
+
+        #region Public Events
+
+        public event EventHandler SessionEnding;
+
+        public event EventHandler SystemResumed;
+
+        public event EventHandler SystemResuming;
+
+        public event EventHandler SystemSuspending;
+
+        #endregion Public Events
+
+        #region Public Properties
+
+        // After stabilization
+        public bool IsInResumeState => _isResuming;
+
+        #endregion Public Properties
+
+        #region Public Methods
+
+        public void Dispose()
+        {
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            SystemEvents.SessionEnding -= OnSessionEnding;
+
+        }
+
+        /// <summary>
+        /// Check if system recently resumed from sleep
+        /// </summary>
+        public bool IsRecentlyResumed()
+        {
+            return (DateTime.Now - _lastResumeTime).TotalSeconds < 10;
+        }
+
+        #endregion Public Methods
+
+        #region Private Methods
+
+        private void HandleResume()
+        {
+
+
+            _isResuming = true;
+            _lastResumeTime = DateTime.Now;
+
+            // Immediately notify that resume has started
+            SystemResuming?.Invoke(this, EventArgs.Empty);
+
+            // Schedule stabilization complete notification
+            System.Threading.Tasks.Task.Delay(RESUME_STABILIZATION_DELAY_MS)
+                .ContinueWith(_ =>
+                {
+                    _isResuming = false;
+
+                    SystemResumed?.Invoke(this, EventArgs.Empty);
+                });
+        }
+
+        private void HandleSuspend()
+        {
+
+            _isResuming = false;
+            SystemSuspending?.Invoke(this, EventArgs.Empty);
         }
 
         private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
         {
-#if DEBUG
-            Debug.WriteLine($"[PowerManagement] Power mode changed: {e.Mode}");
-#endif
+
 
             switch (e.Mode)
             {
@@ -51,64 +115,12 @@ namespace DeejNG.Core.Services
                     break;
             }
         }
-
-        private void HandleSuspend()
-        {
-#if DEBUG
-            Debug.WriteLine("[PowerManagement] System suspending - notifying components");
-#endif
-            _isResuming = false;
-            SystemSuspending?.Invoke(this, EventArgs.Empty);
-        }
-
-        private void HandleResume()
-        {
-#if DEBUG
-            Debug.WriteLine("[PowerManagement] System resuming - entering stabilization period");
-#endif
-            
-            _isResuming = true;
-            _lastResumeTime = DateTime.Now;
-            
-            // Immediately notify that resume has started
-            SystemResuming?.Invoke(this, EventArgs.Empty);
-            
-            // Schedule stabilization complete notification
-            System.Threading.Tasks.Task.Delay(RESUME_STABILIZATION_DELAY_MS)
-                .ContinueWith(_ =>
-                {
-                    _isResuming = false;
-#if DEBUG
-                    Debug.WriteLine("[PowerManagement] Resume stabilization complete");
-#endif
-                    SystemResumed?.Invoke(this, EventArgs.Empty);
-                });
-        }
-
         private void OnSessionEnding(object sender, SessionEndingEventArgs e)
         {
-#if DEBUG
-            Debug.WriteLine($"[PowerManagement] Session ending: {e.Reason}");
-#endif
+
             SessionEnding?.Invoke(this, EventArgs.Empty);
         }
 
-        /// <summary>
-        /// Check if system recently resumed from sleep
-        /// </summary>
-        public bool IsRecentlyResumed()
-        {
-            return (DateTime.Now - _lastResumeTime).TotalSeconds < 10;
-        }
-
-        public void Dispose()
-        {
-            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
-            SystemEvents.SessionEnding -= OnSessionEnding;
-            
-#if DEBUG
-            Debug.WriteLine("[PowerManagement] Service disposed");
-#endif
-        }
+        #endregion Private Methods
     }
 }

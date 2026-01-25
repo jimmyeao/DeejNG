@@ -15,6 +15,7 @@ namespace DeejNG.Dialogs
     /// </summary>
     public partial class SettingsWindow : Window
     {
+
         #region Private Fields
 
         // Path to where settings will be stored on disk
@@ -26,7 +27,7 @@ namespace DeejNG.Dialogs
         // Current instance of the settings object
         private AppSettings _settings;
 
-        #endregion
+        #endregion Private Fields
 
         #region Public Constructors
 
@@ -116,7 +117,7 @@ namespace DeejNG.Dialogs
             // Baud rate changes are persisted on Save; no live wiring needed here
         }
 
-        #endregion
+        #endregion Public Constructors
 
         #region Public Enums
 
@@ -128,111 +129,7 @@ namespace DeejNG.Dialogs
             Black
         }
 
-        #endregion
-
-        private void ForwardGeneralCheckbox(object? sender, RoutedEventArgs e)
-        {
-            if (_mainWindow == null) return;
-
-            if (sender == SettingInvertSliders)
-                _mainWindow.InvertSliderCheckBox.IsChecked = SettingInvertSliders.IsChecked;
-            else if (sender == SettingShowMeters)
-                _mainWindow.ShowSlidersCheckBox.IsChecked = SettingShowMeters.IsChecked;
-            else if (sender == SettingStartOnBoot)
-                _mainWindow.StartOnBootCheckBox.IsChecked = SettingStartOnBoot.IsChecked;
-            else if (sender == SettingStartMinimized)
-                _mainWindow.StartMinimizedCheckBox.IsChecked = SettingStartMinimized.IsChecked;
-            else if (sender == SettingDisableSmoothing)
-                _mainWindow.DisableSmoothingCheckBox.IsChecked = SettingDisableSmoothing.IsChecked;
-            else if (sender == SettingUseExponentialVolume)
-                _mainWindow.UseExponentialVolumeCheckBox.IsChecked = SettingUseExponentialVolume.IsChecked;
-        }
-
-        private void ForwardGeneralSlider(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (_mainWindow == null) return;
-
-            if (sender == ExponentialVolumeFactorSlider)
-                _mainWindow.ExponentialVolumeFactorSlider.Value = ExponentialVolumeFactorSlider.Value;
-        }
-
-        private void SettingComPortSelector_DropDownOpened(object sender, EventArgs e)
-        {
-            try
-            {
-                // Dynamically enumerate COM ports when dropdown opens
-                var availablePorts = System.IO.Ports.SerialPort.GetPortNames();
-                var currentSelection = SettingComPortSelector.SelectedItem as string;
-
-                SettingComPortSelector.ItemsSource = availablePorts;
-
-#if DEBUG
-                Debug.WriteLine($"[SettingsWindow] Enumerated {availablePorts.Length} ports: [{string.Join(", ", availablePorts)}]");
-#endif
-
-                // Restore selection if the port still exists
-                if (!string.IsNullOrEmpty(currentSelection) && availablePorts.Contains(currentSelection))
-                {
-                    SettingComPortSelector.SelectedItem = currentSelection;
-                }
-                // Sync with main window's selection if available
-                else if (_mainWindow?.ComPortSelector.SelectedItem is string mainSelection && availablePorts.Contains(mainSelection))
-                {
-                    SettingComPortSelector.SelectedItem = mainSelection;
-                }
-            }
-            catch (Exception ex)
-            {
-#if DEBUG
-                Debug.WriteLine($"[SettingsWindow] Error enumerating ports: {ex.Message}");
-#endif
-            }
-        }
-
-        private void SettingComPortSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (_mainWindow != null && SettingComPortSelector.SelectedItem != null)
-            {
-                _mainWindow.ComPortSelector.SelectedItem = SettingComPortSelector.SelectedItem;
-                UpdateConnectButtonState();
-            }
-        }
-
-        private void SettingConnect_Click(object sender, RoutedEventArgs e)
-        {
-            if (_mainWindow != null)
-            {
-                // Update baud rate in settings before forwarding connect
-                if (BaudRateComboBox.SelectedItem is ComboBoxItem item &&
-                    int.TryParse(item.Content?.ToString(), out int baud))
-                {
-                    _settings.BaudRate = baud;
-
-                    // BUGFIX: Update MainWindow's AppSettings BEFORE triggering connect
-                    // This ensures the connection uses the newly selected baud rate
-                    var currentSettings = _mainWindow.GetCurrentSettings();
-                    currentSettings.BaudRate = baud;
-                    _mainWindow.UpdateOverlaySettings(currentSettings);
-
-#if DEBUG
-                    Debug.WriteLine($"[SettingsWindow] Updated baud rate to {baud} before connect");
-#endif
-                }
-
-                // Forward the click to the main window's connect button
-                _mainWindow.ConnectButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
-                UpdateConnectButtonState();
-            }
-        }
-
-        private void UpdateConnectButtonState()
-        {
-            if (_mainWindow != null)
-            {
-                SettingConnectButton.Content = _mainWindow.ConnectButton.Content;
-                SettingConnectButton.IsEnabled = _mainWindow.ConnectButton.IsEnabled;
-            }
-        }
+        #endregion Public Enums
 
         #region Private Methods
 
@@ -274,8 +171,6 @@ namespace DeejNG.Dialogs
             }
         }
 
-
-
         /// <summary>
         /// Handles the Cancel button click in the settings window.
         /// Reloads the original settings from disk, applies them to the main window and overlay,
@@ -296,6 +191,54 @@ namespace DeejNG.Dialogs
             Close();
         }
 
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
+        }
+
+        /// <summary>
+        /// Opens the button configuration dialog.
+        /// </summary>
+        private void ConfigureButtons_Click(object sender, RoutedEventArgs e)
+        {
+            var buttonDialog = new ButtonSettingsDialog(_settings)
+            {
+                Owner = this
+            };
+
+            if (buttonDialog.ShowDialog() == true)
+            {
+                // Button settings are saved directly to _settings by the dialog
+                // No additional action needed here
+
+            }
+        }
+
+        private void ForwardGeneralCheckbox(object? sender, RoutedEventArgs e)
+        {
+            if (_mainWindow == null) return;
+
+            if (sender == SettingInvertSliders)
+                _mainWindow.InvertSliderCheckBox.IsChecked = SettingInvertSliders.IsChecked;
+            else if (sender == SettingShowMeters)
+                _mainWindow.ShowSlidersCheckBox.IsChecked = SettingShowMeters.IsChecked;
+            else if (sender == SettingStartOnBoot)
+                _mainWindow.StartOnBootCheckBox.IsChecked = SettingStartOnBoot.IsChecked;
+            else if (sender == SettingStartMinimized)
+                _mainWindow.StartMinimizedCheckBox.IsChecked = SettingStartMinimized.IsChecked;
+            else if (sender == SettingDisableSmoothing)
+                _mainWindow.DisableSmoothingCheckBox.IsChecked = SettingDisableSmoothing.IsChecked;
+            else if (sender == SettingUseExponentialVolume)
+                _mainWindow.UseExponentialVolumeCheckBox.IsChecked = SettingUseExponentialVolume.IsChecked;
+        }
+
+        private void ForwardGeneralSlider(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_mainWindow == null) return;
+
+            if (sender == ExponentialVolumeFactorSlider)
+                _mainWindow.ExponentialVolumeFactorSlider.Value = ExponentialVolumeFactorSlider.Value;
+        }
 
         /// <summary>
         /// Retrieves the selected overlay text color as a string based on the ComboBox selection index.
@@ -314,7 +257,6 @@ namespace DeejNG.Dialogs
                 _ => "Auto"    // Fallback in case of unexpected index value
             };
         }
-
 
         /// <summary>
         /// Immediately hides the overlay (e.g. when overlay is disabled).
@@ -339,6 +281,28 @@ namespace DeejNG.Dialogs
         }
 
         /// <summary>
+        /// Helper to select the baud rate option matching AppSettings.BaudRate, defaulting to 9600 if not set.
+        /// </summary>
+        private void InitializeBaudRateSelection()
+        {
+            int baud = _settings?.BaudRate > 0 ? _settings.BaudRate : 9600;
+            foreach (ComboBoxItem item in BaudRateComboBox.Items)
+            {
+                if (int.TryParse(item.Content?.ToString(), out int value) && value == baud)
+                {
+                    BaudRateComboBox.SelectedItem = item;
+                    return;
+                }
+            }
+
+            // Fallback to first item if no match
+            if (BaudRateComboBox.Items.Count > 0)
+            {
+                BaudRateComboBox.SelectedIndex = 0;
+            }
+        }
+
+        /// <summary>
         /// Loads settings from disk. Returns defaults if file is missing or corrupt.
         /// </summary>
         private AppSettings LoadSettings()
@@ -351,9 +315,6 @@ namespace DeejNG.Dialogs
                     var settings = _mainWindow.GetCurrentSettings();
                     if (settings != null)
                     {
-#if DEBUG
-                        Debug.WriteLine($"[SettingsWindow] Loaded settings from active profile - Opacity: {settings.OverlayOpacity}");
-#endif
                         return settings;
                     }
                 }
@@ -425,7 +386,6 @@ namespace DeejNG.Dialogs
             Debug.WriteLine("[Settings] Position preservation handled by overlay service");
         }
 
-
         /// <summary>
         /// Handles the Save button click in the settings window.
         /// Applies the user's settings, writes them to disk, and updates the overlay in the main window.
@@ -455,27 +415,15 @@ namespace DeejNG.Dialogs
             {
                 int baudRate = _settings.BaudRate > 0 ? _settings.BaudRate : 9600;
 
-#if DEBUG
-                Debug.WriteLine($"[SettingsWindow] Calling UpdateComPort: {selectedPort} at {baudRate} baud");
-#endif
-
                 // This will handle disconnect/reconnect automatically
                 _mainWindow.UpdateComPort(selectedPort, baudRate);
             }
 
             try
             {
-#if DEBUG
-                Debug.WriteLine($"[SettingsWindow] Saving overlay settings - Opacity: {_settings.OverlayOpacity}, Enabled: {_settings.OverlayEnabled}");
-#endif
-
                 // Apply the updated settings to the main window and overlay
                 // UpdateOverlaySettings will now save to the active profile
                 _mainWindow?.UpdateOverlaySettings(_settings);
-
-#if DEBUG
-                Debug.WriteLine("[SettingsWindow] Overlay settings saved to profile via UpdateOverlaySettings");
-#endif
             }
             catch (Exception ex)
             {
@@ -508,6 +456,68 @@ namespace DeejNG.Dialogs
             }
         }
 
+        private void SettingComPortSelector_DropDownOpened(object sender, EventArgs e)
+        {
+            try
+            {
+                // Dynamically enumerate COM ports when dropdown opens
+                var availablePorts = System.IO.Ports.SerialPort.GetPortNames();
+                var currentSelection = SettingComPortSelector.SelectedItem as string;
+
+                SettingComPortSelector.ItemsSource = availablePorts;
+
+
+
+                // Restore selection if the port still exists
+                if (!string.IsNullOrEmpty(currentSelection) && availablePorts.Contains(currentSelection))
+                {
+                    SettingComPortSelector.SelectedItem = currentSelection;
+                }
+                // Sync with main window's selection if available
+                else if (_mainWindow?.ComPortSelector.SelectedItem is string mainSelection && availablePorts.Contains(mainSelection))
+                {
+                    SettingComPortSelector.SelectedItem = mainSelection;
+                }
+            }
+            catch (Exception ex)
+            {
+
+            }
+        }
+
+        private void SettingComPortSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_mainWindow != null && SettingComPortSelector.SelectedItem != null)
+            {
+                _mainWindow.ComPortSelector.SelectedItem = SettingComPortSelector.SelectedItem;
+                UpdateConnectButtonState();
+            }
+        }
+
+        private void SettingConnect_Click(object sender, RoutedEventArgs e)
+        {
+            if (_mainWindow != null)
+            {
+                // Update baud rate in settings before forwarding connect
+                if (BaudRateComboBox.SelectedItem is ComboBoxItem item &&
+                    int.TryParse(item.Content?.ToString(), out int baud))
+                {
+                    _settings.BaudRate = baud;
+
+                    // BUGFIX: Update MainWindow's AppSettings BEFORE triggering connect
+                    // This ensures the connection uses the newly selected baud rate
+                    var currentSettings = _mainWindow.GetCurrentSettings();
+                    currentSettings.BaudRate = baud;
+                    _mainWindow.UpdateOverlaySettings(currentSettings);
+
+
+                }
+
+                // Forward the click to the main window's connect button
+                _mainWindow.ConnectButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                UpdateConnectButtonState();
+            }
+        }
 
         /// <summary>
         /// Immediately displays the overlay with current volume levels and channel labels.
@@ -519,14 +529,13 @@ namespace DeejNG.Dialogs
             if (_mainWindow != null && _settings.OverlayEnabled)
             {
                 Debug.WriteLine("[Settings] Showing overlay immediately");
-                
+
                 // Instruct the main window to display the overlay
                 _mainWindow.ShowVolumeOverlay();
-                
+
                 Debug.WriteLine($"[Settings] Overlay shown via service");
             }
         }
-
 
         /// <summary>
         /// Updates overlay preview in real-time when text color selection changes.
@@ -555,30 +564,6 @@ namespace DeejNG.Dialogs
             }
         }
 
-        /// <summary>
-        /// Helper to select the baud rate option matching AppSettings.BaudRate, defaulting to 9600 if not set.
-        /// </summary>
-        private void InitializeBaudRateSelection()
-        {
-            int baud = _settings?.BaudRate > 0 ? _settings.BaudRate : 9600;
-            foreach (ComboBoxItem item in BaudRateComboBox.Items)
-            {
-                if (int.TryParse(item.Content?.ToString(), out int value) && value == baud)
-                {
-                    BaudRateComboBox.SelectedItem = item;
-                    return;
-                }
-            }
-
-            // Fallback to first item if no match
-            if (BaudRateComboBox.Items.Count > 0)
-            {
-                BaudRateComboBox.SelectedIndex = 0;
-            }
-        }
-
-        #endregion
-
         private void TitleBar_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
             if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
@@ -587,33 +572,15 @@ namespace DeejNG.Dialogs
             }
         }
 
-        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        private void UpdateConnectButtonState()
         {
-            Close();
-        }
-
-        #region Button Configuration
-
-        /// <summary>
-        /// Opens the button configuration dialog.
-        /// </summary>
-        private void ConfigureButtons_Click(object sender, RoutedEventArgs e)
-        {
-            var buttonDialog = new ButtonSettingsDialog(_settings)
+            if (_mainWindow != null)
             {
-                Owner = this
-            };
-
-            if (buttonDialog.ShowDialog() == true)
-            {
-                // Button settings are saved directly to _settings by the dialog
-                // No additional action needed here
-#if DEBUG
-                Debug.WriteLine($"[SettingsWindow] Button configuration updated - {_settings.ButtonMappings?.Count ?? 0} mappings saved");
-#endif
+                SettingConnectButton.Content = _mainWindow.ConnectButton.Content;
+                SettingConnectButton.IsEnabled = _mainWindow.ConnectButton.IsEnabled;
             }
         }
 
-        #endregion
+        #endregion Private Methods
     }
 }

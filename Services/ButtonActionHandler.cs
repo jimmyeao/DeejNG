@@ -12,23 +12,27 @@ namespace DeejNG.Services
     /// </summary>
     public class ButtonActionHandler
     {
-        #region Win32 API for Media Keys
 
-        [DllImport("user32.dll")]
-        private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+        #region Private Fields
 
         private const int KEYEVENTF_EXTENDEDKEY = 0x0001;
+
         private const int KEYEVENTF_KEYUP = 0x0002;
+
+        private const byte VK_MEDIA_NEXT_TRACK = 0xB0;
 
         // Virtual key codes for media keys
         private const byte VK_MEDIA_PLAY_PAUSE = 0xB3;
-        private const byte VK_MEDIA_NEXT_TRACK = 0xB0;
+
         private const byte VK_MEDIA_PREV_TRACK = 0xB1;
+
         private const byte VK_MEDIA_STOP = 0xB2;
 
-        #endregion
-
         private readonly List<ChannelControl> _channelControls;
+
+        #endregion Private Fields
+
+        #region Public Constructors
 
         /// <summary>
         /// Initializes a new instance of the ButtonActionHandler class.
@@ -39,6 +43,10 @@ namespace DeejNG.Services
             _channelControls = channelControls ?? throw new ArgumentNullException(nameof(channelControls));
         }
 
+        #endregion Public Constructors
+
+        #region Public Methods
+
         /// <summary>
         /// Executes the specified button action.
         /// </summary>
@@ -48,9 +56,7 @@ namespace DeejNG.Services
             if (mapping == null || mapping.Action == ButtonAction.None)
                 return;
 
-#if DEBUG
-            Debug.WriteLine($"[ButtonAction] Executing {mapping.Action} for button {mapping.ButtonIndex}");
-#endif
+
 
             try
             {
@@ -82,26 +88,26 @@ namespace DeejNG.Services
 
                     case ButtonAction.ToggleInputOutput:
                         // Not currently implemented - InputMode is not in ChannelControl
-#if DEBUG
-                        Debug.WriteLine($"[ButtonAction] ToggleInputOutput not yet implemented");
-#endif
+
                         break;
 
                     default:
-#if DEBUG
-                        Debug.WriteLine($"[ButtonAction] Unknown action: {mapping.Action}");
-#endif
+
                         break;
                 }
             }
             catch (Exception ex)
             {
-#if DEBUG
-                Debug.WriteLine($"[ButtonAction] Error executing {mapping.Action}: {ex.Message}");
-#endif
+
             }
         }
 
+        #endregion Public Methods
+
+        #region Private Methods
+
+        [DllImport("user32.dll")]
+        private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
         /// <summary>
         /// Simulates a media key press.
         /// </summary>
@@ -112,9 +118,7 @@ namespace DeejNG.Services
             // Release the key
             keybd_event(keyCode, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
 
-#if DEBUG
-            Debug.WriteLine($"[ButtonAction] Sent media key: 0x{keyCode:X2}");
-#endif
+
         }
 
         /// <summary>
@@ -124,9 +128,7 @@ namespace DeejNG.Services
         {
             if (channelIndex < 0 || channelIndex >= _channelControls.Count)
             {
-#if DEBUG
-                Debug.WriteLine($"[ButtonAction] Invalid channel index: {channelIndex}");
-#endif
+
                 return;
             }
 
@@ -134,9 +136,7 @@ namespace DeejNG.Services
             bool newMuteState = !channel.IsMuted;
             channel.SetMuted(newMuteState, applyToAudio: true);
 
-#if DEBUG
-            Debug.WriteLine($"[ButtonAction] Toggled channel {channelIndex} mute to {newMuteState}");
-#endif
+
         }
 
         /// <summary>
@@ -163,10 +163,10 @@ namespace DeejNG.Services
                 channel.SetMuted(newMuteState, applyToAudio: true);
             }
 
-#if DEBUG
-            Debug.WriteLine($"[ButtonAction] Global mute set to {newMuteState}");
-#endif
+
         }
+
+        #endregion Private Methods
 
     }
 }

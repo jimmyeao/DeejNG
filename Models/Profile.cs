@@ -8,15 +8,7 @@ namespace DeejNG.Models
     /// </summary>
     public class Profile
     {
-        /// <summary>
-        /// Gets or sets the unique name of the profile (e.g., "Gaming", "Streaming", "Default")
-        /// </summary>
-        public string Name { get; set; } = "Default";
-
-        /// <summary>
-        /// Gets or sets the application settings for this profile
-        /// </summary>
-        public AppSettings Settings { get; set; } = new AppSettings();
+        #region Public Properties
 
         /// <summary>
         /// Gets or sets the timestamp when this profile was created
@@ -27,6 +19,20 @@ namespace DeejNG.Models
         /// Gets or sets the timestamp when this profile was last modified
         /// </summary>
         public DateTime LastModified { get; set; } = DateTime.Now;
+
+        /// <summary>
+        /// Gets or sets the unique name of the profile (e.g., "Gaming", "Streaming", "Default")
+        /// </summary>
+        public string Name { get; set; } = "Default";
+
+        /// <summary>
+        /// Gets or sets the application settings for this profile
+        /// </summary>
+        public AppSettings Settings { get; set; } = new AppSettings();
+
+        #endregion Public Properties
+
+        #region Public Methods
 
         /// <summary>
         /// Creates a deep copy of this profile
@@ -41,6 +47,10 @@ namespace DeejNG.Models
                 LastModified = DateTime.Now
             };
         }
+
+        #endregion Public Methods
+
+        #region Private Methods
 
         private AppSettings CloneSettings(AppSettings original)
         {
@@ -74,5 +84,7 @@ namespace DeejNG.Models
                 OverlayTextColor = original.OverlayTextColor
             };
         }
+
+        #endregion Private Methods
     }
 }

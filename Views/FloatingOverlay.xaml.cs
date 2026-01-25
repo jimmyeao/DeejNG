@@ -18,51 +18,47 @@ namespace DeejNG.Views
 {
     public partial class FloatingOverlay : Window
     {
-        #region Private Fields
+
         // Win32 API constants
 
+        #region Private Fields
+
         private const int GWL_EXSTYLE = -20;
-        private const int WS_EX_NOACTIVATE = 0x08000000;
-        private const int WS_EX_TOOLWINDOW = 0x00000080;
-        private const int HWND_TOPMOST = -1;
-        private const uint SWP_NOACTIVATE = 0x0010;
-        private const uint SWP_NOMOVE = 0x0002;
-        private const uint SWP_NOSIZE = 0x0001;
         private const float HorizontalSpacing = 130f;
+        private const int HWND_TOPMOST = -1;
         private const float LabelOffset = 65f;
         private const int MaxChannelsPerRow = 6;
         // Layout constants
         private const float MeterSize = 90f;
+
         private const float Padding = 25f;
+        private const uint SWP_NOACTIVATE = 0x0010;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOSIZE = 0x0001;
         private const float VerticalSpacing = 125f;
+        private const int WS_EX_NOACTIVATE = 0x08000000;
+        private const int WS_EX_TOOLWINDOW = 0x00000080;
         private readonly DispatcherTimer _hideTimer = new();
         private DispatcherTimer? _autoCloseTimer;
         private DispatcherTimer _backgroundAnalysisTimer;
         private List<string> _channelLabels = new();
+        private Point _dragStartPosition;
+        private bool _hasAppliedInitialPosition = false;
+        private double _initialX = 0;
+        private double _initialY = 0;
         private bool _isDragging = false;
+        private bool _isInitializing = true;
         private bool _isUpdatingSettings = false;
         private bool _isWhiteTextOptimal = true;
         private DateTime _lastVolumeUpdate = DateTime.MinValue;
         private MainWindow _parentWindow;
+        private bool _persistentInfoLogged = false;
         private string _textColorMode = "Auto";
         private List<float> _volumes = new();
-        private Point _dragStartPosition;
-        private double _initialX = 0;
-        private double _initialY = 0;
-        private bool _hasAppliedInitialPosition = false;
-        private bool _isInitializing = true;
-        private bool _persistentInfoLogged = false; // gate persistent display log
-        // Win32 API imports
-        [DllImport("user32.dll")]
-        private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-
-        [DllImport("user32.dll")]
-        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-
-        [DllImport("user32.dll")]
-        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
 
         #endregion Private Fields
+
+        // gate persistent display log
 
         #region Public Constructors
 
@@ -87,10 +83,7 @@ namespace DeejNG.Views
             // Store initial position to apply after window is fully initialized
             _initialX = settings.OverlayX;
             _initialY = settings.OverlayY;
-#if DEBUG
-            Debug.WriteLine($"[Overlay] Constructor: Stored initial position X={_initialX}, Y={_initialY}");
-#endif
-            
+
             OverlayOpacity = settings.OverlayOpacity;
             _textColorMode = settings.OverlayTextColor ?? "Auto";
             SetupAutoCloseTimer(settings.OverlayTimeoutSeconds);
@@ -113,15 +106,50 @@ namespace DeejNG.Views
         #region Public Properties
 
         public int AutoHideSeconds { get; set; } = 2;
+
         public double OverlayOpacity { get; set; } = 0.9;
 
         #endregion Public Properties
 
-        // "Auto", "White", "Black"
-        // Cache for auto-detected color
-        // Store text color setting directly in overlay
-
         #region Public Methods
+
+        public new void Hide()
+        {
+            try
+            {
+                this.Visibility = Visibility.Collapsed;
+                _persistentInfoLogged = false; // reset when hiding
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Overlay] Error in Hide: {ex.Message}");
+            }
+        }
+
+        public new void Show()
+        {
+            try
+            {
+                // Don't call base.Show() as it can steal focus
+                this.Visibility = Visibility.Visible;
+                _persistentInfoLogged = false; // reset when showing
+
+                // If you need to ensure it's topmost, do it without activation
+                if (this.IsLoaded)
+                {
+                    var helper = new WindowInteropHelper(this);
+                    if (helper.Handle != IntPtr.Zero)
+                    {
+                        SetWindowPos(helper.Handle, (IntPtr)HWND_TOPMOST, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Overlay] Error in custom Show: {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// Displays volume levels on the overlay window and updates visual/text color logic if needed.
@@ -194,10 +222,14 @@ namespace DeejNG.Views
                 }
             }
         }
+
+        // "Auto", "White", "Black"
+        // Cache for auto-detected color
+        // Store text color setting directly in overlay
         /// <summary>
-                 /// Applies updated overlay settings such as opacity, position, auto-close timeout, and text color mode.
-                 /// </summary>
-                 /// <param name="settings">The updated settings to apply.</param>
+        /// Applies updated overlay settings such as opacity, position, auto-close timeout, and text color mode.
+        /// </summary>
+        /// <param name="settings">The updated settings to apply.</param>
         public void UpdateSettings(AppSettings settings)
         {
             // Prevents unnecessary updates or recursion during settings application
@@ -213,16 +245,10 @@ namespace DeejNG.Views
             // BUT: Don't apply position during initialization - OnSourceInitialized handles that
             if (!_isDragging && !_isInitializing && (settings.OverlayX != 0 || settings.OverlayY != 0))
             {
-#if DEBUG
-                Debug.WriteLine($"[Overlay] UpdateSettings: Applying position X={settings.OverlayX}, Y={settings.OverlayY}");
-#endif
                 SetPrecisePosition(settings.OverlayX, settings.OverlayY);
             }
             else if (_isInitializing)
             {
-#if DEBUG
-                Debug.WriteLine($"[Overlay] UpdateSettings: Skipping position application during initialization (will be applied in OnSourceInitialized)");
-#endif
             }
 
             // Store whether overlay was visible before timer update
@@ -260,10 +286,14 @@ namespace DeejNG.Views
             Debug.WriteLine($"[Overlay] Settings updated - Text color mode: {_textColorMode}, Timeout: {settings.OverlayTimeoutSeconds}s");
         }
 
-
         #endregion Public Methods
 
         #region Protected Methods
+
+        protected override void OnActivated(EventArgs e)
+        {
+            // Don't call base to prevent activation
+        }
 
         protected override void OnClosed(EventArgs e)
         {
@@ -285,42 +315,6 @@ namespace DeejNG.Views
 
             base.OnClosed(e);
         }
-        public new void Show()
-        {
-            try
-            {
-                // Don't call base.Show() as it can steal focus
-                this.Visibility = Visibility.Visible;
-                _persistentInfoLogged = false; // reset when showing
-
-                // If you need to ensure it's topmost, do it without activation
-                if (this.IsLoaded)
-                {
-                    var helper = new WindowInteropHelper(this);
-                    if (helper.Handle != IntPtr.Zero)
-                    {
-                        SetWindowPos(helper.Handle, (IntPtr)HWND_TOPMOST, 0, 0, 0, 0,
-                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Overlay] Error in custom Show: {ex.Message}");
-            }
-        }
-        public new void Hide()
-        {
-            try
-            {
-                this.Visibility = Visibility.Collapsed;
-                _persistentInfoLogged = false; // reset when hiding
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Overlay] Error in Hide: {ex.Message}");
-            }
-        }
 
         // Prevent any focus-related events
         protected override void OnGotFocus(RoutedEventArgs e)
@@ -329,10 +323,6 @@ namespace DeejNG.Views
             e.Handled = true;
         }
 
-        protected override void OnActivated(EventArgs e)
-        {
-            // Don't call base to prevent activation
-        }
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
@@ -350,7 +340,6 @@ namespace DeejNG.Views
                 _isInitializing = false;
             }, DispatcherPriority.ApplicationIdle);
         }
-
 
         #endregion Protected Methods
 
@@ -378,9 +367,19 @@ namespace DeejNG.Views
         private static extern int GetPixel(IntPtr hDC, int x, int y);
 
         [DllImport("user32.dll")]
+        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll")]
         private static extern bool ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
         [DllImport("gdi32.dll")]
         private static extern IntPtr SelectObject(IntPtr hDC, IntPtr hGDIObj);
+
+        // Win32 API imports
+        [DllImport("user32.dll")]
+        private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
         /// <summary>
         /// Analyzes the background behind the overlay and updates the text color
         /// based on average luminance to ensure optimal contrast (white or black text).
@@ -558,7 +557,6 @@ namespace DeejNG.Views
             DrawWrappedLabel(canvas, label, center.X, center.Y + labelOffset);
         }
 
-
         /// <summary>
         /// Draws a wrapped label centered horizontally at a specified Y coordinate,
         /// splitting the text into multiple lines if needed, with basic word-wrapping and truncation.
@@ -680,7 +678,6 @@ namespace DeejNG.Views
                 return SKColors.Red;          // Clipping or very loud
         }
 
-
         /// <summary>
         /// Handles the paint event for the overlay canvas.
         /// Draws the semi-transparent background, border, and all volume meters with labels.
@@ -744,7 +741,6 @@ namespace DeejNG.Views
                 }
             }
         }
-
 
         /// <summary>
         /// Sets the window position while clamping it within virtual screen bounds.
@@ -853,24 +849,21 @@ namespace DeejNG.Views
             // This prevents feedback loops when OnSourceInitialized sets the position
             if (_isInitializing)
             {
-#if DEBUG
-                Debug.WriteLine($"[Overlay] LocationChanged suppressed during initialization: ({this.Left}, {this.Top})");
-#endif
                 return;
             }
-            
+
             if (!_isUpdatingSettings && this.IsLoaded)
             {
                 var preciseX = Math.Round(this.Left, 1);
                 var preciseY = Math.Round(this.Top, 1);
 
                 // Fire event for OverlayService to handle (works regardless of parent window state)
-                OverlayPositionChanged?.Invoke(this, new OverlayPositionEventArgs 
-                { 
-                    X = preciseX, 
-                    Y = preciseY 
+                OverlayPositionChanged?.Invoke(this, new OverlayPositionEventArgs
+                {
+                    X = preciseX,
+                    Y = preciseY
                 });
-                
+
                 // Also notify MainWindow directly if available (legacy support)
                 if (Application.Current.MainWindow is MainWindow mainWindow)
                 {
@@ -911,51 +904,32 @@ namespace DeejNG.Views
             if (e.ChangedButton == MouseButton.Left)
             {
                 var currentPosition = new Point(this.Left, this.Top);
-                
+
                 // Only save if position actually changed
-                if (Math.Abs(currentPosition.X - _dragStartPosition.X) > 0.1 || 
+                if (Math.Abs(currentPosition.X - _dragStartPosition.X) > 0.1 ||
                     Math.Abs(currentPosition.Y - _dragStartPosition.Y) > 0.1)
                 {
                     var preciseX = Math.Round(this.Left, 1);
                     var preciseY = Math.Round(this.Top, 1);
 
-#if DEBUG
-                    Debug.WriteLine($"[Overlay] Mouse released at position: ({preciseX}, {preciseY})");
-                    Debug.WriteLine($"[Overlay] Parent window is null: {_parentWindow == null}");
-#endif
-
                     // FIXED: Fire event for OverlayService to handle (works regardless of parent window state)
-                    OverlayPositionChanged?.Invoke(this, new OverlayPositionEventArgs 
-                    { 
-                        X = preciseX, 
-                        Y = preciseY 
+                    OverlayPositionChanged?.Invoke(this, new OverlayPositionEventArgs
+                    {
+                        X = preciseX,
+                        Y = preciseY
                     });
-#if DEBUG
-                    Debug.WriteLine("[Overlay] OverlayPositionChanged event fired");
-#endif
 
                     // Also try direct call if parent window is available (legacy support)
                     if (_parentWindow != null)
                     {
                         _parentWindow.UpdateOverlayPosition(preciseX, preciseY);
-#if DEBUG
-                        Debug.WriteLine("[Overlay] UpdateOverlayPosition called on parent window");
-#endif
                     }
                 }
-#if DEBUG
-                else
-                {
-                    Debug.WriteLine($"[Overlay] Mouse released but position unchanged - skipping save");
-                }
-#endif
             }
         }
 
-
         #endregion Private Methods
 
-      
     }
 
     /// <summary>
@@ -963,7 +937,11 @@ namespace DeejNG.Views
     /// </summary>
     public class OverlayPositionEventArgs : EventArgs
     {
+        #region Public Properties
+
         public double X { get; set; }
         public double Y { get; set; }
+
+        #endregion Public Properties
     }
 }

@@ -13,9 +13,15 @@ namespace DeejNG.Dialogs
     /// </summary>
     public partial class SettingsDialog : UserControl
     {
+        #region Private Fields
+
         private readonly string _settingsPath;
         private MainWindow _mainWindow;
         private AppSettings _settings;
+
+        #endregion Private Fields
+
+        #region Public Constructors
 
         public SettingsDialog()
         {
@@ -42,6 +48,10 @@ namespace DeejNG.Dialogs
             OverlayEnabledCheckBox.Unchecked += OverlayEnabledCheckBox_Changed;
             TextColorComboBox.SelectionChanged += TextColorComboBox_SelectionChanged;
         }
+
+        #endregion Public Constructors
+
+        #region Private Methods
 
         private void ApplySettingsToOverlay()
         {
@@ -201,5 +211,7 @@ namespace DeejNG.Dialogs
                 ApplySettingsToOverlay();
             }
         }
+
+        #endregion Private Methods
     }
 }

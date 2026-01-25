@@ -15,12 +15,45 @@ namespace DeejNG.Services
     /// </summary>
     public class ProfileManager
     {
+        #region Private Fields
+
         private readonly object _profileLock = new object();
+        private readonly AppSettingsManager _settingsManager;
         private string _cachedProfilesPath = null;
         private ProfileCollection _profileCollection = new ProfileCollection();
-        private readonly AppSettingsManager _settingsManager;
+
+        #endregion Private Fields
+
+        #region Public Constructors
+
+        public ProfileManager(AppSettingsManager settingsManager)
+        {
+            _settingsManager = settingsManager ?? throw new ArgumentNullException(nameof(settingsManager));
+        }
+
+        #endregion Public Constructors
+
+        #region Public Events
 
         public event Action<Profile> ProfileChanged;
+
+        #endregion Public Events
+
+        #region Public Properties
+
+        /// <summary>
+        /// Gets the currently active profile
+        /// </summary>
+        public Profile ActiveProfile => _profileCollection.GetActiveProfile();
+
+        /// <summary>
+        /// Gets the current profile collection
+        /// </summary>
+        public ProfileCollection ProfileCollection => _profileCollection;
+
+        #endregion Public Properties
+
+        #region Private Properties
 
         /// <summary>
         /// Gets the profiles file path with fallback options for compatibility
@@ -36,27 +69,76 @@ namespace DeejNG.Services
                 string settingsDir = Path.GetDirectoryName(_settingsManager.GetSettingsPath());
                 _cachedProfilesPath = Path.Combine(settingsDir, "profiles.json");
 
-#if DEBUG
-                Debug.WriteLine($"[Profiles] Profiles path: {_cachedProfilesPath}");
-#endif
+
                 return _cachedProfilesPath;
             }
         }
 
-        public ProfileManager(AppSettingsManager settingsManager)
+        #endregion Private Properties
+
+        #region Public Methods
+
+        /// <summary>
+        /// Creates a new profile
+        /// </summary>
+        public bool CreateProfile(string name, bool copyFromActive = true)
         {
-            _settingsManager = settingsManager ?? throw new ArgumentNullException(nameof(settingsManager));
+            if (string.IsNullOrWhiteSpace(name))
+                return false;
+
+            Profile newProfile;
+
+            if (copyFromActive)
+            {
+                // Clone the active profile
+                var activeProfile = _profileCollection.GetActiveProfile();
+                newProfile = activeProfile.Clone();
+                newProfile.Name = name;
+            }
+            else
+            {
+                // Create a fresh profile
+                newProfile = new Profile
+                {
+                    Name = name,
+                    Settings = new AppSettings()
+                };
+            }
+
+            if (_profileCollection.AddProfile(newProfile))
+            {
+                SaveProfiles();
+
+                return true;
+            }
+
+
+            return false;
         }
 
         /// <summary>
-        /// Gets the current profile collection
+        /// Deletes a profile
         /// </summary>
-        public ProfileCollection ProfileCollection => _profileCollection;
+        public bool DeleteProfile(string name)
+        {
+            if (_profileCollection.RemoveProfile(name))
+            {
+                SaveProfiles();
+
+                return true;
+            }
+
+
+            return false;
+        }
 
         /// <summary>
-        /// Gets the currently active profile
+        /// Gets the settings for the active profile
         /// </summary>
-        public Profile ActiveProfile => _profileCollection.GetActiveProfile();
+        public AppSettings GetActiveProfileSettings()
+        {
+            return _profileCollection.GetActiveProfile()?.Settings ?? new AppSettings();
+        }
 
         /// <summary>
         /// Gets all profile names
@@ -76,15 +158,7 @@ namespace DeejNG.Services
                     var json = File.ReadAllText(ProfilesPath);
                     _profileCollection = JsonSerializer.Deserialize<ProfileCollection>(json) ?? new ProfileCollection();
 
-#if DEBUG
-                    Debug.WriteLine($"[Profiles] Loaded {_profileCollection.Profiles.Count} profiles from disk");
-                    Debug.WriteLine($"[Profiles] Active profile: {_profileCollection.ActiveProfileName}");
-                    var activeProfile = _profileCollection.GetActiveProfile();
-                    if (activeProfile != null)
-                    {
-                        Debug.WriteLine($"[Profiles] Active profile settings - PortName: '{activeProfile.Settings?.PortName}', BaudRate: {activeProfile.Settings?.BaudRate}");
-                    }
-#endif
+
                 }
                 else
                 {
@@ -103,16 +177,12 @@ namespace DeejNG.Services
                     _profileCollection.Profiles.Add(defaultProfile);
                     _profileCollection.ActiveProfileName = "Default";
 
-#if DEBUG
-                    Debug.WriteLine("[Profiles] Created default profile");
-#endif
+
                 }
             }
             catch (Exception ex)
             {
-#if DEBUG
-                Debug.WriteLine($"[Profiles] Error loading profiles: {ex.Message}");
-#endif
+
                 // Create default profile on error
                 _profileCollection = new ProfileCollection();
                 _profileCollection.Profiles.Add(new Profile { Name = "Default" });
@@ -121,74 +191,19 @@ namespace DeejNG.Services
         }
 
         /// <summary>
-        /// Migrates settings from old settings.json to new profile system
+        /// Renames a profile
         /// </summary>
-        private void MigrateFromLegacySettings()
+        public bool RenameProfile(string oldName, string newName)
         {
-            try
+            if (_profileCollection.RenameProfile(oldName, newName))
             {
-                // Try to load existing settings
-                var legacySettings = _settingsManager.LoadSettingsFromDisk();
+                SaveProfiles();
 
-                if (legacySettings != null)
-                {
-                    // Create a "Default" profile from existing settings
-                    var defaultProfile = new Profile
-                    {
-                        Name = "Default",
-                        Settings = legacySettings,
-                        CreatedAt = DateTime.Now,
-                        LastModified = DateTime.Now
-                    };
-
-                    _profileCollection.Profiles.Add(defaultProfile);
-                    _profileCollection.ActiveProfileName = "Default";
-
-#if DEBUG
-                    Debug.WriteLine("[Profiles] Migrated legacy settings to 'Default' profile");
-                    Debug.WriteLine($"[Profiles]   - Port: '{legacySettings.PortName}'");
-                    Debug.WriteLine($"[Profiles]   - BaudRate: {legacySettings.BaudRate}");
-                    Debug.WriteLine($"[Profiles]   - Sliders: {legacySettings.SliderTargets?.Count ?? 0}");
-#endif
-
-                    // Save the new profile system
-                    SaveProfiles();
-
-                    // Optionally rename old settings file to indicate migration
-                    try
-                    {
-                        string legacyPath = _settingsManager.GetSettingsPath();
-                        if (File.Exists(legacyPath))
-                        {
-                            string backupPath = Path.Combine(
-                                Path.GetDirectoryName(legacyPath),
-                                "settings.json.backup");
-                            File.Move(legacyPath, backupPath);
-#if DEBUG
-                            Debug.WriteLine($"[Profiles] Backed up legacy settings to {backupPath}");
-#endif
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-#if DEBUG
-                        Debug.WriteLine($"[Profiles] Could not backup legacy settings: {ex.Message}");
-#endif
-                    }
-                }
-                else
-                {
-#if DEBUG
-                    Debug.WriteLine("[Profiles] No legacy settings found, creating fresh default profile");
-#endif
-                }
+                return true;
             }
-            catch (Exception ex)
-            {
-#if DEBUG
-                Debug.WriteLine($"[Profiles] Error during migration: {ex.Message}");
-#endif
-            }
+
+
+            return false;
         }
 
         /// <summary>
@@ -229,17 +244,11 @@ namespace DeejNG.Services
                         fileStream.Flush(true);
                     }
 
-#if DEBUG
-                    Debug.WriteLine($"[Profiles] Saved {_profileCollection.Profiles.Count} profiles to disk");
-                    Debug.WriteLine($"[Profiles] Active profile: {_profileCollection.ActiveProfileName}");
-#endif
+
                 }
                 catch (Exception ex)
                 {
-#if DEBUG
-                    Debug.WriteLine($"[Profiles] Error saving profiles: {ex.Message}");
-                    Debug.WriteLine($"[Profiles] Stack trace: {ex.StackTrace}");
-#endif
+
                 }
             }
         }
@@ -261,97 +270,11 @@ namespace DeejNG.Services
             {
                 SaveProfiles();
                 ProfileChanged?.Invoke(_profileCollection.GetActiveProfile());
-#if DEBUG
-                Debug.WriteLine($"[Profiles] Switched to profile: {profileName}");
-#endif
+
                 return true;
             }
 
-#if DEBUG
-            Debug.WriteLine($"[Profiles] Failed to switch to profile: {profileName}");
-#endif
-            return false;
-        }
 
-        /// <summary>
-        /// Creates a new profile
-        /// </summary>
-        public bool CreateProfile(string name, bool copyFromActive = true)
-        {
-            if (string.IsNullOrWhiteSpace(name))
-                return false;
-
-            Profile newProfile;
-
-            if (copyFromActive)
-            {
-                // Clone the active profile
-                var activeProfile = _profileCollection.GetActiveProfile();
-                newProfile = activeProfile.Clone();
-                newProfile.Name = name;
-            }
-            else
-            {
-                // Create a fresh profile
-                newProfile = new Profile
-                {
-                    Name = name,
-                    Settings = new AppSettings()
-                };
-            }
-
-            if (_profileCollection.AddProfile(newProfile))
-            {
-                SaveProfiles();
-#if DEBUG
-                Debug.WriteLine($"[Profiles] Created new profile: {name}");
-#endif
-                return true;
-            }
-
-#if DEBUG
-            Debug.WriteLine($"[Profiles] Failed to create profile (already exists): {name}");
-#endif
-            return false;
-        }
-
-        /// <summary>
-        /// Deletes a profile
-        /// </summary>
-        public bool DeleteProfile(string name)
-        {
-            if (_profileCollection.RemoveProfile(name))
-            {
-                SaveProfiles();
-#if DEBUG
-                Debug.WriteLine($"[Profiles] Deleted profile: {name}");
-#endif
-                return true;
-            }
-
-#if DEBUG
-            Debug.WriteLine($"[Profiles] Failed to delete profile: {name}");
-#endif
-            return false;
-        }
-
-        /// <summary>
-        /// Renames a profile
-        /// </summary>
-        public bool RenameProfile(string oldName, string newName)
-        {
-            if (_profileCollection.RenameProfile(oldName, newName))
-            {
-                SaveProfiles();
-#if DEBUG
-                Debug.WriteLine($"[Profiles] Renamed profile: {oldName} -> {newName}");
-#endif
-                return true;
-            }
-
-#if DEBUG
-            Debug.WriteLine($"[Profiles] Failed to rename profile: {oldName} -> {newName}");
-#endif
             return false;
         }
 
@@ -368,12 +291,68 @@ namespace DeejNG.Services
             }
         }
 
+        #endregion Public Methods
+
+        #region Private Methods
+
         /// <summary>
-        /// Gets the settings for the active profile
+        /// Migrates settings from old settings.json to new profile system
         /// </summary>
-        public AppSettings GetActiveProfileSettings()
+        private void MigrateFromLegacySettings()
         {
-            return _profileCollection.GetActiveProfile()?.Settings ?? new AppSettings();
+            try
+            {
+                // Try to load existing settings
+                var legacySettings = _settingsManager.LoadSettingsFromDisk();
+
+                if (legacySettings != null)
+                {
+                    // Create a "Default" profile from existing settings
+                    var defaultProfile = new Profile
+                    {
+                        Name = "Default",
+                        Settings = legacySettings,
+                        CreatedAt = DateTime.Now,
+                        LastModified = DateTime.Now
+                    };
+
+                    _profileCollection.Profiles.Add(defaultProfile);
+                    _profileCollection.ActiveProfileName = "Default";
+
+
+
+                    // Save the new profile system
+                    SaveProfiles();
+
+                    // Optionally rename old settings file to indicate migration
+                    try
+                    {
+                        string legacyPath = _settingsManager.GetSettingsPath();
+                        if (File.Exists(legacyPath))
+                        {
+                            string backupPath = Path.Combine(
+                                Path.GetDirectoryName(legacyPath),
+                                "settings.json.backup");
+                            File.Move(legacyPath, backupPath);
+
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+
+                    }
+                }
+                else
+                {
+
+                }
+            }
+            catch (Exception ex)
+            {
+
+            }
         }
+
+        #endregion Private Methods
     }
 }

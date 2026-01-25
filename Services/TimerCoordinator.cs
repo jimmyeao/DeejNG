@@ -6,24 +6,58 @@ namespace DeejNG.Services
 {
     public class TimerCoordinator : IDisposable
     {
-        private DispatcherTimer _meterTimer;
-        private DispatcherTimer _sessionCacheTimer;
+        #region Private Fields
+
         private DispatcherTimer _forceCleanupTimer;
+        private DispatcherTimer _meterTimer;
+        private DispatcherTimer _periodicPositionSaveTimer;
+        private DispatcherTimer _positionSaveTimer;
         private DispatcherTimer _serialReconnectTimer;
         private DispatcherTimer _serialWatchdogTimer;
-        private DispatcherTimer _positionSaveTimer;
-        private DispatcherTimer _periodicPositionSaveTimer;
+        private DispatcherTimer _sessionCacheTimer;
+
+        #endregion Private Fields
+
+        #region Public Events
+
+        public event EventHandler ForceCleanup;
 
         public event EventHandler MeterUpdate;
-        public event EventHandler SessionCacheUpdate;
-        public event EventHandler ForceCleanup;
-        public event EventHandler SerialReconnectAttempt;
-        public event EventHandler SerialWatchdogCheck;
-        public event EventHandler PositionSave;
         public event EventHandler PeriodicPositionSave;
+
+        public event EventHandler PositionSave;
+
+        public event EventHandler SerialReconnectAttempt;
+
+        public event EventHandler SerialWatchdogCheck;
+
+        public event EventHandler SessionCacheUpdate;
+
+        #endregion Public Events
+
+        #region Public Properties
 
         public bool IsMetersRunning => _meterTimer?.IsEnabled == true;
         public bool IsSerialReconnectRunning => _serialReconnectTimer?.IsEnabled == true;
+
+        #endregion Public Properties
+
+        #region Public Methods
+
+        public void Dispose()
+        {
+            // Stop all timers and clear references to ensure proper cleanup
+            StopAll();
+
+            // Null out timer references to allow GC to collect them
+            _meterTimer = null;
+            _sessionCacheTimer = null;
+            _forceCleanupTimer = null;
+            _serialReconnectTimer = null;
+            _serialWatchdogTimer = null;
+            _positionSaveTimer = null;
+            _periodicPositionSaveTimer = null;
+        }
 
         public void InitializeTimers()
         {
@@ -81,85 +115,6 @@ namespace DeejNG.Services
             _periodicPositionSaveTimer.Tick += (s, e) => PeriodicPositionSave?.Invoke(s, e);
         }
 
-        public void StartMeters()
-        {
-            _meterTimer?.Start();
-        }
-
-        public void StopMeters()
-        {
-            _meterTimer?.Stop();
-        }
-
-        public void StartSessionCache()
-        {
-            _sessionCacheTimer?.Start();
-        }
-
-        public void StopSessionCache()
-        {
-            _sessionCacheTimer?.Stop();
-        }
-
-        public void StartForceCleanup()
-        {
-            _forceCleanupTimer?.Start();
-        }
-
-        public void StopForceCleanup()
-        {
-            _forceCleanupTimer?.Stop();
-        }
-
-        public void StartSerialReconnect()
-        {
-            if (_serialReconnectTimer != null)
-            {
-#if DEBUG
-                Debug.WriteLine("[TimerCoordinator] Starting serial reconnect timer");
-#endif
-                _serialReconnectTimer.Start();
-            }
-        }
-
-        public void StopSerialReconnect()
-        {
-            if (_serialReconnectTimer != null && _serialReconnectTimer.IsEnabled)
-            {
-#if DEBUG
-                Debug.WriteLine("[TimerCoordinator] Stopping serial reconnect timer");
-#endif
-                _serialReconnectTimer.Stop();
-            }
-        }
-
-        public void StartSerialWatchdog()
-        {
-            _serialWatchdogTimer?.Start();
-        }
-
-        public void StopSerialWatchdog()
-        {
-            _serialWatchdogTimer?.Stop();
-        }
-
-        public void TriggerPositionSave()
-        {
-            // Reset the timer - this cancels any pending save and starts a new countdown
-            _positionSaveTimer?.Stop();
-            _positionSaveTimer?.Start();
-        }
-
-        public void StartPeriodicPositionSave()
-        {
-            _periodicPositionSaveTimer?.Start();
-        }
-
-        public void StopPeriodicPositionSave()
-        {
-            _periodicPositionSaveTimer?.Stop();
-        }
-
         public void SetSerialReconnectInterval(TimeSpan interval)
         {
             if (_serialReconnectTimer != null)
@@ -176,6 +131,40 @@ namespace DeejNG.Services
             // Note: Meters and serial reconnect are started conditionally
         }
 
+        public void StartForceCleanup()
+        {
+            _forceCleanupTimer?.Start();
+        }
+
+        public void StartMeters()
+        {
+            _meterTimer?.Start();
+        }
+
+        public void StartPeriodicPositionSave()
+        {
+            _periodicPositionSaveTimer?.Start();
+        }
+
+        public void StartSerialReconnect()
+        {
+            if (_serialReconnectTimer != null)
+            {
+
+                _serialReconnectTimer.Start();
+            }
+        }
+
+        public void StartSerialWatchdog()
+        {
+            _serialWatchdogTimer?.Start();
+        }
+
+        public void StartSessionCache()
+        {
+            _sessionCacheTimer?.Start();
+        }
+
         public void StopAll()
         {
             StopMeters();
@@ -187,19 +176,45 @@ namespace DeejNG.Services
             _periodicPositionSaveTimer?.Stop();
         }
 
-        public void Dispose()
+        public void StopForceCleanup()
         {
-            // Stop all timers and clear references to ensure proper cleanup
-            StopAll();
-
-            // Null out timer references to allow GC to collect them
-            _meterTimer = null;
-            _sessionCacheTimer = null;
-            _forceCleanupTimer = null;
-            _serialReconnectTimer = null;
-            _serialWatchdogTimer = null;
-            _positionSaveTimer = null;
-            _periodicPositionSaveTimer = null;
+            _forceCleanupTimer?.Stop();
         }
+
+        public void StopMeters()
+        {
+            _meterTimer?.Stop();
+        }
+        public void StopPeriodicPositionSave()
+        {
+            _periodicPositionSaveTimer?.Stop();
+        }
+
+        public void StopSerialReconnect()
+        {
+            if (_serialReconnectTimer != null && _serialReconnectTimer.IsEnabled)
+            {
+
+                _serialReconnectTimer.Stop();
+            }
+        }
+
+        public void StopSerialWatchdog()
+        {
+            _serialWatchdogTimer?.Stop();
+        }
+
+        public void StopSessionCache()
+        {
+            _sessionCacheTimer?.Stop();
+        }
+        public void TriggerPositionSave()
+        {
+            // Reset the timer - this cancels any pending save and starts a new countdown
+            _positionSaveTimer?.Stop();
+            _positionSaveTimer?.Start();
+        }
+
+        #endregion Public Methods
     }
 }

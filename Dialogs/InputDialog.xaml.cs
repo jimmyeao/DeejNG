@@ -7,7 +7,7 @@ namespace DeejNG.Dialogs
     /// </summary>
     public partial class InputDialog : Window
     {
-        public string ResponseText { get; private set; } = string.Empty;
+        #region Public Constructors
 
         public InputDialog(string title, string prompt, string defaultValue = "")
         {
@@ -24,26 +24,15 @@ namespace DeejNG.Dialogs
             };
         }
 
-        private void TitleBar_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
-        {
-            if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
-            {
-                DragMove();
-            }
-        }
+        #endregion Public Constructors
 
-        private void OkButton_Click(object sender, RoutedEventArgs e)
-        {
-            ResponseText = InputTextBox.Text?.Trim() ?? string.Empty;
-            DialogResult = true;
-            Close();
-        }
+        #region Public Properties
 
-        private void CancelButton_Click(object sender, RoutedEventArgs e)
-        {
-            DialogResult = false;
-            Close();
-        }
+        public string ResponseText { get; private set; } = string.Empty;
+
+        #endregion Public Properties
+
+        #region Public Methods
 
         /// <summary>
         /// Shows the input dialog and returns the entered text, or empty string if cancelled
@@ -59,5 +48,32 @@ namespace DeejNG.Dialogs
             bool? result = dialog.ShowDialog();
             return result == true ? dialog.ResponseText : string.Empty;
         }
+
+        #endregion Public Methods
+
+        #region Private Methods
+
+        private void CancelButton_Click(object sender, RoutedEventArgs e)
+        {
+            DialogResult = false;
+            Close();
+        }
+
+        private void OkButton_Click(object sender, RoutedEventArgs e)
+        {
+            ResponseText = InputTextBox.Text?.Trim() ?? string.Empty;
+            DialogResult = true;
+            Close();
+        }
+
+        private void TitleBar_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
+            {
+                DragMove();
+            }
+        }
+
+        #endregion Private Methods
     }
 }

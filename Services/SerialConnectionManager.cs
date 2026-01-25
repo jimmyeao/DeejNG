@@ -11,56 +11,156 @@ namespace DeejNG.Services
 {
     public class SerialConnectionManager : IDisposable
     {
-        private SerialPort _serialPort;
-        private bool _isConnected = false;
-        private bool _serialDisconnected = false;
-        private bool _manualDisconnect = false;
-        private bool _serialPortFullyInitialized = false;
-        private string _lastConnectedPort = string.Empty;
-        private string _userSelectedPort = string.Empty;
+        #region Private Fields
 
-        private DateTime _lastValidDataTimestamp = DateTime.MinValue;
-        private int _noDataCounter = 0;
-        private bool _expectingData = false;
-
-        // Protocol validation
-        private bool _isProtocolValidated = false;
-        private DateTime _connectionStartTime = DateTime.MinValue;
-        private static readonly TimeSpan ValidationTimeout = TimeSpan.FromSeconds(5);
-        private HashSet<string> _invalidPorts = new HashSet<string>();
-        private DateTime _invalidPortsClearTime = DateTime.MinValue;
-        private static readonly TimeSpan InvalidPortsRetryInterval = TimeSpan.FromMinutes(2);
-
-        private volatile int _reading = 0;      // re-entrancy guard
-        private string _leftover = string.Empty; // pending partial line
-        private int _baudRate = 0;
-
-        // Button handling
-        private int _numberOfSliders = 0;
-        private int _numberOfButtons = 0;
-        private bool[] _buttonStates = Array.Empty<bool>(); // Track current button states
-        private bool _buttonStatesInitialized = false; // Track if states have been synced after resize
-
+        private const bool EnableWatchdog = true;
+        private const int MaxLineLength = 200;
         // ---- Tuning ----
         private const int MaxRemainderBytes = 4096;
-        private const int MaxLineLength = 200;
-        private const bool EnableWatchdog = true;
-        private static readonly TimeSpan WatchdogQuietThreshold = TimeSpan.FromSeconds(5);
+
         private const int WatchdogMaxQuietIntervals = 3;
-        private const byte WatchdogProbeByte = 10; // 0 to disable probe
+        private const byte WatchdogProbeByte = 10;
+        private static readonly TimeSpan InvalidPortsRetryInterval = TimeSpan.FromMinutes(2);
+        private static readonly TimeSpan ValidationTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan WatchdogQuietThreshold = TimeSpan.FromSeconds(5);
+        private int _baudRate = 0;
+        private bool[] _buttonStates = Array.Empty<bool>();
+        // Track current button states
+        private bool _buttonStatesInitialized = false;
+
+        private DateTime _connectionStartTime = DateTime.MinValue;
+        private bool _expectingData = false;
+        private HashSet<string> _invalidPorts = new HashSet<string>();
+        private DateTime _invalidPortsClearTime = DateTime.MinValue;
+        private bool _isConnected = false;
+        // Protocol validation
+        private bool _isProtocolValidated = false;
+
+        private string _lastConnectedPort = string.Empty;
+        private DateTime _lastValidDataTimestamp = DateTime.MinValue;
+        private string _leftover = string.Empty;
+        private bool _manualDisconnect = false;
+        private int _noDataCounter = 0;
+        private int _numberOfButtons = 0;
+        // pending partial line
+        // Button handling
+        private int _numberOfSliders = 0;
+
+        private volatile int _reading = 0;
+        private bool _serialDisconnected = false;
+        private SerialPort _serialPort;
+        private bool _serialPortFullyInitialized = false;
+        private string _userSelectedPort = string.Empty;
+
+        #endregion Private Fields
+
+        #region Public Events
+
+        public event Action<int, bool> ButtonStateChanged;
+
+        // buttonIndex, isPressed
+        public event Action Connected;
 
         public event Action<string> DataReceived;
-        public event Action<int, bool> ButtonStateChanged; // buttonIndex, isPressed
-        public event Action Connected;
         public event Action Disconnected;
-        public event Action<string> ProtocolValidated; // Raised when valid DeejNG data is received
+        public event Action<string> ProtocolValidated;
 
+        #endregion Public Events
+
+        #region Public Properties
+
+        public int CurrentBaudRate => _baudRate > 0 ? _baudRate : 9600;
+        public string CurrentPort => _serialPort?.PortName ?? string.Empty;
         public bool IsConnected => _isConnected && !_serialDisconnected;
         public bool IsFullyInitialized => _serialPortFullyInitialized;
         public bool IsProtocolValidated => _isProtocolValidated;
         public string LastConnectedPort => _lastConnectedPort;
-        public string CurrentPort => _serialPort?.PortName ?? string.Empty;
-        public int CurrentBaudRate => _baudRate > 0 ? _baudRate : 9600;
+
+        #endregion Public Properties
+
+        #region Public Methods
+
+        public void CheckConnection()
+        {
+            if (!IsConnected || !EnableWatchdog) return;
+
+            try
+            {
+                if (_serialPort == null || !_serialPort.IsOpen)
+                {
+
+                    HandleSerialDisconnection();
+                    return;
+                }
+
+                // Check for protocol validation timeout
+                if (!_isProtocolValidated && _connectionStartTime != DateTime.MinValue)
+                {
+                    var elapsed = DateTime.Now - _connectionStartTime;
+                    if (elapsed >= ValidationTimeout)
+                    {
+
+                        // Mark this port as invalid
+                        if (!string.IsNullOrEmpty(CurrentPort))
+                        {
+                            _invalidPorts.Add(CurrentPort);
+                            if (_invalidPortsClearTime == DateTime.MinValue)
+                            {
+                                _invalidPortsClearTime = DateTime.Now;
+                            }
+                        }
+
+                        HandleSerialDisconnection();
+                        return;
+                    }
+                }
+
+                if (_expectingData)
+                {
+                    var elapsed = DateTime.Now - _lastValidDataTimestamp;
+
+                    if (elapsed >= WatchdogQuietThreshold)
+                    {
+                        _noDataCounter++;
+
+                        if (_serialPort.BytesToRead == 0 && WatchdogProbeByte != 0)
+                        {
+                            try { _serialPort.Write(new[] { WatchdogProbeByte }, 0, 1); }
+                            catch { /* ignore; disconnect if persistent */ }
+                        }
+
+                        if (_noDataCounter >= WatchdogMaxQuietIntervals)
+                        {
+
+                            HandleSerialDisconnection();
+                            _noDataCounter = 0;
+                        }
+                    }
+                    else
+                    {
+                        _noDataCounter = 0;
+                    }
+                }
+                else if (IsConnected && (DateTime.Now - _lastValidDataTimestamp).TotalSeconds > 10)
+                {
+                    _expectingData = true;
+                }
+            }
+            catch (Exception ex)
+            {
+
+            }
+        }
+
+        /// <summary>
+        /// Clears the invalid ports list - useful for troubleshooting or when device firmware is updated
+        /// </summary>
+        public void ClearInvalidPorts()
+        {
+
+            _invalidPorts.Clear();
+            _invalidPortsClearTime = DateTime.Now;
+        }
 
         /// <summary>
         /// Configures the number of sliders and buttons expected in the serial data.
@@ -77,14 +177,242 @@ namespace DeejNG.Services
             {
                 _buttonStates = new bool[buttonCount];
                 _buttonStatesInitialized = false; // Reset on reconfiguration
-#if DEBUG
-                Debug.WriteLine($"[Serial] Configured for {sliderCount} sliders and {buttonCount} buttons");
-#endif
+
             }
             else
             {
                 _buttonStates = Array.Empty<bool>();
                 _buttonStatesInitialized = false;
+            }
+        }
+
+        public void Dispose()
+        {
+            ClosePort();
+            _leftover = string.Empty;
+        }
+
+        public void HandleSerialDisconnection()
+        {
+            if (_serialDisconnected) return;
+
+
+            _serialDisconnected = true;
+            _isConnected = false;
+
+            Disconnected?.Invoke();
+            ClosePort();
+        }
+
+        public void InitSerial(string portName, int baudRate)
+        {
+            try
+            {
+                _baudRate = baudRate;
+                if (string.IsNullOrWhiteSpace(portName))
+                {
+
+                    return;
+                }
+
+                // Check if this port was recently marked as invalid
+                if (IsPortMarkedInvalid(portName))
+                {
+
+                    _isConnected = false;
+                    _serialDisconnected = true;
+                    return;
+                }
+
+                var available = SerialPort.GetPortNames();
+                if (Array.IndexOf(available, portName) < 0)
+                {
+
+                    _isConnected = false;
+                    _serialDisconnected = true;
+                    return;
+                }
+
+                ClosePort();
+
+                _baudRate = baudRate;
+                _serialPort = new SerialPort(portName, baudRate)
+                {
+                    ReadTimeout = 1000,
+                    WriteTimeout = 1000,
+                    // Typical slider message is ~20-30 bytes (e.g., "0.5|0.3|0.8|1.0|0.0\n")
+                    // Setting threshold to 8 reduces DataReceived events while maintaining responsiveness.
+                    // IMPORTANT: Threshold=1 was causing massive thread pool churn (QueueUserWorkItemCallback leak)
+                    // because each byte triggered a new thread pool work item.
+                    ReceivedBytesThreshold = 8,
+                    DtrEnable = true,
+                    RtsEnable = true,
+                    NewLine = "\n"
+                };
+
+                _serialPort.DataReceived += SerialPort_DataReceived;
+                _serialPort.ErrorReceived += SerialPort_ErrorReceived;
+                _serialPort.Open();
+
+                _isConnected = true;
+                _serialDisconnected = false;
+                _serialPortFullyInitialized = false;
+                _lastConnectedPort = portName;
+
+                _lastValidDataTimestamp = DateTime.Now;
+                _noDataCounter = 0;
+                _expectingData = false;
+
+                // Reset protocol validation state
+                _isProtocolValidated = false;
+                _connectionStartTime = DateTime.Now;
+
+                Connected?.Invoke();
+
+            }
+            catch (Exception ex)
+            {
+
+                _isConnected = false;
+                _serialDisconnected = true;
+                _serialPortFullyInitialized = false;
+            }
+        }
+
+        public void ManualDisconnect()
+        {
+            try
+            {
+
+                _manualDisconnect = true;
+
+                ClosePort();
+
+                _isConnected = false;
+                _serialDisconnected = true;
+                _serialPortFullyInitialized = false;
+
+                // Clear invalid ports list on manual disconnect - user may be troubleshooting
+                if (_invalidPorts.Count > 0)
+                {
+
+                    _invalidPorts.Clear();
+                }
+
+                Disconnected?.Invoke();
+            }
+            catch (Exception ex)
+            {
+
+            }
+        }
+
+        public void SetUserSelectedPort(string portName)
+        {
+            _userSelectedPort = portName;
+            if (_manualDisconnect) _manualDisconnect = false;
+
+            // Clear this port from invalid list when user manually selects it
+            if (_invalidPorts.Contains(portName))
+            {
+                _invalidPorts.Remove(portName);
+
+            }
+
+
+        }
+
+        public bool ShouldAttemptReconnect() => _serialDisconnected && !_manualDisconnect;
+
+        public bool TryConnectToSavedPort(string savedPortName, int baudRate)
+        {
+            if (string.IsNullOrWhiteSpace(savedPortName))
+                return false;
+
+            // Optionally update internal field
+            _baudRate = baudRate;
+            try
+            {
+                if (IsConnected) return true;
+
+                string portToTry = !string.IsNullOrEmpty(_userSelectedPort) ? _userSelectedPort : savedPortName;
+                if (string.IsNullOrWhiteSpace(portToTry))
+                {
+
+                    return false;
+                }
+
+                var available = SerialPort.GetPortNames();
+                if (Array.IndexOf(available, portToTry) < 0)
+                {
+
+                    return false;
+                }
+
+                // Clear saved port from invalid list before attempting auto-connect
+                // (it may have been marked invalid in a previous session or failed attempt)
+                if (_invalidPorts.Contains(portToTry))
+                {
+                    _invalidPorts.Remove(portToTry);
+
+                }
+
+                // Reuse last configured baud rate; default to 9600 if unknown.
+                InitSerial(portToTry, _baudRate > 0 ? _baudRate : 9600);
+
+                if (IsConnected) _userSelectedPort = string.Empty;
+                return IsConnected;
+            }
+            catch (Exception ex)
+            {
+
+                return false;
+            }
+        }
+
+        #endregion Public Methods
+
+        #region Private Methods
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static string FilterPrintable(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            var sb = new StringBuilder(s.Length);
+            foreach (var ch in s)
+            {
+                if ((ch >= 0x20 && ch <= 0x7E) || ch == '\r' || ch == '\n')
+                    sb.Append(ch);
+            }
+            return sb.ToString();
+        }
+
+        private void ClosePort()
+        {
+            try
+            {
+                if (_serialPort != null)
+                {
+                    _serialPort.DataReceived -= SerialPort_DataReceived;
+                    _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
+
+                    if (_serialPort.IsOpen)
+                    {
+                        try { _serialPort.DiscardInBuffer(); } catch { }
+                        try { _serialPort.DiscardOutBuffer(); } catch { }
+                        _serialPort.Close();
+                    }
+
+                    _serialPort.Dispose();
+                    _serialPort = null;
+                }
+
+                // Reset button state initialization flag on disconnect
+                _buttonStatesInitialized = false;
+            }
+            catch (Exception ex)
+            {
+
             }
         }
 
@@ -96,10 +424,7 @@ namespace DeejNG.Services
             // Clear invalid ports list after retry interval
             if (DateTime.Now - _invalidPortsClearTime > InvalidPortsRetryInterval)
             {
-#if DEBUG
-                if (_invalidPorts.Count > 0)
-                    Debug.WriteLine($"[Validation] Clearing {_invalidPorts.Count} invalid port(s) - retry interval elapsed");
-#endif
+
                 _invalidPorts.Clear();
                 _invalidPortsClearTime = DateTime.Now;
             }
@@ -155,307 +480,106 @@ namespace DeejNG.Services
             // Consider valid if at least half of checked values are valid numbers in range
             return validCount >= (maxCheck / 2.0);
         }
-
-        public void InitSerial(string portName, int baudRate)
-        {
-            try
-            {
-                _baudRate = baudRate;
-                if (string.IsNullOrWhiteSpace(portName))
-                {
-#if DEBUG
-                    Debug.WriteLine("[Serial] Invalid port name provided");
-#endif
-                    return;
-                }
-
-                // Check if this port was recently marked as invalid
-                if (IsPortMarkedInvalid(portName))
-                {
-#if DEBUG
-                    Debug.WriteLine($"[Validation] Skipping port {portName} - marked as invalid (no valid DeejNG data)");
-#endif
-                    _isConnected = false;
-                    _serialDisconnected = true;
-                    return;
-                }
-
-                var available = SerialPort.GetPortNames();
-                if (Array.IndexOf(available, portName) < 0)
-                {
-#if DEBUG
-                    Debug.WriteLine($"[Serial] Port {portName} not available: [{string.Join(", ", available)}]");
-#endif
-                    _isConnected = false;
-                    _serialDisconnected = true;
-                    return;
-                }
-
-                ClosePort();
-
-                _baudRate = baudRate;
-                _serialPort = new SerialPort(portName, baudRate)
-                {
-                    ReadTimeout = 1000,
-                    WriteTimeout = 1000,
-                    // Typical slider message is ~20-30 bytes (e.g., "0.5|0.3|0.8|1.0|0.0\n")
-                    // Setting threshold to 8 reduces DataReceived events while maintaining responsiveness.
-                    // IMPORTANT: Threshold=1 was causing massive thread pool churn (QueueUserWorkItemCallback leak)
-                    // because each byte triggered a new thread pool work item.
-                    ReceivedBytesThreshold = 8,
-                    DtrEnable = true,
-                    RtsEnable = true,
-                    NewLine = "\n"
-                };
-
-                _serialPort.DataReceived += SerialPort_DataReceived;
-                _serialPort.ErrorReceived += SerialPort_ErrorReceived;
-                _serialPort.Open();
-
-                _isConnected = true;
-                _serialDisconnected = false;
-                _serialPortFullyInitialized = false;
-                _lastConnectedPort = portName;
-
-                _lastValidDataTimestamp = DateTime.Now;
-                _noDataCounter = 0;
-                _expectingData = false;
-
-                // Reset protocol validation state
-                _isProtocolValidated = false;
-                _connectionStartTime = DateTime.Now;
-
-                Connected?.Invoke();
-#if DEBUG
-                Debug.WriteLine($"[Serial] Connected to {portName} @ {baudRate} - awaiting protocol validation");
-#endif
-            }
-            catch (Exception ex)
-            {
-#if DEBUG
-                Debug.WriteLine($"[Serial] Failed to open port {portName}: {ex.Message}");
-#endif
-                _isConnected = false;
-                _serialDisconnected = true;
-                _serialPortFullyInitialized = false;
-            }
-        }
-
-        public void ManualDisconnect()
-        {
-            try
-            {
-#if DEBUG
-                Debug.WriteLine("[Manual] User initiated manual disconnect");
-#endif
-                _manualDisconnect = true;
-
-                ClosePort();
-
-                _isConnected = false;
-                _serialDisconnected = true;
-                _serialPortFullyInitialized = false;
-
-                // Clear invalid ports list on manual disconnect - user may be troubleshooting
-                if (_invalidPorts.Count > 0)
-                {
-#if DEBUG
-                    Debug.WriteLine($"[Manual] Clearing {_invalidPorts.Count} invalid port(s) on manual disconnect");
-#endif
-                    _invalidPorts.Clear();
-                }
-
-                Disconnected?.Invoke();
-            }
-            catch (Exception ex)
-            {
-#if DEBUG
-                Debug.WriteLine($"[ERROR] Failed to disconnect manually: {ex.Message}");
-#endif
-            }
-        }
-
         /// <summary>
-        /// Clears the invalid ports list - useful for troubleshooting or when device firmware is updated
+        /// Processes a complete serial line, auto-detecting and separating slider and button data.
+        /// Sliders: 0-1023 (or 9999 for inline mute)
+        /// Buttons: 10000 (OFF) or 10001 (ON)
         /// </summary>
-        public void ClearInvalidPorts()
+        private void ProcessSerialLine(string line)
         {
-#if DEBUG
-            if (_invalidPorts.Count > 0)
-                Debug.WriteLine($"[Validation] Manually clearing {_invalidPorts.Count} invalid port(s)");
-#endif
-            _invalidPorts.Clear();
-            _invalidPortsClearTime = DateTime.Now;
-        }
+            if (string.IsNullOrWhiteSpace(line)) return;
 
-        public bool TryConnectToSavedPort(string savedPortName, int baudRate)
-        {
-            if (string.IsNullOrWhiteSpace(savedPortName))
-                return false;
-
-            // Optionally update internal field
-            _baudRate = baudRate;
-            try
+            // Validate protocol if not yet validated
+            if (!_isProtocolValidated)
             {
-                if (IsConnected) return true;
-
-                string portToTry = !string.IsNullOrEmpty(_userSelectedPort) ? _userSelectedPort : savedPortName;
-                if (string.IsNullOrWhiteSpace(portToTry))
+                if (IsValidDeejNGData(line))
                 {
-#if DEBUG
-                    Debug.WriteLine("[AutoConnect] No saved or user-selected port");
-#endif
-                    return false;
+                    _isProtocolValidated = true;
+
+                    ProtocolValidated?.Invoke(CurrentPort);
                 }
-
-                var available = SerialPort.GetPortNames();
-                if (Array.IndexOf(available, portToTry) < 0)
+                else
                 {
-#if DEBUG
-                    Debug.WriteLine($"[AutoConnect] Port '{portToTry}' not available. Available: [{string.Join(", ", available)}]");
-#endif
-                    return false;
-                }
 
-                // Clear saved port from invalid list before attempting auto-connect
-                // (it may have been marked invalid in a previous session or failed attempt)
-                if (_invalidPorts.Contains(portToTry))
-                {
-                    _invalidPorts.Remove(portToTry);
-#if DEBUG
-                    Debug.WriteLine($"[AutoConnect] Removed {portToTry} from invalid list for auto-connect attempt");
-#endif
-                }
-
-                // Reuse last configured baud rate; default to 9600 if unknown.
-                InitSerial(portToTry, _baudRate > 0 ? _baudRate : 9600);
-
-                if (IsConnected) _userSelectedPort = string.Empty;
-                return IsConnected;
-            }
-            catch (Exception ex)
-            {
-#if DEBUG
-                Debug.WriteLine($"[AutoConnect] Exception: {ex.Message}");
-#endif
-                return false;
-            }
-        }
-
-        public void SetUserSelectedPort(string portName)
-        {
-            _userSelectedPort = portName;
-            if (_manualDisconnect) _manualDisconnect = false;
-
-            // Clear this port from invalid list when user manually selects it
-            if (_invalidPorts.Contains(portName))
-            {
-                _invalidPorts.Remove(portName);
-#if DEBUG
-                Debug.WriteLine($"[UI] User selected port {portName} - removed from invalid list");
-#endif
-            }
-
-#if DEBUG
-            Debug.WriteLine($"[UI] User selected port: {portName}");
-#endif
-        }
-
-        public void CheckConnection()
-        {
-            if (!IsConnected || !EnableWatchdog) return;
-
-            try
-            {
-                if (_serialPort == null || !_serialPort.IsOpen)
-                {
-#if DEBUG
-                    Debug.WriteLine("[SerialWatchdog] Serial port closed unexpectedly");
-#endif
-                    HandleSerialDisconnection();
+                    // Don't process invalid data
                     return;
                 }
+            }
 
-                // Check for protocol validation timeout
-                if (!_isProtocolValidated && _connectionStartTime != DateTime.MinValue)
+            // Split the line
+            string[] parts = line.Split('|');
+            if (parts.Length == 0) return;
+
+            // Auto-detect sliders vs buttons by value range
+            var sliderParts = new List<string>();
+            var buttonValues = new List<float>();
+
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (float.TryParse(parts[i].Trim(), out float value))
                 {
-                    var elapsed = DateTime.Now - _connectionStartTime;
-                    if (elapsed >= ValidationTimeout)
+                    // Button values are 10000 or 10001
+                    if (value >= 9999.5f)
                     {
-#if DEBUG
-                        Debug.WriteLine($"[Validation] Protocol validation timeout ({elapsed.TotalSeconds:F1}s) - no valid DeejNG data received from {CurrentPort}");
-#endif
-                        // Mark this port as invalid
-                        if (!string.IsNullOrEmpty(CurrentPort))
-                        {
-                            _invalidPorts.Add(CurrentPort);
-                            if (_invalidPortsClearTime == DateTime.MinValue)
-                            {
-                                _invalidPortsClearTime = DateTime.Now;
-                            }
-                        }
-
-                        HandleSerialDisconnection();
-                        return;
-                    }
-                }
-
-                if (_expectingData)
-                {
-                    var elapsed = DateTime.Now - _lastValidDataTimestamp;
-
-                    if (elapsed >= WatchdogQuietThreshold)
-                    {
-                        _noDataCounter++;
-#if DEBUG
-                        Debug.WriteLine($"[SerialWatchdog] Quiet for {elapsed.TotalSeconds:F1}s (#{_noDataCounter})");
-#endif
-                        if (_serialPort.BytesToRead == 0 && WatchdogProbeByte != 0)
-                        {
-                            try { _serialPort.Write(new[] { WatchdogProbeByte }, 0, 1); }
-                            catch { /* ignore; disconnect if persistent */ }
-                        }
-
-                        if (_noDataCounter >= WatchdogMaxQuietIntervals)
-                        {
-#if DEBUG
-                            Debug.WriteLine("[SerialWatchdog] Too many quiet intervals, considering disconnected");
-#endif
-                            HandleSerialDisconnection();
-                            _noDataCounter = 0;
-                        }
+                        buttonValues.Add(value);
                     }
                     else
                     {
-                        _noDataCounter = 0;
+                        // Slider value (0-1023 range or 9999 inline mute)
+                        sliderParts.Add(parts[i]);
                     }
                 }
-                else if (IsConnected && (DateTime.Now - _lastValidDataTimestamp).TotalSeconds > 10)
+            }
+
+            // Raise slider data event if we have any sliders
+            if (sliderParts.Count > 0)
+            {
+                string sliderData = string.Join("|", sliderParts);
+                DataReceived?.Invoke(sliderData);
+            }
+
+            // Process buttons if we have any
+            if (buttonValues.Count > 0)
+            {
+                // Resize button state array if needed
+                if (_buttonStates.Length != buttonValues.Count)
                 {
-                    _expectingData = true;
+                    _buttonStates = new bool[buttonValues.Count];
+                    _buttonStatesInitialized = false; // Need to initialize states from hardware
+
+                }
+
+                // Check each button for state changes
+                for (int i = 0; i < buttonValues.Count; i++)
+                {
+                    // 10001 = pressed, 10000 = not pressed
+                    bool isPressed = buttonValues[i] >= 10000.5f;
+
+                    // Check for state change
+                    if (_buttonStates[i] != isPressed)
+                    {
+                        _buttonStates[i] = isPressed;
+
+                        // BUGFIX: Don't fire events on first sync after resize to prevent spurious actions
+                        // This prevents play/pause from triggering on app startup or port change
+                        if (_buttonStatesInitialized)
+                        {
+                            // Raise event for both press and release (for UI indicator updates)
+                            // Note: MainWindow.HandleButtonPress only executes actions on press
+
+                            ButtonStateChanged?.Invoke(i, isPressed);
+                        }
+
+                    }
+                }
+
+                // Mark as initialized after first data packet
+                if (!_buttonStatesInitialized)
+                {
+                    _buttonStatesInitialized = true;
+
                 }
             }
-            catch (Exception ex)
-            {
-#if DEBUG
-                Debug.WriteLine($"[SerialWatchdog] Error: {ex.Message}");
-#endif
-            }
-        }
-
-        public bool ShouldAttemptReconnect() => _serialDisconnected && !_manualDisconnect;
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static string FilterPrintable(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return s;
-            var sb = new StringBuilder(s.Length);
-            foreach (var ch in s)
-            {
-                if ((ch >= 0x20 && ch <= 0x7E) || ch == '\r' || ch == '\n')
-                    sb.Append(ch);
-            }
-            return sb.ToString();
         }
 
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
@@ -502,9 +626,7 @@ namespace DeejNG.Services
                                 if (!_serialPortFullyInitialized)
                                 {
                                     _serialPortFullyInitialized = true;
-#if DEBUG
-                                    Debug.WriteLine("[Serial] Port fully initialized and receiving data");
-#endif
+
                                 }
                             }
                         }
@@ -526,9 +648,7 @@ namespace DeejNG.Services
             catch (InvalidOperationException) { HandleSerialDisconnection(); }
             catch (Exception ex)
             {
-#if DEBUG
-                Debug.WriteLine($"[ERROR] Serial read: {ex.Message}");
-#endif
+
                 _leftover = string.Empty;
             }
             finally
@@ -539,9 +659,7 @@ namespace DeejNG.Services
 
         private void SerialPort_ErrorReceived(object sender, SerialErrorReceivedEventArgs e)
         {
-#if DEBUG
-            Debug.WriteLine($"[Serial] Error received: {e.EventType}");
-#endif
+
             if (e.EventType == SerialError.Frame || e.EventType == SerialError.RXOver ||
                 e.EventType == SerialError.Overrun || e.EventType == SerialError.RXParity)
             {
@@ -549,172 +667,6 @@ namespace DeejNG.Services
             }
         }
 
-        public void HandleSerialDisconnection()
-        {
-            if (_serialDisconnected) return;
-
-#if DEBUG
-            Debug.WriteLine("[Serial] Disconnection detected");
-#endif
-            _serialDisconnected = true;
-            _isConnected = false;
-
-            Disconnected?.Invoke();
-            ClosePort();
-        }
-
-        private void ClosePort()
-        {
-            try
-            {
-                if (_serialPort != null)
-                {
-                    _serialPort.DataReceived -= SerialPort_DataReceived;
-                    _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
-
-                    if (_serialPort.IsOpen)
-                    {
-                        try { _serialPort.DiscardInBuffer(); } catch { }
-                        try { _serialPort.DiscardOutBuffer(); } catch { }
-                        _serialPort.Close();
-                    }
-
-                    _serialPort.Dispose();
-                    _serialPort = null;
-                }
-
-                // Reset button state initialization flag on disconnect
-                _buttonStatesInitialized = false;
-            }
-            catch (Exception ex)
-            {
-#if DEBUG
-                Debug.WriteLine($"[ERROR] Failed to cleanup serial port: {ex.Message}");
-#endif
-            }
-        }
-
-        /// <summary>
-        /// Processes a complete serial line, auto-detecting and separating slider and button data.
-        /// Sliders: 0-1023 (or 9999 for inline mute)
-        /// Buttons: 10000 (OFF) or 10001 (ON)
-        /// </summary>
-        private void ProcessSerialLine(string line)
-        {
-            if (string.IsNullOrWhiteSpace(line)) return;
-
-            // Validate protocol if not yet validated
-            if (!_isProtocolValidated)
-            {
-                if (IsValidDeejNGData(line))
-                {
-                    _isProtocolValidated = true;
-#if DEBUG
-                    Debug.WriteLine($"[Validation] Protocol validated for port {CurrentPort}");
-#endif
-                    ProtocolValidated?.Invoke(CurrentPort);
-                }
-                else
-                {
-#if DEBUG
-                    Debug.WriteLine($"[Validation] Invalid data received: {line}");
-#endif
-                    // Don't process invalid data
-                    return;
-                }
-            }
-
-            // Split the line
-            string[] parts = line.Split('|');
-            if (parts.Length == 0) return;
-
-            // Auto-detect sliders vs buttons by value range
-            var sliderParts = new List<string>();
-            var buttonValues = new List<float>();
-
-            for (int i = 0; i < parts.Length; i++)
-            {
-                if (float.TryParse(parts[i].Trim(), out float value))
-                {
-                    // Button values are 10000 or 10001
-                    if (value >= 9999.5f)
-                    {
-                        buttonValues.Add(value);
-                    }
-                    else
-                    {
-                        // Slider value (0-1023 range or 9999 inline mute)
-                        sliderParts.Add(parts[i]);
-                    }
-                }
-            }
-
-            // Raise slider data event if we have any sliders
-            if (sliderParts.Count > 0)
-            {
-                string sliderData = string.Join("|", sliderParts);
-                DataReceived?.Invoke(sliderData);
-            }
-
-            // Process buttons if we have any
-            if (buttonValues.Count > 0)
-            {
-                // Resize button state array if needed
-                if (_buttonStates.Length != buttonValues.Count)
-                {
-                    _buttonStates = new bool[buttonValues.Count];
-                    _buttonStatesInitialized = false; // Need to initialize states from hardware
-#if DEBUG
-                    Debug.WriteLine($"[Serial] Auto-detected {buttonValues.Count} button(s)");
-#endif
-                }
-
-                // Check each button for state changes
-                for (int i = 0; i < buttonValues.Count; i++)
-                {
-                    // 10001 = pressed, 10000 = not pressed
-                    bool isPressed = buttonValues[i] >= 10000.5f;
-
-                    // Check for state change
-                    if (_buttonStates[i] != isPressed)
-                    {
-                        _buttonStates[i] = isPressed;
-
-                        // BUGFIX: Don't fire events on first sync after resize to prevent spurious actions
-                        // This prevents play/pause from triggering on app startup or port change
-                        if (_buttonStatesInitialized)
-                        {
-                            // Raise event for both press and release (for UI indicator updates)
-                            // Note: MainWindow.HandleButtonPress only executes actions on press
-#if DEBUG
-                            Debug.WriteLine($"[Serial] Button {i} {(isPressed ? "pressed" : "released")} (value: {buttonValues[i]})");
-#endif
-                            ButtonStateChanged?.Invoke(i, isPressed);
-                        }
-#if DEBUG
-                        else
-                        {
-                            Debug.WriteLine($"[Serial] Button {i} initial state: {(isPressed ? "pressed" : "released")} (no event fired)");
-                        }
-#endif
-                    }
-                }
-
-                // Mark as initialized after first data packet
-                if (!_buttonStatesInitialized)
-                {
-                    _buttonStatesInitialized = true;
-#if DEBUG
-                    Debug.WriteLine("[Serial] Button states initialized from hardware");
-#endif
-                }
-            }
-        }
-
-        public void Dispose()
-        {
-            ClosePort();
-            _leftover = string.Empty;
-        }
+        #endregion Private Methods
     }
 }
