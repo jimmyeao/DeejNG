@@ -267,7 +267,22 @@ namespace DeejNG.Views
 
         protected override void OnClosed(EventArgs e)
         {
-            _backgroundAnalysisTimer?.Stop();
+            // Stop and cleanup all timers to prevent handle leaks
+            if (_backgroundAnalysisTimer != null)
+            {
+                _backgroundAnalysisTimer.Stop();
+                _backgroundAnalysisTimer.Tick -= BackgroundAnalysisTimer_Tick;
+                _backgroundAnalysisTimer = null;
+            }
+
+            if (_autoCloseTimer != null)
+            {
+                _autoCloseTimer.Stop();
+                _autoCloseTimer = null;
+            }
+
+            _hideTimer?.Stop();
+
             base.OnClosed(e);
         }
         public new void Show()

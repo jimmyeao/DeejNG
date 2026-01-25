@@ -405,9 +405,14 @@ namespace DeejNG.Dialogs
 
         private void ChannelControl_Unloaded(object sender, RoutedEventArgs e)
         {
-            // Stop the meter update timer
-            _meterUpdateTimer?.Stop();
-            _meterUpdateTimer = null;
+            // Stop the meter update timer and unsubscribe to ensure proper cleanup
+            // This prevents potential handle leaks from lingering timer references
+            if (_meterUpdateTimer != null)
+            {
+                _meterUpdateTimer.Stop();
+                _meterUpdateTimer.Tick -= MeterUpdateTimer_Tick;
+                _meterUpdateTimer = null;
+            }
 
             // Dispose paint objects to free resources
             _basePaint?.Dispose();

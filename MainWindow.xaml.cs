@@ -1547,6 +1547,7 @@ namespace DeejNG
 
         /// <summary>
         /// Handles button press events from the serial manager.
+        /// OPTIMIZATION: Uses single dispatcher call to reduce handle accumulation over time.
         /// </summary>
         private void HandleButtonPress(int buttonIndex, bool isPressed)
         {
@@ -1574,48 +1575,45 @@ namespace DeejNG
                                         mapping.Action == ButtonAction.MediaPrevious ||
                                         mapping.Action == ButtonAction.MediaStop;
 
-                // Update UI button state on UI thread
+                // Ensure button handler is initialized (do this outside dispatcher to avoid repeated checks)
+                if (_buttonActionHandler == null)
+                {
+                    _buttonActionHandler = new ButtonActionHandler(_channelControls);
+                }
+
+                // OPTIMIZATION: Single dispatcher call handles all UI updates and action execution
+                // This reduces handle accumulation from repeated BeginInvoke calls
                 Dispatcher.BeginInvoke(() =>
                 {
                     var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
-                    if (indicator != null)
+
+                    // For momentary buttons: always update press state (for both press and release)
+                    if (isMomentaryAction && indicator != null)
                     {
-                        // For momentary buttons: show press state
-                        if (isMomentaryAction)
+                        if (indicator.IsPressed != isPressed)
                         {
                             indicator.IsPressed = isPressed;
 #if DEBUG
                             Debug.WriteLine($"[Button] Momentary button {buttonIndex} indicator set to {isPressed}");
 #endif
                         }
-                        // For mute and play/pause: don't update here, will update after executing action
                     }
-                });
 
-                // Only process actions on button press (not release)
-                if (!isPressed) return;
+                    // Only process actions on button press (not release)
+                    if (!isPressed) return;
 
-                if (mapping.Action == ButtonAction.None)
-                {
+                    if (mapping.Action == ButtonAction.None)
+                    {
 #if DEBUG
-                    Debug.WriteLine($"[Button] No action assigned to button {buttonIndex}");
+                        Debug.WriteLine($"[Button] No action assigned to button {buttonIndex}");
 #endif
-                    return;
-                }
+                        return;
+                    }
 
-                // Ensure button handler is initialized
-                if (_buttonActionHandler == null)
-                {
-                    _buttonActionHandler = new ButtonActionHandler(_channelControls);
-                }
-
-                // Execute the action on UI thread
-                Dispatcher.BeginInvoke(() =>
-                {
+                    // Execute the action
                     _buttonActionHandler.ExecuteAction(mapping);
 
                     // Update indicator based on button type
-                    var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
                     if (indicator != null)
                     {
                         // For mute actions, show the actual mute state
@@ -1635,23 +1633,23 @@ namespace DeejNG
                                 muteState = _channelControls.Any(c => c.IsMuted);
                             }
 
-                            indicator.IsPressed = muteState;
-
+                            if (indicator.IsPressed != muteState)
+                            {
+                                indicator.IsPressed = muteState;
 #if DEBUG
-                            Debug.WriteLine($"[Button] Updated mute indicator {buttonIndex} to {muteState}");
+                                Debug.WriteLine($"[Button] Updated mute indicator {buttonIndex} to {muteState}");
 #endif
+                            }
                         }
                         // For play/pause, toggle the state
                         else if (isPlayPauseAction)
                         {
                             _playPauseState = !_playPauseState;
                             indicator.IsPressed = _playPauseState;
-
 #if DEBUG
                             Debug.WriteLine($"[Button] Toggled play/pause indicator {buttonIndex} to {_playPauseState}");
 #endif
                         }
-                        // Momentary actions already handled in first dispatcher block
                     }
                 });
             }
@@ -1785,121 +1783,156 @@ namespace DeejNG
         /// </summary>
         private void UpdateButtonIndicators()
         {
-            Dispatcher.BeginInvoke(() =>
+            // OPTIMIZATION: Execute directly if on UI thread, otherwise dispatch
+            if (Dispatcher.CheckAccess())
             {
-                try
+                UpdateButtonIndicatorsCore();
+            }
+            else
+            {
+                Dispatcher.BeginInvoke(UpdateButtonIndicatorsCore);
+            }
+        }
+
+        /// <summary>
+        /// Core implementation for updating button indicators.
+        /// Must be called on UI thread.
+        /// </summary>
+        private void UpdateButtonIndicatorsCore()
+        {
+            try
+            {
+                var settings = _settingsManager.AppSettings;
+
+                _buttonIndicators.Clear();
+
+                // Show indicators for all configured button mappings
+                if (settings?.ButtonMappings != null && settings.ButtonMappings.Count > 0)
                 {
-                    var settings = _settingsManager.AppSettings;
-
-                    _buttonIndicators.Clear();
-
-                    // Show indicators for all configured button mappings
-                    if (settings?.ButtonMappings != null && settings.ButtonMappings.Count > 0)
+                    foreach (var mapping in settings.ButtonMappings.OrderBy(m => m.ButtonIndex))
                     {
-                        foreach (var mapping in settings.ButtonMappings.OrderBy(m => m.ButtonIndex))
-                        {
-                            // For mute buttons, initialize indicator to show current mute state
-                            bool initialState = false;
-                            bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
-                                               mapping.Action == ButtonAction.GlobalMute;
+                        // For mute buttons, initialize indicator to show current mute state
+                        bool initialState = false;
+                        bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
+                                           mapping.Action == ButtonAction.GlobalMute;
 
-                            if (isMuteAction)
+                        if (isMuteAction)
+                        {
+                            if (mapping.Action == ButtonAction.MuteChannel &&
+                                mapping.TargetChannelIndex >= 0 &&
+                                mapping.TargetChannelIndex < _channelControls.Count)
                             {
-                                if (mapping.Action == ButtonAction.MuteChannel &&
-                                    mapping.TargetChannelIndex >= 0 &&
-                                    mapping.TargetChannelIndex < _channelControls.Count)
-                                {
-                                    initialState = _channelControls[mapping.TargetChannelIndex].IsMuted;
-                                }
-                                else if (mapping.Action == ButtonAction.GlobalMute)
-                                {
-                                    initialState = _channelControls.Any(c => c.IsMuted);
-                                }
+                                initialState = _channelControls[mapping.TargetChannelIndex].IsMuted;
                             }
-
-                            var indicator = new ButtonIndicatorViewModel
+                            else if (mapping.Action == ButtonAction.GlobalMute)
                             {
-                                ButtonIndex = mapping.ButtonIndex,
-                                Action = mapping.Action,
-                                ActionText = GetButtonActionText(mapping),
-                                Icon = GetButtonActionIcon(mapping.Action),
-                                ToolTip = GetButtonActionTooltip(mapping),
-                                IsPressed = initialState
-                            };
-
-                            _buttonIndicators.Add(indicator);
+                                initialState = _channelControls.Any(c => c.IsMuted);
+                            }
                         }
 
-                        // Set ItemsSource only if not already set (first time initialization)
-                        if (ButtonIndicatorsList.ItemsSource == null)
+                        var indicator = new ButtonIndicatorViewModel
                         {
-                            ButtonIndicatorsList.ItemsSource = _buttonIndicators;
-#if DEBUG
-                            Debug.WriteLine("[Button] ButtonIndicatorsList ItemsSource initialized");
-#endif
-                        }
+                            ButtonIndex = mapping.ButtonIndex,
+                            Action = mapping.Action,
+                            ActionText = GetButtonActionText(mapping),
+                            Icon = GetButtonActionIcon(mapping.Action),
+                            ToolTip = GetButtonActionTooltip(mapping),
+                            IsPressed = initialState
+                        };
 
-                        ButtonIndicatorsPanel.Visibility = Visibility.Visible;
+                        _buttonIndicators.Add(indicator);
                     }
-                    else
+
+                    // Set ItemsSource only if not already set (first time initialization)
+                    if (ButtonIndicatorsList.ItemsSource == null)
                     {
-                        ButtonIndicatorsPanel.Visibility = Visibility.Collapsed;
-                    }
-                }
-                catch (Exception ex)
-                {
+                        ButtonIndicatorsList.ItemsSource = _buttonIndicators;
 #if DEBUG
-                    Debug.WriteLine($"[ERROR] Updating button indicators: {ex.Message}");
+                        Debug.WriteLine("[Button] ButtonIndicatorsList ItemsSource initialized");
 #endif
+                    }
+
+                    ButtonIndicatorsPanel.Visibility = Visibility.Visible;
                 }
-            });
+                else
+                {
+                    ButtonIndicatorsPanel.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                Debug.WriteLine($"[ERROR] Updating button indicators: {ex.Message}");
+#endif
+            }
         }
 
         /// <summary>
         /// Updates mute button indicators to reflect current channel mute states.
+        /// Optimized to avoid unnecessary dispatcher calls and only update when state actually changes.
         /// </summary>
         private void UpdateMuteButtonIndicators()
         {
-            Dispatcher.BeginInvoke(() =>
+            // OPTIMIZATION: If already on UI thread, execute directly to avoid creating
+            // additional dispatcher operations (which can accumulate handles over time)
+            if (Dispatcher.CheckAccess())
             {
-                try
+                UpdateMuteButtonIndicatorsCore();
+            }
+            else
+            {
+                Dispatcher.BeginInvoke(UpdateMuteButtonIndicatorsCore);
+            }
+        }
+
+        /// <summary>
+        /// Core implementation for updating mute button indicators.
+        /// Must be called on UI thread.
+        /// </summary>
+        private void UpdateMuteButtonIndicatorsCore()
+        {
+            try
+            {
+                var settings = _settingsManager.AppSettings;
+                if (settings?.ButtonMappings == null) return;
+
+                foreach (var mapping in settings.ButtonMappings)
                 {
-                    var settings = _settingsManager.AppSettings;
-                    if (settings?.ButtonMappings == null) return;
+                    bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
+                                       mapping.Action == ButtonAction.GlobalMute;
 
-                    foreach (var mapping in settings.ButtonMappings)
+                    if (!isMuteAction) continue;
+
+                    var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == mapping.ButtonIndex);
+                    if (indicator == null) continue;
+
+                    bool muteState = false;
+
+                    if (mapping.Action == ButtonAction.MuteChannel &&
+                        mapping.TargetChannelIndex >= 0 &&
+                        mapping.TargetChannelIndex < _channelControls.Count)
                     {
-                        bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
-                                           mapping.Action == ButtonAction.GlobalMute;
+                        muteState = _channelControls[mapping.TargetChannelIndex].IsMuted;
+                    }
+                    else if (mapping.Action == ButtonAction.GlobalMute)
+                    {
+                        muteState = _channelControls.Any(c => c.IsMuted);
+                    }
 
-                        if (!isMuteAction) continue;
-
-                        var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == mapping.ButtonIndex);
-                        if (indicator == null) continue;
-
-                        bool muteState = false;
-
-                        if (mapping.Action == ButtonAction.MuteChannel &&
-                            mapping.TargetChannelIndex >= 0 &&
-                            mapping.TargetChannelIndex < _channelControls.Count)
-                        {
-                            muteState = _channelControls[mapping.TargetChannelIndex].IsMuted;
-                        }
-                        else if (mapping.Action == ButtonAction.GlobalMute)
-                        {
-                            muteState = _channelControls.Any(c => c.IsMuted);
-                        }
-
+                    // OPTIMIZATION: Only update if state actually changed to avoid
+                    // triggering unnecessary PropertyChanged events and binding updates
+                    if (indicator.IsPressed != muteState)
+                    {
                         indicator.IsPressed = muteState;
                     }
                 }
-                catch (Exception ex)
-                {
+            }
+            catch (Exception ex)
+            {
 #if DEBUG
-                    Debug.WriteLine($"[ERROR] Updating mute button indicators: {ex.Message}");
+                Debug.WriteLine($"[ERROR] Updating mute button indicators: {ex.Message}");
 #endif
-                }
-            });
+            }
         }
 
         private string GetButtonActionText(ButtonMapping mapping)
@@ -2218,25 +2251,24 @@ namespace DeejNG
 
         private void PositionSaveTimer_Tick(object sender, EventArgs e)
         {
-            // Save to profile on background thread
-            Task.Run(() =>
+            // Save directly - the save operation is fast enough and this timer
+            // only fires occasionally (debounced). Using Task.Run was creating
+            // unnecessary thread pool work items that accumulated over time.
+            try
             {
-                try
-                {
-                    // Update active profile with current settings and save
-                    _profileManager.UpdateActiveProfileSettings(_settingsManager.AppSettings);
-                    _profileManager.SaveProfiles();
+                // Update active profile with current settings and save
+                _profileManager.UpdateActiveProfileSettings(_settingsManager.AppSettings);
+                _profileManager.SaveProfiles();
 #if DEBUG
-                    Debug.WriteLine($"[Overlay] Position saved to profile '{_profileManager.ActiveProfile.Name}' (debounced)");
+                Debug.WriteLine($"[Overlay] Position saved to profile '{_profileManager.ActiveProfile.Name}' (debounced)");
 #endif
-                }
-                catch (Exception ex)
-                {
+            }
+            catch (Exception ex)
+            {
 #if DEBUG
-                    Debug.WriteLine($"[ERROR] Failed to save overlay position: {ex.Message}");
+                Debug.WriteLine($"[ERROR] Failed to save overlay position: {ex.Message}");
 #endif
-                }
-            });
+            }
         }
 
         private void SaveSettings()

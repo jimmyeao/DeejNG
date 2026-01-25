@@ -198,8 +198,11 @@ namespace DeejNG.Services
                 {
                     ReadTimeout = 1000,
                     WriteTimeout = 1000,
-                    // Slider messages are tiny; keep threshold low so the handler fires promptly.
-                    ReceivedBytesThreshold = 1,
+                    // Typical slider message is ~20-30 bytes (e.g., "0.5|0.3|0.8|1.0|0.0\n")
+                    // Setting threshold to 8 reduces DataReceived events while maintaining responsiveness.
+                    // IMPORTANT: Threshold=1 was causing massive thread pool churn (QueueUserWorkItemCallback leak)
+                    // because each byte triggered a new thread pool work item.
+                    ReceivedBytesThreshold = 8,
                     DtrEnable = true,
                     RtsEnable = true,
                     NewLine = "\n"
