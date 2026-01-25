@@ -39,6 +39,7 @@ namespace DeejNG.Services
         private int _numberOfSliders = 0;
         private int _numberOfButtons = 0;
         private bool[] _buttonStates = Array.Empty<bool>(); // Track current button states
+        private bool _buttonStatesInitialized = false; // Track if states have been synced after resize
 
         // ---- Tuning ----
         private const int MaxRemainderBytes = 4096;
@@ -75,6 +76,7 @@ namespace DeejNG.Services
             if (buttonCount > 0)
             {
                 _buttonStates = new bool[buttonCount];
+                _buttonStatesInitialized = false; // Reset on reconfiguration
 #if DEBUG
                 Debug.WriteLine($"[Serial] Configured for {sliderCount} sliders and {buttonCount} buttons");
 #endif
@@ -82,6 +84,7 @@ namespace DeejNG.Services
             else
             {
                 _buttonStates = Array.Empty<bool>();
+                _buttonStatesInitialized = false;
             }
         }
 
@@ -576,6 +579,9 @@ namespace DeejNG.Services
                     _serialPort.Dispose();
                     _serialPort = null;
                 }
+
+                // Reset button state initialization flag on disconnect
+                _buttonStatesInitialized = false;
             }
             catch (Exception ex)
             {
@@ -654,6 +660,7 @@ namespace DeejNG.Services
                 if (_buttonStates.Length != buttonValues.Count)
                 {
                     _buttonStates = new bool[buttonValues.Count];
+                    _buttonStatesInitialized = false; // Need to initialize states from hardware
 #if DEBUG
                     Debug.WriteLine($"[Serial] Auto-detected {buttonValues.Count} button(s)");
 #endif
@@ -670,13 +677,33 @@ namespace DeejNG.Services
                     {
                         _buttonStates[i] = isPressed;
 
-                        // Raise event for both press and release (for UI indicator updates)
-                        // Note: MainWindow.HandleButtonPress only executes actions on press
+                        // BUGFIX: Don't fire events on first sync after resize to prevent spurious actions
+                        // This prevents play/pause from triggering on app startup or port change
+                        if (_buttonStatesInitialized)
+                        {
+                            // Raise event for both press and release (for UI indicator updates)
+                            // Note: MainWindow.HandleButtonPress only executes actions on press
 #if DEBUG
-                        Debug.WriteLine($"[Serial] Button {i} {(isPressed ? "pressed" : "released")} (value: {buttonValues[i]})");
+                            Debug.WriteLine($"[Serial] Button {i} {(isPressed ? "pressed" : "released")} (value: {buttonValues[i]})");
 #endif
-                        ButtonStateChanged?.Invoke(i, isPressed);
+                            ButtonStateChanged?.Invoke(i, isPressed);
+                        }
+#if DEBUG
+                        else
+                        {
+                            Debug.WriteLine($"[Serial] Button {i} initial state: {(isPressed ? "pressed" : "released")} (no event fired)");
+                        }
+#endif
                     }
+                }
+
+                // Mark as initialized after first data packet
+                if (!_buttonStatesInitialized)
+                {
+                    _buttonStatesInitialized = true;
+#if DEBUG
+                    Debug.WriteLine("[Serial] Button states initialized from hardware");
+#endif
                 }
             }
         }

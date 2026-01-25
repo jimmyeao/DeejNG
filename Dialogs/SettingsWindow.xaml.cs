@@ -66,9 +66,21 @@ namespace DeejNG.Dialogs
                 SettingUseExponentialVolume.IsChecked = _mainWindow.UseExponentialVolumeCheckBox.IsChecked;
                 ExponentialVolumeFactorSlider.Value = _mainWindow.ExponentialVolumeFactorSlider.Value;
 
-                // Initialize COM port controls from main window
-                SettingComPortSelector.ItemsSource = _mainWindow.ComPortSelector.ItemsSource;
-                SettingComPortSelector.SelectedItem = _mainWindow.ComPortSelector.SelectedItem;
+                // Initialize COM port controls - enumerate ports and sync from settings
+                var availablePorts = System.IO.Ports.SerialPort.GetPortNames();
+                SettingComPortSelector.ItemsSource = availablePorts;
+
+                // Sync from settings (not from UI control) to get the most recent saved port
+                string savedPort = _settings.PortName;
+                if (!string.IsNullOrEmpty(savedPort) && availablePorts.Contains(savedPort))
+                {
+                    SettingComPortSelector.SelectedItem = savedPort;
+                }
+                else if (_mainWindow.ComPortSelector.SelectedItem is string mainPort && availablePorts.Contains(mainPort))
+                {
+                    SettingComPortSelector.SelectedItem = mainPort;
+                }
+
                 UpdateConnectButtonState();
 
                 // Initialize baud rate from settings
@@ -146,15 +158,34 @@ namespace DeejNG.Dialogs
 
         private void SettingComPortSelector_DropDownOpened(object sender, EventArgs e)
         {
-            if (_mainWindow != null)
+            try
             {
-                // Refresh ports in main window and sync to settings
-                var selectedPort = SettingComPortSelector.SelectedItem;
-                _mainWindow.ComPortSelector.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
-                
-                // Sync the updated list back to settings window
-                SettingComPortSelector.ItemsSource = _mainWindow.ComPortSelector.ItemsSource;
-                SettingComPortSelector.SelectedItem = selectedPort;
+                // Dynamically enumerate COM ports when dropdown opens
+                var availablePorts = System.IO.Ports.SerialPort.GetPortNames();
+                var currentSelection = SettingComPortSelector.SelectedItem as string;
+
+                SettingComPortSelector.ItemsSource = availablePorts;
+
+#if DEBUG
+                Debug.WriteLine($"[SettingsWindow] Enumerated {availablePorts.Length} ports: [{string.Join(", ", availablePorts)}]");
+#endif
+
+                // Restore selection if the port still exists
+                if (!string.IsNullOrEmpty(currentSelection) && availablePorts.Contains(currentSelection))
+                {
+                    SettingComPortSelector.SelectedItem = currentSelection;
+                }
+                // Sync with main window's selection if available
+                else if (_mainWindow?.ComPortSelector.SelectedItem is string mainSelection && availablePorts.Contains(mainSelection))
+                {
+                    SettingComPortSelector.SelectedItem = mainSelection;
+                }
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                Debug.WriteLine($"[SettingsWindow] Error enumerating ports: {ex.Message}");
+#endif
             }
         }
 
@@ -417,6 +448,19 @@ namespace DeejNG.Dialogs
                 int.TryParse(item.Content?.ToString(), out int baud))
             {
                 _settings.BaudRate = baud;
+            }
+
+            // Handle COM port change - use the saved baud rate
+            if (_mainWindow != null && SettingComPortSelector.SelectedItem is string selectedPort)
+            {
+                int baudRate = _settings.BaudRate > 0 ? _settings.BaudRate : 9600;
+
+#if DEBUG
+                Debug.WriteLine($"[SettingsWindow] Calling UpdateComPort: {selectedPort} at {baudRate} baud");
+#endif
+
+                // This will handle disconnect/reconnect automatically
+                _mainWindow.UpdateComPort(selectedPort, baudRate);
             }
 
             try

@@ -405,6 +405,65 @@ namespace DeejNG
             return _settingsManager?.AppSettings ?? new AppSettings();
         }
 
+        /// <summary>
+        /// Updates COM port and automatically switches connection if needed.
+        /// </summary>
+        public void UpdateComPort(string newPort, int baudRate)
+        {
+            if (string.IsNullOrEmpty(newPort)) return;
+
+#if DEBUG
+            Debug.WriteLine($"[MainWindow] UpdateComPort called - NewPort: {newPort}, CurrentPort: {_serialManager.CurrentPort}, Connected: {_serialManager.IsConnected}");
+#endif
+
+            // Update settings immediately
+            _settingsManager.AppSettings.PortName = newPort;
+            _settingsManager.AppSettings.BaudRate = baudRate;
+            SaveSettings();
+
+            // Update UI selector immediately (before async operations)
+            ComPortSelector.SelectedItem = newPort;
+
+            // If connected to a different port, switch
+            if (_serialManager.IsConnected &&
+                !string.Equals(_serialManager.CurrentPort, newPort, StringComparison.OrdinalIgnoreCase))
+            {
+#if DEBUG
+                Debug.WriteLine($"[MainWindow] Switching COM port from {_serialManager.CurrentPort} to {newPort}");
+#endif
+
+                // Stop reconnection timer
+                _timerCoordinator.StopSerialReconnect();
+
+                // Disconnect from old port
+                _serialManager.ManualDisconnect();
+
+                // Wait for clean disconnect, then reconnect
+                var reconnectTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                EventHandler reconnectHandler = null;
+                reconnectHandler = (s, args) =>
+                {
+                    reconnectTimer.Tick -= reconnectHandler;
+                    reconnectTimer.Stop();
+
+#if DEBUG
+                    Debug.WriteLine($"[MainWindow] Connecting to new port {newPort} at {baudRate} baud");
+#endif
+                    _serialManager.InitSerial(newPort, baudRate);
+                };
+                reconnectTimer.Tick += reconnectHandler;
+                reconnectTimer.Start();
+            }
+            // If not connected, auto-connect if user selected a port
+            else if (!_serialManager.IsConnected && !_isInitializing)
+            {
+#if DEBUG
+                Debug.WriteLine($"[MainWindow] Auto-connecting to {newPort} at {baudRate} baud");
+#endif
+                _serialManager.InitSerial(newPort, baudRate);
+            }
+        }
+
         public void UpdateOverlaySettings(AppSettings newSettings)
         {
             _overlayService.UpdateSettings(newSettings);
@@ -1025,7 +1084,7 @@ namespace DeejNG
             if (ComPortSelector.SelectedItem is string selectedPort)
             {
                 _serialManager.SetUserSelectedPort(selectedPort);
-                
+
                 // Save the port immediately when user manually selects it
                 // This ensures the selection persists across reboots even if connection fails
                 if (!_isInitializing && _hasLoadedInitialSettings)
@@ -1035,6 +1094,65 @@ namespace DeejNG
 #endif
                     _settingsManager.AppSettings.PortName = selectedPort;
                     SaveSettings();
+                }
+
+                // AUTO-CONNECT: Handle port switching (even during initialization)
+                // Skip only if we're in the very first load and no user interaction
+                if (_hasLoadedInitialSettings)
+                {
+                    bool isCurrentlyConnected = _serialManager.IsConnected;
+                    string currentPort = _serialManager.CurrentPort;
+
+#if DEBUG
+                    Debug.WriteLine($"[UI] Port selection - Connected: {isCurrentlyConnected}, CurrentPort: {currentPort ?? "null"}, SelectedPort: {selectedPort}");
+#endif
+
+                    // If connected to a different port, disconnect and reconnect
+                    if (isCurrentlyConnected && !string.IsNullOrEmpty(currentPort) &&
+                        !string.Equals(currentPort, selectedPort, StringComparison.OrdinalIgnoreCase))
+                    {
+#if DEBUG
+                        Debug.WriteLine($"[UI] Switching from {currentPort} to {selectedPort}");
+#endif
+                        // Stop reconnection timer
+                        _timerCoordinator.StopSerialReconnect();
+
+                        // Disconnect from old port
+                        _serialManager.ManualDisconnect();
+
+                        // Use a short delay to ensure clean disconnect before reconnecting
+                        var reconnectTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+                        EventHandler reconnectHandler = null;
+                        reconnectHandler = (s, args) =>
+                        {
+                            reconnectTimer.Tick -= reconnectHandler;
+                            reconnectTimer.Stop();
+
+                            // Connect to new port with saved baud rate
+                            int baud = _settingsManager.AppSettings.BaudRate > 0
+                                ? _settingsManager.AppSettings.BaudRate
+                                : 9600;
+
+#if DEBUG
+                            Debug.WriteLine($"[UI] Initiating connection to {selectedPort} at {baud} baud");
+#endif
+                            _serialManager.InitSerial(selectedPort, baud);
+                        };
+                        reconnectTimer.Tick += reconnectHandler;
+                        reconnectTimer.Start();
+                    }
+                    // If not connected at all, auto-connect
+                    else if (!isCurrentlyConnected && !_isInitializing)
+                    {
+#if DEBUG
+                        Debug.WriteLine($"[UI] Auto-connecting to selected port: {selectedPort}");
+#endif
+                        int baud = _settingsManager.AppSettings.BaudRate > 0
+                            ? _settingsManager.AppSettings.BaudRate
+                            : 9600;
+
+                        _serialManager.InitSerial(selectedPort, baud);
+                    }
                 }
             }
         }
