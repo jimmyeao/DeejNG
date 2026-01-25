@@ -86,6 +86,9 @@ namespace DeejNG.Dialogs
 
                 // Initialize baud rate from settings
                 InitializeBaudRateSelection();
+
+                // Initialize exclusion list from settings
+                InitializeExcludedAppsList();
             }
 
             // Wire up real-time control events
@@ -410,6 +413,9 @@ namespace DeejNG.Dialogs
                 _settings.BaudRate = baud;
             }
 
+            // Save excluded apps list
+            _settings.ExcludedFromUnmapped = ExcludedAppsListBox.Items.Cast<string>().ToList();
+
             // Handle COM port change - use the saved baud rate
             if (_mainWindow != null && SettingComPortSelector.SelectedItem is string selectedPort)
             {
@@ -578,6 +584,85 @@ namespace DeejNG.Dialogs
             {
                 SettingConnectButton.Content = _mainWindow.ConnectButton.Content;
                 SettingConnectButton.IsEnabled = _mainWindow.ConnectButton.IsEnabled;
+            }
+        }
+
+        /// <summary>
+        /// Initializes the excluded apps list from settings.
+        /// </summary>
+        private void InitializeExcludedAppsList()
+        {
+            ExcludedAppsListBox.Items.Clear();
+            if (_settings?.ExcludedFromUnmapped != null)
+            {
+                foreach (var app in _settings.ExcludedFromUnmapped)
+                {
+                    ExcludedAppsListBox.Items.Add(app);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Populates the running apps combo box when the dropdown is opened.
+        /// </summary>
+        private void RunningAppsComboBox_DropDownOpened(object sender, EventArgs e)
+        {
+            try
+            {
+                RunningAppsComboBox.Items.Clear();
+
+                // Get running audio sessions using the existing helper
+                var sessions = AudioSessionManagerHelper.GetSessionNames(new List<string>(), string.Empty);
+
+                // Filter to only real applications (exclude System and Unmapped entries)
+                var appNames = sessions
+                    .Where(s => s.Id != "system" && s.Id != "unmapped")
+                    .Select(s => s.FriendlyName)
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(name => name)
+                    .ToList();
+
+                foreach (var appName in appNames)
+                {
+                    // Don't show apps already in the exclusion list
+                    if (!ExcludedAppsListBox.Items.Contains(appName))
+                    {
+                        RunningAppsComboBox.Items.Add(appName);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Settings] Error populating running apps: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Adds the selected app to the exclusion list.
+        /// </summary>
+        private void AddExcludedApp_Click(object sender, RoutedEventArgs e)
+        {
+            if (RunningAppsComboBox.SelectedItem is string selectedApp && !string.IsNullOrWhiteSpace(selectedApp))
+            {
+                // Don't add duplicates
+                if (!ExcludedAppsListBox.Items.Contains(selectedApp))
+                {
+                    ExcludedAppsListBox.Items.Add(selectedApp);
+                    RunningAppsComboBox.Items.Remove(selectedApp);
+                    RunningAppsComboBox.SelectedItem = null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Removes the selected app from the exclusion list.
+        /// </summary>
+        private void RemoveExcludedApp_Click(object sender, RoutedEventArgs e)
+        {
+            if (ExcludedAppsListBox.SelectedItem is string selectedApp)
+            {
+                ExcludedAppsListBox.Items.Remove(selectedApp);
             }
         }
 

@@ -286,6 +286,15 @@ namespace DeejNG.Services
             var activeProfile = _profileCollection.GetActiveProfile();
             if (activeProfile != null)
             {
+                Debug.WriteLine($"[ProfileManager] UpdateActiveProfileSettings for '{activeProfile.Name}'");
+                if (settings?.SliderTargets != null)
+                {
+                    for (int i = 0; i < settings.SliderTargets.Count; i++)
+                    {
+                        var targets = settings.SliderTargets[i];
+                        Debug.WriteLine($"[ProfileManager]   Slider {i}: {string.Join(", ", targets?.Select(t => t?.Name ?? "null") ?? new[] { "null" })}");
+                    }
+                }
                 activeProfile.Settings = settings;
                 activeProfile.LastModified = DateTime.Now;
             }

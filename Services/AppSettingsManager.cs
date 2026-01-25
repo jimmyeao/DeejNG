@@ -151,7 +151,10 @@ namespace DeejNG.Services
                 ButtonMappings = AppSettings.ButtonMappings,
 
                 // Persist the selected theme with the profile settings
-                SelectedTheme = AppSettings.SelectedTheme
+                SelectedTheme = AppSettings.SelectedTheme,
+
+                // Preserve excluded apps for unmapped applications
+                ExcludedFromUnmapped = AppSettings.ExcludedFromUnmapped ?? new List<string>()
             };
         }
 

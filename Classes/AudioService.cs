@@ -41,11 +41,12 @@ namespace DeejNG.Services
 
                /// <summary>
         /// Applies a mute or unmute state to all audio sessions that are not explicitly listed in the mapped applications.
-        /// Skips known system processes and very low process IDs (likely system-related).
+        /// Skips known system processes, very low process IDs (likely system-related), and excluded applications.
         /// </summary>
         /// <param name="isMuted">True to mute, false to unmute.</param>
         /// <param name="mappedApplications">A set of application names that should not be muted by this operation.</param>
-        public void ApplyMuteStateToUnmappedApplications(bool isMuted, HashSet<string> mappedApplications)
+        /// <param name="excludedApplications">Optional list of applications to exclude from unmapped control.</param>
+        public void ApplyMuteStateToUnmappedApplications(bool isMuted, HashSet<string> mappedApplications, IEnumerable<string> excludedApplications = null)
         {
             try
             {
@@ -54,6 +55,11 @@ namespace DeejNG.Services
 
                 // Get all current audio sessions associated with that device
                 var sessions = device.AudioSessionManager.Sessions;
+
+                // Build exclusion set for efficient lookup
+                var exclusionSet = excludedApplications != null
+                    ? new HashSet<string>(excludedApplications.Select(e => Path.GetFileNameWithoutExtension(e).ToLowerInvariant()))
+                    : new HashSet<string>();
 
                 int processedCount = 0; // Tracks how many sessions were actually muted/unmuted
 
@@ -77,6 +83,11 @@ namespace DeejNG.Services
 
                         // Check if this process matches any mapped application using fuzzy matching
                         string cleanedProcName = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
+
+                        // Skip if this app is in the exclusion list
+                        if (exclusionSet.Any(excluded => IsProcessNameMatch(cleanedProcName, excluded)))
+                            continue;
+
                         bool isMapped = false;
                         foreach (var mappedApp in mappedApplications)
                         {
@@ -102,7 +113,7 @@ namespace DeejNG.Services
 
                 // Log the number of sessions affected
 #if DEBUG
-                Debug.WriteLine($"[Unmapped] Mute {isMuted} applied to {processedCount} apps");
+                Debug.WriteLine($"[Unmapped] Mute {isMuted} applied to {processedCount} apps (excluded: {exclusionSet.Count})");
 #endif
             }
             catch (Exception ex)
@@ -244,7 +255,8 @@ namespace DeejNG.Services
         /// <param name="level">Volume level (0.0 to 1.0).</param>
         /// <param name="isMuted">Whether the session should be muted.</param>
         /// <param name="mappedApplications">Set of known/mapped application process names to exclude.</param>
-        public void ApplyVolumeToUnmappedApplications(float level, bool isMuted, HashSet<string> mappedApplications)
+        /// <param name="excludedApplications">Optional list of applications to exclude from unmapped control.</param>
+        public void ApplyVolumeToUnmappedApplications(float level, bool isMuted, HashSet<string> mappedApplications, IEnumerable<string> excludedApplications = null)
         {
             // Clamp volume level to valid range [0.0, 1.0]
             level = Math.Clamp(level, 0.0f, 1.0f);
@@ -275,6 +287,11 @@ namespace DeejNG.Services
                 var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var sessions = device.AudioSessionManager.Sessions;
 
+                // Build exclusion set for efficient lookup
+                var exclusionSet = excludedApplications != null
+                    ? new HashSet<string>(excludedApplications.Select(e => Path.GetFileNameWithoutExtension(e).ToLowerInvariant()))
+                    : new HashSet<string>();
+
                 int processedCount = 0;
 
                 // Iterate through all available sessions
@@ -297,6 +314,11 @@ namespace DeejNG.Services
 
                         // Check if this process matches any mapped application using fuzzy matching
                         string cleanedProcName = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
+
+                        // Skip if this app is in the exclusion list
+                        if (exclusionSet.Any(excluded => IsProcessNameMatch(cleanedProcName, excluded)))
+                            continue;
+
                         bool isMapped = false;
                         foreach (var mappedApp in mappedApplications)
                         {

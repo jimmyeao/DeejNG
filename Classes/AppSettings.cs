@@ -147,6 +147,12 @@ namespace DeejNG.Classes
         /// Gets or sets the baud rate used for the serial connection.
         /// </summary>
         public int BaudRate { get; set; } = 9600;
+
+        /// <summary>
+        /// Gets or sets the list of applications excluded from "Unmapped Applications" control.
+        /// These apps will not be affected by the unmapped slider even if they aren't assigned to any slider.
+        /// </summary>
+        public List<string> ExcludedFromUnmapped { get; set; } = new();
         #endregion Public Properties
     }
 

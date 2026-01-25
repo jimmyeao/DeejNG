@@ -518,7 +518,8 @@ namespace DeejNG
             // This ensures baud rate changes from the UI are persisted
             _settingsManager.AppSettings.BaudRate = newSettings.BaudRate;
 
-
+            // Update excluded apps list for unmapped applications feature
+            _settingsManager.AppSettings.ExcludedFromUnmapped = newSettings.ExcludedFromUnmapped ?? new List<string>();
 
             // Reconfigure button layout if button count changed
             ConfigureButtonLayout();
@@ -724,7 +725,8 @@ namespace DeejNG
                                     mappedApps.Add(focusTarget);
                                 }
                             }
-                            _audioService.ApplyVolumeToUnmappedApplications(level, ctrl.IsMuted, mappedApps);
+                            var excludedApps = _settingsManager.AppSettings?.ExcludedFromUnmapped;
+                            _audioService.ApplyVolumeToUnmappedApplications(level, ctrl.IsMuted, mappedApps, excludedApps);
                         }
                     }
                     else if (string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
@@ -1238,6 +1240,14 @@ namespace DeejNG
             // CRITICAL FIX: Load from active profile, not from disk
             var savedSettings = _profileManager.GetActiveProfileSettings();
             var savedTargetGroups = savedSettings?.SliderTargets ?? new List<List<AudioTarget>>();
+
+            Debug.WriteLine($"[GenerateSliders] Active profile: {_profileManager.ActiveProfile?.Name}");
+            Debug.WriteLine($"[GenerateSliders] Slider count: {count}, Target groups count: {savedTargetGroups.Count}");
+            for (int g = 0; g < savedTargetGroups.Count; g++)
+            {
+                var targets = savedTargetGroups[g];
+                Debug.WriteLine($"[GenerateSliders] Group {g}: {string.Join(", ", targets.Select(t => t?.Name ?? "null"))}");
+            }
 
             _isInitializing = true;
             _allowVolumeApplication = false;
@@ -1801,6 +1811,10 @@ namespace DeejNG
 
         private void LoadSettingsWithoutSerialConnection()
         {
+            // CRITICAL: Set _isInitializing BEFORE modifying any UI controls
+            // This prevents checkbox change events from calling SaveSettings() during profile load
+            _isInitializing = true;
+
             try
             {
                 // Load settings from the active profile
@@ -1877,6 +1891,9 @@ namespace DeejNG
                     };
                     startupTimer.Start();
                 }
+
+                // Reset initialization flag so profile switching works
+                _isInitializing = false;
             }
             catch (Exception ex)
             {
@@ -1884,6 +1901,7 @@ namespace DeejNG
                 _expectedSliderCount = 4;
                 GenerateSliders(4);
                 _hasLoadedInitialSettings = true;
+                _isInitializing = false;
             }
         }
 
@@ -2146,16 +2164,35 @@ namespace DeejNG
                 return;
 
             string selectedProfile = ProfileSelector.SelectedItem.ToString();
+            string currentProfile = _profileManager.ActiveProfile?.Name ?? "unknown";
 
+            Debug.WriteLine($"[Profile] Switching from '{currentProfile}' to '{selectedProfile}'");
 
+            // Log current slider targets before saving
+            var currentTargets = _channelControls.Select(c => c.AudioTargets?.FirstOrDefault()?.Name ?? "empty").ToList();
+            Debug.WriteLine($"[Profile] Current UI targets before save: {string.Join(", ", currentTargets)}");
 
             // CRITICAL FIX: Save current profile's settings before switching
             SaveSettings();
 
+            // Log what was saved to current profile
+            var savedSettings = _profileManager.GetActiveProfileSettings();
+            var savedTargets = savedSettings?.SliderTargets?.Select(t => t?.FirstOrDefault()?.Name ?? "empty").ToList() ?? new List<string>();
+            Debug.WriteLine($"[Profile] Saved targets for '{currentProfile}': {string.Join(", ", savedTargets)}");
+
             if (_profileManager.SwitchToProfile(selectedProfile))
             {
+                // Log new profile's targets before loading
+                var newSettings = _profileManager.GetActiveProfileSettings();
+                var newTargets = newSettings?.SliderTargets?.Select(t => t?.FirstOrDefault()?.Name ?? "empty").ToList() ?? new List<string>();
+                Debug.WriteLine($"[Profile] New profile '{selectedProfile}' targets: {string.Join(", ", newTargets)}");
+
                 // Reload settings from the new profile
                 LoadSettingsWithoutSerialConnection();
+
+                // Log UI targets after loading
+                var loadedTargets = _channelControls.Select(c => c.AudioTargets?.FirstOrDefault()?.Name ?? "empty").ToList();
+                Debug.WriteLine($"[Profile] UI targets after load: {string.Join(", ", loadedTargets)}");
 
                 // Update serial port if it changed
                 string newPort = _profileManager.GetActiveProfileSettings().PortName;
@@ -2235,7 +2272,7 @@ namespace DeejNG
         {
             if (_isInitializing || !_hasLoadedInitialSettings)
             {
-
+                Debug.WriteLine($"[SaveSettings] Skipped - _isInitializing={_isInitializing}, _hasLoadedInitialSettings={_hasLoadedInitialSettings}");
                 return;
             }
 
@@ -2243,11 +2280,17 @@ namespace DeejNG
             {
                 if (_channelControls.Count == 0)
                 {
-
+                    Debug.WriteLine("[SaveSettings] Skipped - no channel controls");
                     return;
                 }
 
                 var sliderTargets = _channelControls.Select(c => c.AudioTargets ?? new List<AudioTarget>()).ToList();
+                Debug.WriteLine($"[SaveSettings] Saving to profile '{_profileManager.ActiveProfile?.Name}'");
+                for (int i = 0; i < sliderTargets.Count; i++)
+                {
+                    var targets = sliderTargets[i];
+                    Debug.WriteLine($"[SaveSettings]   Slider {i}: {string.Join(", ", targets.Select(t => t?.Name ?? "null"))} (Count={targets.Count})");
+                }
 
 
 
@@ -2649,7 +2692,8 @@ namespace DeejNG
                         {
                             var mappedApps = GetAllMappedApplications();
                             mappedApps.Remove("unmapped");
-                            _audioService.ApplyMuteStateToUnmappedApplications(ctrl.IsMuted, mappedApps);
+                            var excludedApps = _settingsManager.AppSettings?.ExcludedFromUnmapped;
+                            _audioService.ApplyMuteStateToUnmappedApplications(ctrl.IsMuted, mappedApps, excludedApps);
                             // In SyncMuteStates we only care about mute; don't touch meters here.
                             // Leave meter updates to UpdateMeters().
                         }
