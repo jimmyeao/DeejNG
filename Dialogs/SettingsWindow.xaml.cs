@@ -1,11 +1,10 @@
 ﻿using DeejNG.Classes;
-using DeejNG.Models;
+using NAudio.CoreAudioApi;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 
 namespace DeejNG.Dialogs
 {
@@ -54,6 +53,24 @@ namespace DeejNG.Dialogs
             TimeoutSlider.Value = _settings.OverlayTimeoutSeconds;
             ExponentialVolumeFactorSlider.Value = _settings.ExponentialVolumeFactor;
 
+            HidVendorIdTextBox.Text = $"{_settings.HidVendorId}";
+            HidProductIdTextBox.Text = $"{_settings.HidProductId}";
+
+            AudioDevice1FriendlyNameTextBox.Text = _settings.AudioDeviceOneFriendlyName;
+            AudioDevice1IdTextBox.Text = _settings.AudioDeviceOneId;
+            MicrophoneDevice1FriendlyNameTextBox.Text = _settings.MicrophoneDeviceOneFriendlyName;
+            MicrophoneDevice1IdTextBox.Text = _settings.MicrophoneDeviceOneId;
+
+            AudioDevice2FriendlyNameTextBox.Text = _settings.AudioDeviceTwoFriendlyName;
+            AudioDevice2IdTextBox.Text = _settings.AudioDeviceTwoId;
+            MicrophoneDevice2FriendlyNameTextBox.Text = _settings.MicrophoneDeviceTwoFriendlyName;
+            MicrophoneDevice2IdTextBox.Text = _settings.MicrophoneDeviceTwoId;
+
+            AudioDevice3FriendlyNameTextBox.Text = _settings.AudioDeviceThreeFriendlyName;
+            AudioDevice3IdTextBox.Text = _settings.AudioDeviceThreeId;
+            MicrophoneDevice3FriendlyNameTextBox.Text = _settings.MicrophoneDeviceThreeFriendlyName;
+            MicrophoneDevice3IdTextBox.Text = _settings.MicrophoneDeviceThreeId;
+
             SetTextColorSelection(_settings.OverlayTextColor); // Set ComboBox for text color
 
             // Initialize general toggles from main window state (hidden controls)
@@ -67,20 +84,6 @@ namespace DeejNG.Dialogs
                 SettingUseExponentialVolume.IsChecked = _mainWindow.UseExponentialVolumeCheckBox.IsChecked;
                 ExponentialVolumeFactorSlider.Value = _mainWindow.ExponentialVolumeFactorSlider.Value;
 
-                // Initialize COM port controls - enumerate ports and sync from settings
-                var availablePorts = System.IO.Ports.SerialPort.GetPortNames();
-                SettingComPortSelector.ItemsSource = availablePorts;
-
-                // Sync from settings (not from UI control) to get the most recent saved port
-                string savedPort = _settings.PortName;
-                if (!string.IsNullOrEmpty(savedPort) && availablePorts.Contains(savedPort))
-                {
-                    SettingComPortSelector.SelectedItem = savedPort;
-                }
-                else if (_mainWindow.ComPortSelector.SelectedItem is string mainPort && availablePorts.Contains(mainPort))
-                {
-                    SettingComPortSelector.SelectedItem = mainPort;
-                }
 
                 UpdateConnectButtonState();
 
@@ -115,8 +118,6 @@ namespace DeejNG.Dialogs
             SettingUseExponentialVolume.Unchecked += ForwardGeneralCheckbox;
             ExponentialVolumeFactorSlider.ValueChanged += ForwardGeneralSlider;
 
-            // Wire COM port selection changes
-            SettingComPortSelector.SelectionChanged += SettingComPortSelector_SelectionChanged;
             // Baud rate changes are persisted on Save; no live wiring needed here
         }
 
@@ -288,21 +289,7 @@ namespace DeejNG.Dialogs
         /// </summary>
         private void InitializeBaudRateSelection()
         {
-            int baud = _settings?.BaudRate > 0 ? _settings.BaudRate : 9600;
-            foreach (ComboBoxItem item in BaudRateComboBox.Items)
-            {
-                if (int.TryParse(item.Content?.ToString(), out int value) && value == baud)
-                {
-                    BaudRateComboBox.SelectedItem = item;
-                    return;
-                }
-            }
-
-            // Fallback to first item if no match
-            if (BaudRateComboBox.Items.Count > 0)
-            {
-                BaudRateComboBox.SelectedIndex = 0;
-            }
+            int baud = 9600;
         }
 
         /// <summary>
@@ -407,23 +394,34 @@ namespace DeejNG.Dialogs
 
             // Save selected overlay text color (e.g., Auto, White, Black)
             _settings.OverlayTextColor = GetTextColorFromSelection();
-            if (BaudRateComboBox.SelectedItem is ComboBoxItem item &&
-                int.TryParse(item.Content?.ToString(), out int baud))
-            {
-                _settings.BaudRate = baud;
-            }
 
             // Save excluded apps list
             _settings.ExcludedFromUnmapped = ExcludedAppsListBox.Items.Cast<string>().ToList();
 
-            // Handle COM port change - use the saved baud rate
-            if (_mainWindow != null && SettingComPortSelector.SelectedItem is string selectedPort)
+            if (int.TryParse(HidVendorIdTextBox.Text, out int vid))
             {
-                int baudRate = _settings.BaudRate > 0 ? _settings.BaudRate : 9600;
-
-                // This will handle disconnect/reconnect automatically
-                _mainWindow.UpdateComPort(selectedPort, baudRate);
+                _settings.HidVendorId = vid;
             }
+
+            if (int.TryParse(HidProductIdTextBox.Text, out int pid))
+            {
+                _settings.HidProductId = pid;
+            }
+
+            _settings.AudioDeviceOneFriendlyName = AudioDevice1FriendlyNameTextBox.Text;
+            _settings.AudioDeviceOneId = AudioDevice1IdTextBox.Text;
+            _settings.MicrophoneDeviceOneFriendlyName = MicrophoneDevice1FriendlyNameTextBox.Text;
+            _settings.MicrophoneDeviceOneId = MicrophoneDevice1IdTextBox.Text;
+
+            _settings.AudioDeviceTwoFriendlyName = AudioDevice2FriendlyNameTextBox.Text;
+            _settings.AudioDeviceTwoId = AudioDevice2IdTextBox.Text;
+            _settings.MicrophoneDeviceTwoFriendlyName = MicrophoneDevice2FriendlyNameTextBox.Text;
+            _settings.MicrophoneDeviceTwoId = MicrophoneDevice2IdTextBox.Text;
+
+            _settings.AudioDeviceThreeFriendlyName = AudioDevice3FriendlyNameTextBox.Text;
+            _settings.AudioDeviceThreeId = AudioDevice3IdTextBox.Text;
+            _settings.MicrophoneDeviceThreeFriendlyName = MicrophoneDevice3FriendlyNameTextBox.Text;
+            _settings.MicrophoneDeviceThreeId = MicrophoneDevice3IdTextBox.Text;
 
             try
             {
@@ -464,61 +462,18 @@ namespace DeejNG.Dialogs
 
         private void SettingComPortSelector_DropDownOpened(object sender, EventArgs e)
         {
-            try
-            {
-                // Dynamically enumerate COM ports when dropdown opens
-                var availablePorts = System.IO.Ports.SerialPort.GetPortNames();
-                var currentSelection = SettingComPortSelector.SelectedItem as string;
-
-                SettingComPortSelector.ItemsSource = availablePorts;
-
-
-
-                // Restore selection if the port still exists
-                if (!string.IsNullOrEmpty(currentSelection) && availablePorts.Contains(currentSelection))
-                {
-                    SettingComPortSelector.SelectedItem = currentSelection;
-                }
-                // Sync with main window's selection if available
-                else if (_mainWindow?.ComPortSelector.SelectedItem is string mainSelection && availablePorts.Contains(mainSelection))
-                {
-                    SettingComPortSelector.SelectedItem = mainSelection;
-                }
-            }
-            catch (Exception ex)
-            {
-
-            }
+            // Not needed anymore
         }
 
         private void SettingComPortSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (_mainWindow != null && SettingComPortSelector.SelectedItem != null)
-            {
-                _mainWindow.ComPortSelector.SelectedItem = SettingComPortSelector.SelectedItem;
-                UpdateConnectButtonState();
-            }
+            // not needed anymore
         }
 
         private void SettingConnect_Click(object sender, RoutedEventArgs e)
         {
             if (_mainWindow != null)
             {
-                // Update baud rate in settings before forwarding connect
-                if (BaudRateComboBox.SelectedItem is ComboBoxItem item &&
-                    int.TryParse(item.Content?.ToString(), out int baud))
-                {
-                    _settings.BaudRate = baud;
-
-                    // BUGFIX: Update MainWindow's AppSettings BEFORE triggering connect
-                    // This ensures the connection uses the newly selected baud rate
-                    var currentSettings = _mainWindow.GetCurrentSettings();
-                    currentSettings.BaudRate = baud;
-                    _mainWindow.UpdateOverlaySettings(currentSettings);
-
-
-                }
-
                 // Forward the click to the main window's connect button
                 _mainWindow.ConnectButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
                 UpdateConnectButtonState();
@@ -582,8 +537,7 @@ namespace DeejNG.Dialogs
         {
             if (_mainWindow != null)
             {
-                SettingConnectButton.Content = _mainWindow.ConnectButton.Content;
-                SettingConnectButton.IsEnabled = _mainWindow.ConnectButton.IsEnabled;
+                // not needed anymore ?
             }
         }
 
@@ -666,6 +620,100 @@ namespace DeejNG.Dialogs
             }
         }
 
+        private void OnSetNewHidID(object sender, RoutedEventArgs e)
+        {
+            int newVid = int.TryParse(HidVendorIdTextBox.Text, out newVid) ? newVid : -1;
+            int newPid = int.TryParse(HidProductIdTextBox.Text, out newPid) ? newPid : -1;
+
+            int oldVid = _settings.HidVendorId;
+            int oldPid = _settings.HidProductId;
+
+            if (newVid > 0 && newPid > 0)
+            {
+                _mainWindow.ConnectWithNewVidAndPid(newVid, newPid);
+            }
+        }
+
+        private void LogAudioDevicesButton_Click(object sender, EventArgs e)
+        {
+            LoadAudioOutputDevices();
+            LoadMicrophoneDevices();
+        }
+
+        private void LoadAudioOutputDevices()
+        {
+            AvailableAudioDevicesListBox.ItemsSource = GetDeviceItems(DataFlow.Render);
+        }
+
+        private void LoadMicrophoneDevices()
+        {
+            AvailableMicrophoneDevicesListBox.ItemsSource = GetDeviceItems(DataFlow.Capture);
+        }
+
+        private List<AudioDeviceListItem> GetDeviceItems(DataFlow flow)
+        {
+            var items = new List<AudioDeviceListItem>();
+
+            try
+            {
+                using var enumerator = new MMDeviceEnumerator();
+
+                MMDevice? defaultDevice = null;
+
+                try
+                {
+                    defaultDevice = enumerator.GetDefaultAudioEndpoint(flow, Role.Multimedia);
+                }
+                catch
+                {
+                    // No default device for this flow is okay
+                }
+
+                var devices = enumerator.EnumerateAudioEndPoints(flow, DeviceState.Active);
+
+                foreach (var device in devices)
+                {
+                    bool isDefault = defaultDevice != null && device.ID == defaultDevice.ID;
+
+                    items.Add(new AudioDeviceListItem
+                    {
+                        FriendlyName = isDefault
+                            ? $"{device.FriendlyName} (Default)"
+                            : device.FriendlyName,
+                        Id = device.ID
+                    });
+                }
+            }
+            catch
+            {
+            }
+
+            return items;
+        }
+
+        private void CopyAudioDeviceField_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (sender is Button button && button.Tag is string text && !string.IsNullOrWhiteSpace(text))
+                {
+                    Clipboard.SetText(text);
+                }
+            }
+            catch
+            {
+            }
+        }
+
         #endregion Private Methods
+
+        #region Private Models
+        private sealed class AudioDeviceListItem
+        {
+            public string FriendlyName { get; set; } = string.Empty;
+            public string Id { get; set; } = string.Empty;
+        }
+
+        #endregion
     }
 }

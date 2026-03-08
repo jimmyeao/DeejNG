@@ -1,5 +1,4 @@
 using DeejNG.Classes;
-using System;
 
 namespace DeejNG.Models
 {
@@ -81,7 +80,9 @@ namespace DeejNG.Models
                 OverlayScreenDevice = original.OverlayScreenDevice,
                 OverlayScreenBounds = original.OverlayScreenBounds,
                 OverlayOpacity = original.OverlayOpacity,
-                OverlayTextColor = original.OverlayTextColor
+                OverlayTextColor = original.OverlayTextColor,
+                HidVendorId = original.HidVendorId,
+                HidProductId = original.HidProductId,
             };
         }
 

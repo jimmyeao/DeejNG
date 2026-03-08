@@ -25,7 +25,7 @@
     <shell:WindowChrome.WindowChrome>
         <StaticResource ResourceKey="Chrome" />
     </shell:WindowChrome.WindowChrome>
-    
+
     <Border BorderBrush="{DynamicResource BorderBrush}"
             BorderThickness="1"
             CornerRadius="8"
@@ -45,11 +45,11 @@
                     CornerRadius="8,8,0,0"
                     MouseLeftButtonDown="TitleBar_MouseDown">
                 <Grid x:Name="TitleBarGrid">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
 
                     <!-- App title -->
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0">
@@ -150,8 +150,7 @@
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Visibility="Collapsed">
                         <ComboBox x:Name="ComPortSelector" Width="160"
                                   Style="{StaticResource ModernComboBox}"
-                                  DropDownOpened="ComPortSelector_DropDownOpened"
-                                  SelectionChanged="ComPortSelector_SelectionChanged"/>
+                                  DropDownOpened="ComPortSelector_DropDownOpened"/>
                         <Button x:Name="ConnectButton" Content="Connect" Style="{StaticResource ModernButton}" Click="Connect_Click"/>
                     </StackPanel>
                 </Grid>
@@ -159,48 +158,48 @@
 
             <!-- Hidden settings bar for logic wiring -->
             <Border x:Name="SettingsBar" Grid.Row="1" Visibility="Collapsed">
-            <!-- Settings toggles moved to Settings window; keep hidden controls for logic wiring -->
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
-                <ToggleButton x:Name="InvertSliderCheckBox"
+                <!-- Settings toggles moved to Settings window; keep hidden controls for logic wiring -->
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
+                    <ToggleButton x:Name="InvertSliderCheckBox"
                               Content="Invert Sliders"
                               Style="{StaticResource SwitchToggleStyle}"
                               Checked="InvertSlider_Checked"
                               Unchecked="InvertSlider_Unchecked"/>
 
-                <ToggleButton x:Name="ShowSlidersCheckBox"
+                    <ToggleButton x:Name="ShowSlidersCheckBox"
                               Content="Show Meters"
                               IsChecked="True"
                               Style="{StaticResource SwitchToggleStyle}"
                               Checked="ShowSlidersCheckBox_Checked"
                               Unchecked="ShowSlidersCheckBox_Unchecked"/>
 
-                <ToggleButton x:Name="StartOnBootCheckBox"
+                    <ToggleButton x:Name="StartOnBootCheckBox"
                               Content="Start on boot"
                               Style="{StaticResource SwitchToggleStyle}"
                               Checked="StartOnBootCheckBox_Checked"
                               Unchecked="StartOnBootCheckBox_Unchecked"/>
 
-                <ToggleButton x:Name="UseExponentialVolumeCheckBox"
+                    <ToggleButton x:Name="UseExponentialVolumeCheckBox"
                               Content="Use exponential volume curve"
                               Style="{StaticResource SwitchToggleStyle}"
                               Checked="UseExponentialVolumeCheckBox_Checked"
                               Unchecked="UseExponentialVolumeCheckBox_Unchecked"/>
 
-                <Slider x:Name="ExponentialVolumeFactorSlider" ValueChanged="ExponentialVolumeFactorSlider_Changed"/>
+                    <Slider x:Name="ExponentialVolumeFactorSlider" ValueChanged="ExponentialVolumeFactorSlider_Changed"/>
 
-                <ToggleButton x:Name="StartMinimizedCheckBox"
+                    <ToggleButton x:Name="StartMinimizedCheckBox"
                               Content="Start minimized"
                               Style="{StaticResource SwitchToggleStyle}"
                               Checked="StartMinimizedCheckBox_Checked"
                               Unchecked="StartMinimizedCheckBox_Unchecked"/>
 
-                <ToggleButton x:Name="DisableSmoothingCheckBox"
+                    <ToggleButton x:Name="DisableSmoothingCheckBox"
                               Content="Disable Smoothing"
                               Style="{StaticResource SwitchToggleStyle}"
                               Checked="DisableSmoothingCheckBox_Checked"
                               Unchecked="DisableSmoothingCheckBox_Unchecked"/>
-            </StackPanel>
-        </Border>
+                </StackPanel>
+            </Border>
 
             <!-- Main content area - Channels -->
             <WrapPanel Grid.Row="2"
@@ -312,11 +311,11 @@
                     BorderThickness="0,1,0,0"
                     CornerRadius="0,0,8,8"
                     Padding="20,6">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
 
                     <!-- Connection Status -->
                     <StackPanel Grid.Column="0" Orientation="Horizontal">

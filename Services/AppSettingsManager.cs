@@ -1,17 +1,12 @@
 using DeejNG.Classes;
-using DeejNG.Models;
 using DeejNG.Core.Helpers;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
+using DeejNG.Models;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
-using System.Threading.Tasks;
 
 namespace DeejNG.Services
 {
- 
+
     public class AppSettingsManager
     {
         #region Private Fields
@@ -154,7 +149,27 @@ namespace DeejNG.Services
                 SelectedTheme = AppSettings.SelectedTheme,
 
                 // Preserve excluded apps for unmapped applications
-                ExcludedFromUnmapped = AppSettings.ExcludedFromUnmapped ?? new List<string>()
+                ExcludedFromUnmapped = AppSettings.ExcludedFromUnmapped ?? new List<string>(),
+
+                // Preserve HID settings
+                HidVendorId = AppSettings.HidVendorId,
+                HidProductId = AppSettings.HidProductId,
+
+                // Preserve Device preset settings
+                AudioDeviceOneFriendlyName = AppSettings.AudioDeviceOneFriendlyName,
+                AudioDeviceOneId = AppSettings.AudioDeviceOneId,
+                MicrophoneDeviceOneFriendlyName = AppSettings.MicrophoneDeviceOneFriendlyName,
+                MicrophoneDeviceOneId = AppSettings.MicrophoneDeviceOneId,
+
+                AudioDeviceTwoFriendlyName = AppSettings.AudioDeviceTwoFriendlyName,
+                AudioDeviceTwoId = AppSettings.AudioDeviceTwoId,
+                MicrophoneDeviceTwoFriendlyName = AppSettings.MicrophoneDeviceTwoFriendlyName,
+                MicrophoneDeviceTwoId = AppSettings.MicrophoneDeviceTwoId,
+
+                AudioDeviceThreeFriendlyName = AppSettings.AudioDeviceThreeFriendlyName,
+                AudioDeviceThreeId = AppSettings.AudioDeviceThreeId,
+                MicrophoneDeviceThreeFriendlyName = AppSettings.MicrophoneDeviceThreeFriendlyName,
+                MicrophoneDeviceThreeId = AppSettings.MicrophoneDeviceThreeId,
             };
         }
 

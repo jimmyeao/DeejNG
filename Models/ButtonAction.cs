@@ -41,8 +41,28 @@ namespace DeejNG.Models
         GlobalMute = 6,
 
         /// <summary>
+        /// Switch to audio device setup one
+        /// </summary>
+        AudioDeviceSetupOne = 7,
+
+        /// <summary>
+        /// Switch to audio device setup two
+        /// </summary>
+        AudioDeviceSetupTwo = 8,
+
+        /// <summary>
+        /// Switch to audio device setup three
+        /// </summary>
+        AudioDeviceSetupThree = 9,
+
+        /// <summary>
+        /// Toggle's the current focused application 
+        /// </summary>
+        ToggleFocusApplication = 10,
+
+        /// <summary>
         /// Toggle input/output mode for a specific channel.
         /// </summary>
-        ToggleInputOutput = 7
+        ToggleInputOutput = 11,
     }
 }

@@ -252,7 +252,7 @@ namespace DeejNG.Dialogs
             MuteButton.IsChecked = muted;  // Reflect change in the UI control
             UpdateMuteButtonVisual();      // Update any related visual styling (e.g., icon color)
             _suppressEvents = false;       // Re-enable events
-            
+
             // If requested, apply the mute state to audio devices
             // This is used for hardware button presses and inline mute, but NOT for 
             // external audio session notifications (which would create a feedback loop)
@@ -367,6 +367,11 @@ namespace DeejNG.Dialogs
                     _meterNeedsUpdate = true;
                 }
             }
+        }
+
+        public void RaiseTargetChanged()
+        {
+            TargetChanged?.Invoke(this, EventArgs.Empty);
         }
 
         #endregion Public Methods

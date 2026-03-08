@@ -1,9 +1,9 @@
+using NAudio.CoreAudioApi;
+using NAudio.CoreAudioApi.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Runtime.InteropServices;
-using NAudio.CoreAudioApi;
 
 namespace DeejNG.Classes
 {
@@ -30,11 +30,12 @@ namespace DeejNG.Classes
         // Timestamp of the last time the process cache was cleaned
         private static DateTime _lastProcessCacheCleanup = DateTime.MinValue;
 
-
         [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();
+
         [DllImport("user32.dll", SetLastError = true)]
         private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
         #endregion Private Fields
 
         #region Public Methods
@@ -105,7 +106,10 @@ namespace DeejNG.Classes
             _processNameCache[processId] = processName;
             return processName;
         }
-        
+
+        /// <summary>
+        /// Gets the current foreground process target, regardless of whether it has an audio session.
+        /// </summary>
         public static string GetCurrentFocusTarget()
         {
             IntPtr hWnd = GetForegroundWindow();
@@ -117,7 +121,91 @@ namespace DeejNG.Classes
             GetWindowThreadProcessId(hWnd, out uint processId);
             return GetProcessNameSafely((int)processId);
         }
-        
+
+        /// <summary>
+        /// Gets the current foreground process target only if it has an audio session.
+        /// Returns an empty string otherwise.
+        /// </summary>
+        public static string GetCurrentFocusAudioTarget(bool activeOnly = false)
+        {
+            IntPtr hWnd = GetForegroundWindow();
+            if (hWnd == IntPtr.Zero)
+            {
+                return "";
+            }
+
+            GetWindowThreadProcessId(hWnd, out uint processId);
+
+            if (processId == 0)
+            {
+                return "";
+            }
+
+            if (!ProcessHasAudioSession((int)processId, activeOnly))
+            {
+                return "";
+            }
+
+            return GetProcessNameSafely((int)processId);
+        }
+
+        /// <summary>
+        /// Checks whether the given process currently has an audio session
+        /// on the default render endpoint.
+        /// </summary>
+        public static bool ProcessHasAudioSession(int processId, bool activeOnly = false)
+        {
+            if (processId <= 0 || _systemProcessIds.Contains(processId))
+            {
+                return false;
+            }
+
+            try
+            {
+                using (var deviceEnumerator = new MMDeviceEnumerator())
+                using (var device = deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia))
+                {
+                    var sessions = device.AudioSessionManager.Sessions;
+
+                    for (int i = 0; i < sessions.Count; i++)
+                    {
+                        AudioSessionControl session = null;
+
+                        try
+                        {
+                            session = sessions[i];
+
+                            if ((int)session.GetProcessID != processId)
+                            {
+                                continue;
+                            }
+
+                            if (activeOnly && session.State != AudioSessionState.AudioSessionStateActive)
+                            {
+                                continue;
+                            }
+
+                            return true;
+                        }
+                        catch
+                        {
+                            // Ignore bad session and continue
+                        }
+                        finally
+                        {
+                            session?.Dispose();
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore failures and report no audio session
+            }
+
+            return false;
+        }
+
         #endregion Public Methods
 
         #region Private Methods
@@ -192,7 +280,6 @@ namespace DeejNG.Classes
             }
             catch (Exception ex)
             {
-                // Log any unexpected cleanup errors
 #if DEBUG
                 Debug.WriteLine($"[AudioUtilities] Error during cache cleanup: {ex.Message}");
 #endif

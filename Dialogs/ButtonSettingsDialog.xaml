@@ -77,7 +77,8 @@
                                 </StackPanel>
                             </Border>
 
-                            <ItemsControl x:Name="ButtonMappingsItemsControl" Margin="0,8,0,0">
+                            <!-- Short button presses -->
+                            <ItemsControl x:Name="ShortButtonMappingsItemsControl" Margin="0,8,0,0">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Border BorderBrush="{DynamicResource BorderBrush}"
@@ -109,6 +110,10 @@
                                                     <ComboBoxItem Content="Media Stop"/>
                                                     <ComboBoxItem Content="Mute Channel"/>
                                                     <ComboBoxItem Content="Global Mute"/>
+                                                    <ComboBoxItem Content="Audio Device Setup One"/>
+                                                    <ComboBoxItem Content="Audio Device Setup Two"/>
+                                                    <ComboBoxItem Content="Audio Device Setup Three"/>
+                                                    <ComboBoxItem Content="Toggle Focus Application"/>
                                                 </ComboBox>
 
                                                 <TextBox Grid.Column="2"
@@ -125,7 +130,65 @@
                     </Border>
                 </StackPanel>
 
-                <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,0">
+
+                <StackPanel Grid.Row="1">
+                    <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20">
+
+                        <!-- Long button presses -->
+                        <ItemsControl x:Name="LongButtonMappingsItemsControl" Margin="0,8,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="4"
+                                        Padding="12"
+                                        Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="80"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="100"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0"
+                                                    Text="{Binding ButtonIndexDisplay}"
+                                                    Style="{StaticResource LabelTextBlock}"
+                                                    VerticalAlignment="Center"/>
+
+                                            <ComboBox Grid.Column="1"
+                                                  SelectedIndex="{Binding ActionIndex, Mode=TwoWay}"
+                                                  Style="{StaticResource ModernComboBox}"
+                                                  Margin="8,0"
+                                                  SelectionChanged="ButtonAction_SelectionChanged">
+                                                <ComboBoxItem Content="None"/>
+                                                <ComboBoxItem Content="Media Play/Pause"/>
+                                                <ComboBoxItem Content="Media Next"/>
+                                                <ComboBoxItem Content="Media Previous"/>
+                                                <ComboBoxItem Content="Media Stop"/>
+                                                <ComboBoxItem Content="Mute Channel"/>
+                                                <ComboBoxItem Content="Global Mute"/>
+                                                <ComboBoxItem Content="Audio Device Setup One"/>
+                                                <ComboBoxItem Content="Audio Device Setup Two"/>
+                                                <ComboBoxItem Content="Audio Device Setup Three"/>
+                                                <ComboBoxItem Content="Toggle Focus Application"/>
+                                            </ComboBox>
+
+                                            <TextBox Grid.Column="2"
+                                                 Text="{Binding TargetChannelDisplay, Mode=TwoWay}"
+                                                 IsEnabled="{Binding NeedsTargetChannel}"
+                                                 ToolTip="Target channel (1-based)"
+                                                 PreviewTextInput="NumberValidationTextBox"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                    </Border>
+                </StackPanel>
+
+
+                <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,0">
                     <Button Content="Save" Style="{StaticResource ModernButton}" Click="Save_Click" Margin="0,0,10,0"/>
                     <Button Content="Cancel" Style="{StaticResource ModernButton}" Click="Cancel_Click"/>
                 </StackPanel>

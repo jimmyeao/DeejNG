@@ -1,9 +1,4 @@
 ﻿using DeejNG.Models;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace DeejNG.Classes
 {
@@ -57,6 +52,7 @@ namespace DeejNG.Classes
 
         /// <summary>
         /// Gets or sets the audio targets assigned to each slider.
+        /// Extra Note, in here we have also the applications
         /// </summary>
         public List<List<AudioTarget>> SliderTargets { get; set; } = new();
 
@@ -149,9 +145,102 @@ namespace DeejNG.Classes
         public int BaudRate { get; set; } = 9600;
 
         /// <summary>
+        /// Gets or sets the Vendor ID of the HID device.
+        /// </summary>
+        public int HidVendorId { get; set; }
+
+        /// <summary>
+        /// Gets or sets the Product ID of the HID device.
+        /// </summary>
+        public int HidProductId { get; set; }
+
+
+
+
+
+        /// <summary>
+        /// Gets or sets audio device preset 1 friendly name.
+        /// </summary>
+        public string AudioDeviceOneFriendlyName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets audio device preset 1 device ID.
+        /// </summary>
+        public string AudioDeviceOneId { get; set; } = string.Empty;
+
+
+
+        /// <summary>
+        /// Gets or sets microhpone device preset 1 friendly name.
+        /// </summary>
+        public string MicrophoneDeviceOneFriendlyName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets microhpone device preset 1 device ID.
+        /// </summary>
+        public string MicrophoneDeviceOneId { get; set; } = string.Empty;
+
+
+
+
+        /// <summary>
+        /// Gets or sets audio device preset 2 friendly name.
+        /// </summary>
+        public string AudioDeviceTwoFriendlyName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets audio device preset 2 device ID.
+        /// </summary>
+        public string AudioDeviceTwoId { get; set; } = string.Empty;
+
+
+
+        /// <summary>
+        /// Gets or sets microhpone device preset 2 friendly name.
+        /// </summary>
+        public string MicrophoneDeviceTwoFriendlyName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets microhpone device preset 2 device ID.
+        /// </summary>
+        public string MicrophoneDeviceTwoId { get; set; } = string.Empty;
+
+
+
+
+
+        /// <summary>
+        /// Gets or sets audio device preset 3 friendly name.
+        /// </summary>
+        public string AudioDeviceThreeFriendlyName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets audio device preset 3 device ID.
+        /// </summary>
+        public string AudioDeviceThreeId { get; set; } = string.Empty;
+
+
+
+        /// <summary>
+        /// Gets or sets microhpone device preset 3 friendly name.
+        /// </summary>
+        public string MicrophoneDeviceThreeFriendlyName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets microhpone device preset 3 device ID.
+        /// </summary>
+        public string MicrophoneDeviceThreeId { get; set; } = string.Empty;
+
+
+
+
+
+
+        /// <summary>
         /// Gets or sets the list of applications excluded from "Unmapped Applications" control.
         /// These apps will not be affected by the unmapped slider even if they aren't assigned to any slider.
         /// </summary>
+
         public List<string> ExcludedFromUnmapped { get; set; } = new();
         #endregion Public Properties
     }

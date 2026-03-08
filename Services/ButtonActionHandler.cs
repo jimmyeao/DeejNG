@@ -1,7 +1,6 @@
+using DeejNG.Classes;
 using DeejNG.Dialogs;
 using DeejNG.Models;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
@@ -30,6 +29,10 @@ namespace DeejNG.Services
 
         private readonly List<ChannelControl> _channelControls;
 
+        private readonly DefaultAudioDeviceSwitcher _deviceSwitcher;
+
+        private readonly AppSettingsManager _appSettingsManager;
+
         #endregion Private Fields
 
         #region Public Constructors
@@ -38,9 +41,11 @@ namespace DeejNG.Services
         /// Initializes a new instance of the ButtonActionHandler class.
         /// </summary>
         /// <param name="channelControls">Reference to the channel controls for mute operations</param>
-        public ButtonActionHandler(List<ChannelControl> channelControls)
+        public ButtonActionHandler(List<ChannelControl> channelControls, DefaultAudioDeviceSwitcher deviceSwitcher, AppSettingsManager appSettingsManager)
         {
             _channelControls = channelControls ?? throw new ArgumentNullException(nameof(channelControls));
+            _deviceSwitcher = deviceSwitcher ?? throw new ArgumentNullException(nameof(deviceSwitcher));
+            _appSettingsManager = appSettingsManager ?? throw new ArgumentNullException(nameof(appSettingsManager));
         }
 
         #endregion Public Constructors
@@ -56,49 +61,13 @@ namespace DeejNG.Services
             if (mapping == null || mapping.Action == ButtonAction.None)
                 return;
 
-
-
-            try
+            if (mapping.PressType == ButtonPressType.Short)
             {
-                switch (mapping.Action)
-                {
-                    case ButtonAction.MediaPlayPause:
-                        SendMediaKey(VK_MEDIA_PLAY_PAUSE);
-                        break;
-
-                    case ButtonAction.MediaNext:
-                        SendMediaKey(VK_MEDIA_NEXT_TRACK);
-                        break;
-
-                    case ButtonAction.MediaPrevious:
-                        SendMediaKey(VK_MEDIA_PREV_TRACK);
-                        break;
-
-                    case ButtonAction.MediaStop:
-                        SendMediaKey(VK_MEDIA_STOP);
-                        break;
-
-                    case ButtonAction.MuteChannel:
-                        ToggleChannelMute(mapping.TargetChannelIndex);
-                        break;
-
-                    case ButtonAction.GlobalMute:
-                        ToggleGlobalMute();
-                        break;
-
-                    case ButtonAction.ToggleInputOutput:
-                        // Not currently implemented - InputMode is not in ChannelControl
-
-                        break;
-
-                    default:
-
-                        break;
-                }
+                ExecuteShortPressAction(mapping);
             }
-            catch (Exception ex)
+            else if (mapping.PressType == ButtonPressType.Long)
             {
-
+                ExecuteLongPressAction(mapping);
             }
         }
 
@@ -162,8 +131,184 @@ namespace DeejNG.Services
             {
                 channel.SetMuted(newMuteState, applyToAudio: true);
             }
+        }
+
+        private void ExecuteShortPressAction(ButtonMapping mapping)
+        {
+            try
+            {
+                switch (mapping.Action)
+                {
+                    case ButtonAction.MediaPlayPause:
+                        SendMediaKey(VK_MEDIA_PLAY_PAUSE);
+                        break;
+
+                    case ButtonAction.MediaNext:
+                        SendMediaKey(VK_MEDIA_NEXT_TRACK);
+                        break;
+
+                    case ButtonAction.MediaPrevious:
+                        SendMediaKey(VK_MEDIA_PREV_TRACK);
+                        break;
+
+                    case ButtonAction.MediaStop:
+                        SendMediaKey(VK_MEDIA_STOP);
+                        break;
+
+                    case ButtonAction.MuteChannel:
+                        ToggleChannelMute(mapping.TargetChannelIndex);
+                        break;
+
+                    case ButtonAction.GlobalMute:
+                        ToggleGlobalMute();
+                        break;
+
+                    case ButtonAction.ToggleInputOutput:
+                        // Not currently implemented - InputMode is not in ChannelControl
+
+                        break;
+                    case ButtonAction.ToggleFocusApplication:
+                        ToggleCurrentFocusApplication(mapping.TargetChannelIndex);
+                        break;
+
+                    case ButtonAction.AudioDeviceSetupOne:
+                        _deviceSwitcher.TrySetDefaultOutput(_appSettingsManager.AppSettings.AudioDeviceOneId, _appSettingsManager.AppSettings.AudioDeviceOneFriendlyName);
+                        _deviceSwitcher.TrySetDefaultInput(_appSettingsManager.AppSettings.MicrophoneDeviceOneId, _appSettingsManager.AppSettings.MicrophoneDeviceOneFriendlyName);
+                        break;
+
+                    case ButtonAction.AudioDeviceSetupTwo:
+                        _deviceSwitcher.TrySetDefaultOutput(_appSettingsManager.AppSettings.AudioDeviceTwoId, _appSettingsManager.AppSettings.AudioDeviceTwoFriendlyName);
+                        _deviceSwitcher.TrySetDefaultInput(_appSettingsManager.AppSettings.MicrophoneDeviceTwoId, _appSettingsManager.AppSettings.MicrophoneDeviceTwoFriendlyName);
+                        break;
+
+                    case ButtonAction.AudioDeviceSetupThree:
+                        _deviceSwitcher.TrySetDefaultOutput(_appSettingsManager.AppSettings.AudioDeviceThreeId, _appSettingsManager.AppSettings.AudioDeviceThreeFriendlyName);
+                        _deviceSwitcher.TrySetDefaultInput(_appSettingsManager.AppSettings.MicrophoneDeviceThreeId, _appSettingsManager.AppSettings.MicrophoneDeviceThreeFriendlyName);
+                        break;
+
+                    default:
+
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Exeption trying to do button action: {ex}");
+            }
+        }
+
+        private void ExecuteLongPressAction(ButtonMapping mapping)
+        {
+            try
+            {
+                switch (mapping.Action)
+                {
+                    case ButtonAction.MediaPlayPause:
+                        SendMediaKey(VK_MEDIA_PLAY_PAUSE);
+                        break;
+
+                    case ButtonAction.MediaNext:
+                        SendMediaKey(VK_MEDIA_NEXT_TRACK);
+                        break;
+
+                    case ButtonAction.MediaPrevious:
+                        SendMediaKey(VK_MEDIA_PREV_TRACK);
+                        break;
+
+                    case ButtonAction.MediaStop:
+                        SendMediaKey(VK_MEDIA_STOP);
+                        break;
+
+                    case ButtonAction.MuteChannel:
+                        ToggleChannelMute(mapping.TargetChannelIndex);
+                        break;
+
+                    case ButtonAction.GlobalMute:
+                        ToggleGlobalMute();
+                        break;
+
+                    case ButtonAction.ToggleInputOutput:
+                        // Not currently implemented - InputMode is not in ChannelControl
+
+                        break;
+                    case ButtonAction.ToggleFocusApplication:
+                        ToggleCurrentFocusApplication(mapping.TargetChannelIndex);
+                        break;
+
+                    case ButtonAction.AudioDeviceSetupOne:
+                        _deviceSwitcher.TrySetDefaultOutput(_appSettingsManager.AppSettings.AudioDeviceOneId, _appSettingsManager.AppSettings.AudioDeviceOneFriendlyName);
+                        _deviceSwitcher.TrySetDefaultInput(_appSettingsManager.AppSettings.MicrophoneDeviceOneId, _appSettingsManager.AppSettings.MicrophoneDeviceOneFriendlyName);
+                        break;
+
+                    case ButtonAction.AudioDeviceSetupTwo:
+                        _deviceSwitcher.TrySetDefaultOutput(_appSettingsManager.AppSettings.AudioDeviceTwoId, _appSettingsManager.AppSettings.AudioDeviceTwoFriendlyName);
+                        _deviceSwitcher.TrySetDefaultInput(_appSettingsManager.AppSettings.MicrophoneDeviceTwoId, _appSettingsManager.AppSettings.MicrophoneDeviceTwoFriendlyName);
+                        break;
+
+                    case ButtonAction.AudioDeviceSetupThree:
+                        _deviceSwitcher.TrySetDefaultOutput(_appSettingsManager.AppSettings.AudioDeviceThreeId, _appSettingsManager.AppSettings.AudioDeviceThreeFriendlyName);
+                        _deviceSwitcher.TrySetDefaultInput(_appSettingsManager.AppSettings.MicrophoneDeviceThreeId, _appSettingsManager.AppSettings.MicrophoneDeviceThreeFriendlyName);
+                        break;
+
+                    default:
+
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Exeption trying to do button action: {ex}");
+            }
+        }
+
+        private void ToggleCurrentFocusApplication(int channelIndex)
+        {
+            string currentFocus = AudioUtilities.GetCurrentFocusAudioTarget();
+
+            if (currentFocus == null || currentFocus.Equals(String.Empty))
+            {
+                Debug.WriteLine("No audio focus target detected.");
+                return;
+            }
+
+            // This might potentially break because we get a reference of the list itself back, not sure if editing this will break other async code. Otherwise we have to clone it.
+            var audioTargets = _channelControls[channelIndex].AudioTargets;
+
+            if (audioTargets == null)
+            {
+                audioTargets = new List<AudioTarget>();
+            }
+
+            int removeIndex = -1;
+            int count = 0;
+
+            foreach (AudioTarget target in audioTargets)
+            {
+
+                if (currentFocus.Equals(target.Name))
+                {
+                    removeIndex = count;
+                    break;
+                }
+                count++;
+            }
 
 
+            if (removeIndex == -1)
+            {
+                audioTargets.Add(new AudioTarget { Name = currentFocus, IsInputDevice = false, IsOutputDevice = false });
+                AudioCueService.PlayEnableCue();
+                Debug.WriteLine("Added " + currentFocus);
+            }
+            else
+            {
+                audioTargets.RemoveAt(removeIndex);
+                AudioCueService.PlayDisableCue();
+                Debug.WriteLine("Removed " + currentFocus);
+            }
+
+            _channelControls[channelIndex].AudioTargets = audioTargets;
+            _channelControls[channelIndex].RaiseTargetChanged();
         }
 
         #endregion Private Methods

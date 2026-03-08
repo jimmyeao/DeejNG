@@ -9,7 +9,7 @@ namespace DeejNG.Models
     {
         #region Private Fields
 
-        private bool _isPressed;
+        private ButtonPressType _pressType;
 
         #endregion Private Fields
 
@@ -31,7 +31,7 @@ namespace DeejNG.Models
         {
             get
             {
-                if (!IsPressed)
+                if (PressType == ButtonPressType.None)
                     return null;
 
                 return Action switch
@@ -49,19 +49,21 @@ namespace DeejNG.Models
 
         public int ButtonIndex { get; set; }
         public string Icon { get; set; } = string.Empty;
-        public bool IsPressed
+        public ButtonPressType PressType
         {
-            get => _isPressed;
+            get => _pressType;
             set
             {
-                if (_isPressed != value)
+                if (_pressType != value)
                 {
-                    _isPressed = value;
-                    OnPropertyChanged(nameof(IsPressed));
+                    _pressType = value;
+                    OnPropertyChanged(nameof(PressType));
                     OnPropertyChanged(nameof(ActiveBackgroundColor));
                 }
             }
         }
+
+        public bool IsPressed => PressType != ButtonPressType.None;
 
         public string Label { get; set; } = string.Empty;
         public string ToolTip { get; set; } = string.Empty;

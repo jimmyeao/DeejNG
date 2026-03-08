@@ -19,7 +19,8 @@ namespace DeejNG.Dialogs
         #region Private Fields
 
         private AppSettings _settings;
-        private ObservableCollection<ButtonMappingViewModel> _buttonMappings = new();
+        private ObservableCollection<ButtonMappingViewModel> _shortButtonMappings = new();
+        private ObservableCollection<ButtonMappingViewModel> _longButtonMappings = new();
 
         #endregion
 
@@ -103,29 +104,48 @@ namespace DeejNG.Dialogs
         /// </summary>
         private void LoadButtonMappingSlots()
         {
-            _buttonMappings.Clear();
+            _shortButtonMappings.Clear();
+            _longButtonMappings.Clear();
 
             // Show all 8 button slots (users can configure ahead of time)
             const int maxButtons = 8;
 
             for (int i = 0; i < maxButtons; i++)
             {
-                var existingMapping = _settings?.ButtonMappings?.FirstOrDefault(m => m.ButtonIndex == i);
+                // Wessel: here the problem is that for our long press we initially get the short press setting, we need to adjust this
+                var existingMappingShort = _settings?.ButtonMappings?.FirstOrDefault(m => m.ButtonIndex == i && m.PressType == ButtonPressType.Short);
 
-                var viewModel = new ButtonMappingViewModel
+                var viewModelShortPress = new ButtonMappingViewModel
                 {
                     ButtonIndex = i,
-                    Action = existingMapping?.Action ?? ButtonAction.None,
-                    TargetChannelIndex = existingMapping?.TargetChannelIndex ?? -1
+                    Action = existingMappingShort?.Action ?? ButtonAction.None,
+                    TargetChannelIndex = existingMappingShort?.TargetChannelIndex ?? -1
+                };
+                _shortButtonMappings.Add(viewModelShortPress);
+
+
+                var existingMappingLong = _settings?.ButtonMappings?.FirstOrDefault(m => m.ButtonIndex == i && m.PressType == ButtonPressType.Long);
+
+                var viewModelLongPress = new ButtonMappingViewModel
+                {
+                    ButtonIndex = i,
+                    Action = existingMappingLong?.Action ?? ButtonAction.None,
+                    TargetChannelIndex = existingMappingLong?.TargetChannelIndex ?? -1
                 };
 
-                _buttonMappings.Add(viewModel);
+                _longButtonMappings.Add(viewModelLongPress);
             }
 
             // Set ItemsSource if the control is initialized
-            if (ButtonMappingsItemsControl != null)
+            if (ShortButtonMappingsItemsControl != null)
             {
-                ButtonMappingsItemsControl.ItemsSource = _buttonMappings;
+                ShortButtonMappingsItemsControl.ItemsSource = _shortButtonMappings;
+            }
+
+            // Set ItemsSource if the control is initialized
+            if (LongButtonMappingsItemsControl != null)
+            {
+                LongButtonMappingsItemsControl.ItemsSource = _longButtonMappings;
             }
         }
 
@@ -156,11 +176,24 @@ namespace DeejNG.Dialogs
             _settings.ButtonMappings = new List<ButtonMapping>();
 
             // Only save button mappings that have actions configured
-            foreach (var viewModel in _buttonMappings.Where(vm => vm.Action != ButtonAction.None))
+            foreach (var viewModel in _shortButtonMappings.Where(vm => vm.Action != ButtonAction.None))
             {
                 _settings.ButtonMappings.Add(new ButtonMapping
                 {
                     ButtonIndex = viewModel.ButtonIndex,
+                    PressType = ButtonPressType.Short,
+                    Action = viewModel.Action,
+                    TargetChannelIndex = viewModel.TargetChannelIndex,
+                    FriendlyName = $"Button {viewModel.ButtonIndex + 1}"
+                });
+            }
+
+            foreach (var viewModel in _longButtonMappings.Where(vm => vm.Action != ButtonAction.None))
+            {
+                _settings.ButtonMappings.Add(new ButtonMapping
+                {
+                    ButtonIndex = viewModel.ButtonIndex,
+                    PressType = ButtonPressType.Long,
                     Action = viewModel.Action,
                     TargetChannelIndex = viewModel.TargetChannelIndex,
                     FriendlyName = $"Button {viewModel.ButtonIndex + 1}"
@@ -245,7 +278,7 @@ namespace DeejNG.Dialogs
                 }
             }
 
-            public bool NeedsTargetChannel => _action == ButtonAction.MuteChannel;
+            public bool NeedsTargetChannel => _action == ButtonAction.MuteChannel || _action == ButtonAction.ToggleFocusApplication;
 
             public event PropertyChangedEventHandler? PropertyChanged;
 

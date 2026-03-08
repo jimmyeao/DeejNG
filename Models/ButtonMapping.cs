@@ -25,5 +25,10 @@ namespace DeejNG.Models
         /// Gets or sets a friendly name for this button mapping.
         /// </summary>
         public string FriendlyName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the type of button press, indicating whether type of button press has been pressed. (Short,Long, etc.)
+        /// </summary>
+        public ButtonPressType PressType { get; set; } = ButtonPressType.Short;
     }
 }

@@ -1,12 +1,8 @@
 using DeejNG.Classes;
 using DeejNG.Models;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
-using System.Threading.Tasks;
 
 namespace DeejNG.Services
 {
@@ -157,7 +153,6 @@ namespace DeejNG.Services
                     // Load existing profiles
                     var json = File.ReadAllText(ProfilesPath);
                     _profileCollection = JsonSerializer.Deserialize<ProfileCollection>(json) ?? new ProfileCollection();
-
 
                 }
                 else

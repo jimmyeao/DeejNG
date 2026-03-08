@@ -16,10 +16,18 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="Assets\Sounds\disable.wav" />
+    <None Remove="Assets\Sounds\enable.wav" />
     <None Remove="Square150x150Logo.scale-200.ico" />
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="Assets\Sounds\disable.wav">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\Sounds\enable.wav">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="Square150x150Logo.scale-200.ico">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
@@ -27,6 +35,7 @@
 
   <ItemGroup>
     <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
+    <PackageReference Include="HidSharp" Version="2.6.4" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="NAudio.Core" Version="2.2.1" />
     <PackageReference Include="NAudio.Extras" Version="2.2.1" />
