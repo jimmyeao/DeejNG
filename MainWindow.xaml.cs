@@ -1332,7 +1332,11 @@ namespace DeejNG
                 control.AudioTargets = targetsForThisControl;
                 control.SetMuted(false, applyToAudio: false);
 
-                control.TargetChanged += (_, _) => SaveSettings();
+                control.TargetChanged += (_, _) =>
+                {
+                    SaveSettings();
+                    SendWebSocketChannelNames();
+                };
 
                 control.VolumeOrMuteChanged += (targets, vol, mute) =>
                 {
@@ -2518,6 +2522,13 @@ namespace DeejNG
             attemptTimer.Start();
         }
 
+        private void SendWebSocketChannelNames()
+        {
+            if (_settingsManager.AppSettings.ConnectionMode != ConnectionMode.WebSocket || !_wsManager.IsConnected) return;
+            var names = _channelControls.Take(5).Select(c => GetChannelLabel(c)).ToArray();
+            _ = _wsManager.SendConfigAsync(names);
+        }
+
         private async Task SendWebSocketInitialStateAsync()
         {
             // Send channel names (use first target's label per channel)
@@ -3132,7 +3143,10 @@ namespace DeejNG
 
         private void UpdateMeters(object? sender, EventArgs e)
         {
-            if (!_metersEnabled || _isClosing) return;
+            if (_isClosing) return;
+
+            bool wsVuNeeded = _settingsManager.AppSettings.ConnectionMode == ConnectionMode.WebSocket && _wsManager.IsConnected;
+            if (!_metersEnabled && !wsVuNeeded) return;
 
             const float visualGain = 1.5f;
             const float systemCalibrationFactor = 2.0f;
@@ -3164,13 +3178,6 @@ namespace DeejNG
                 }
 
                 if (sessions == null) return;
-
-                // Send VU levels to OledDeej device if connected via WebSocket
-                if (_settingsManager.AppSettings.ConnectionMode == ConnectionMode.WebSocket && _wsManager.IsConnected)
-                {
-                    var vuLevels = _channelControls.Take(5).Select(c => c.MeterLevel).ToArray();
-                    _ = _wsManager.SendVuAsync(vuLevels);
-                }
 
                 foreach (var ctrl in _channelControls)
                 {
@@ -3276,6 +3283,13 @@ namespace DeejNG
 
                         ctrl.UpdateAudioMeter(0);
                     }
+                }
+
+                // Send freshly-computed VU levels to OledDeej device
+                if (wsVuNeeded)
+                {
+                    var vuLevels = _channelControls.Take(5).Select(c => c.MeterLevel).ToArray();
+                    _ = _wsManager.SendVuAsync(vuLevels);
                 }
             }
             catch (Exception ex)
