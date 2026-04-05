@@ -2529,6 +2529,96 @@ namespace DeejNG
             _ = _wsManager.SendConfigAsync(names);
         }
 
+        /// <summary>
+        /// Reads the actual current Windows volume (0–1) and mute state for a channel's targets.
+        /// Returns (volume, muted). Uses the first target that returns a valid reading.
+        /// Falls back to the current slider position if no target can be read.
+        /// </summary>
+        private (float volume, bool muted) ReadWindowsVolumeForChannel(ChannelControl ctrl)
+        {
+            if (ctrl.AudioTargets == null || ctrl.AudioTargets.Count == 0)
+                return (ctrl.CurrentVolume, ctrl.IsMuted);
+
+            foreach (var target in ctrl.AudioTargets)
+            {
+                try
+                {
+                    if (string.Equals(target.Name, "system", StringComparison.OrdinalIgnoreCase))
+                    {
+                        float vol = _systemVolume?.MasterVolumeLevelScalar ?? ctrl.CurrentVolume;
+                        bool muted = _systemVolume?.Mute ?? ctrl.IsMuted;
+                        return (Math.Clamp(vol, 0f, 1f), muted);
+                    }
+
+                    if (target.IsInputDevice)
+                    {
+                        var dev = _deviceManager.GetInputDevice(target.Name);
+                        if (dev != null)
+                        {
+                            float vol = dev.AudioEndpointVolume.MasterVolumeLevelScalar;
+                            bool muted = dev.AudioEndpointVolume.Mute;
+                            return (Math.Clamp(vol, 0f, 1f), muted);
+                        }
+                        continue;
+                    }
+
+                    if (target.IsOutputDevice)
+                    {
+                        var dev = _deviceManager.GetOutputDevice(target.Name);
+                        if (dev != null)
+                        {
+                            float vol = dev.AudioEndpointVolume.MasterVolumeLevelScalar;
+                            bool muted = dev.AudioEndpointVolume.Mute;
+                            return (Math.Clamp(vol, 0f, 1f), muted);
+                        }
+                        continue;
+                    }
+
+                    // App session — scan audio sessions for a matching process
+                    if (!string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                            var sessions = device.AudioSessionManager.Sessions;
+                            string targetLower = target.Name.ToLowerInvariant();
+
+                            for (int i = 0; i < sessions.Count; i++)
+                            {
+                                try
+                                {
+                                    var session = sessions[i];
+                                    if (session == null) continue;
+                                    int pid = (int)session.GetProcessID;
+                                    string procName = AudioUtilities.GetProcessNameSafely(pid);
+                                    if (string.IsNullOrEmpty(procName)) continue;
+
+                                    string procLower = procName.ToLowerInvariant();
+                                    string procNoExt = System.IO.Path.GetFileNameWithoutExtension(procLower);
+                                    string targetNoExt = System.IO.Path.GetFileNameWithoutExtension(targetLower);
+
+                                    if (procLower == targetLower || procNoExt == targetNoExt ||
+                                        procLower.Contains(targetNoExt) || targetNoExt.Contains(procNoExt))
+                                    {
+                                        float vol = session.SimpleAudioVolume.Volume;
+                                        bool muted = session.SimpleAudioVolume.Mute;
+                                        return (Math.Clamp(vol, 0f, 1f), muted);
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+            }
+
+            // No target matched — fall back to current slider position
+            return (ctrl.CurrentVolume, ctrl.IsMuted);
+        }
+
         private async Task SendWebSocketInitialStateAsync()
         {
             // Send channel names (use first target's label per channel)
@@ -2537,16 +2627,27 @@ namespace DeejNG
                 .ToArray();
             await _wsManager.SendConfigAsync(names);
 
-            // Send current volumes (0–100) and mute states so device encoders sync
-            var vols = _channelControls.Take(5)
-                .Select(c => (int)Math.Round(c.CurrentVolume * 100f))
-                .ToArray();
-            var mutes = _channelControls.Take(5)
-                .Select(c => c.IsMuted)
-                .ToArray();
+            // Read actual Windows volumes for each channel and sync sliders + device
+            var vols = new int[Math.Min(_channelControls.Count, 5)];
+            var mutes = new bool[vols.Length];
+
+            for (int i = 0; i < vols.Length; i++)
+            {
+                var ctrl = _channelControls[i];
+                var (windowsVol, windowsMuted) = ReadWindowsVolumeForChannel(ctrl);
+
+                // Sync the slider to match the actual Windows volume
+                ctrl.SmoothAndSetVolume(windowsVol, suppressEvent: true, disableSmoothing: true);
+                if (ctrl.IsMuted != windowsMuted)
+                    ctrl.SetMuted(windowsMuted, applyToAudio: false);
+
+                vols[i] = (int)Math.Round(windowsVol * 100f);
+                mutes[i] = windowsMuted;
+            }
+
             await _wsManager.SendStateAsync(vols, mutes);
 
-            // Now allow volume application (device state is seeded)
+            // Allow volume application now that device state is seeded
             _allowVolumeApplication = true;
             _isInitializing = false;
             SyncMuteStates();
