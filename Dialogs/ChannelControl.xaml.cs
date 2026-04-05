@@ -181,6 +181,9 @@ namespace DeejNG.Dialogs
 
         public bool IsMuted => _isMuted;
 
+        /// <summary>Current VU meter level (0.0–1.0) for sending to external devices.</summary>
+        public float MeterLevel => _meterLevel;
+
         public string TargetExecutable =>
              _audioTargets.FirstOrDefault()?.Name ?? "";
 

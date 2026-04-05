@@ -62,6 +62,8 @@ namespace DeejNG
 
         private readonly SerialConnectionManager _serialManager;
 
+        private readonly WebSocketConnectionManager _wsManager;
+
         private readonly AppSettingsManager _settingsManager;
 
         private readonly ISystemIntegrationService _systemIntegrationService;
@@ -155,6 +157,7 @@ namespace DeejNG
             _settingsManager = new AppSettingsManager();
             _profileManager = new ProfileManager(_settingsManager);
             _serialManager = new SerialConnectionManager();
+            _wsManager = new WebSocketConnectionManager();
             _timerCoordinator = new TimerCoordinator();
             _overlayService = ServiceLocator.Get<IOverlayService>();
             _systemIntegrationService = ServiceLocator.Get<ISystemIntegrationService>();
@@ -196,6 +199,7 @@ namespace DeejNG
             _timerCoordinator.SerialReconnectAttempt += SerialReconnectTimer_Tick;
             _timerCoordinator.SerialWatchdogCheck += SerialWatchdogTimer_Tick;
             _timerCoordinator.PositionSave += PositionSaveTimer_Tick;
+            _timerCoordinator.WsReconnectAttempt += WsReconnectTimer_Tick;
 
             // Setup serial manager events
             _serialManager.DataReceived += HandleSliderData;
@@ -243,6 +247,28 @@ namespace DeejNG
                 }, DispatcherPriority.Background);
             };
 
+            // Setup WebSocket manager events
+            _wsManager.Connected += () =>
+            {
+                Dispatcher.BeginInvoke(async () =>
+                {
+                    _timerCoordinator.StopWsReconnect();
+                    UpdateConnectionStatus();
+                    await SendWebSocketInitialStateAsync();
+                }, DispatcherPriority.Background);
+            };
+            _wsManager.Disconnected += () =>
+            {
+                _allowVolumeApplication = false;
+                Dispatcher.BeginInvoke(() =>
+                {
+                    UpdateConnectionStatus();
+                    if (_wsManager.ShouldAttemptReconnect)
+                        _timerCoordinator.StartWsReconnect();
+                }, DispatcherPriority.Background);
+            };
+            _wsManager.UpdateReceived += HandleWebSocketUpdate;
+
             StartSessionCacheUpdater();
 
             // Start timers
@@ -276,8 +302,11 @@ namespace DeejNG
 
             _timerCoordinator.StartForceCleanup();
 
-            // Setup automatic serial connection
-            SetupAutomaticSerialConnection();
+            // Setup device connection based on configured mode
+            if (_settingsManager.AppSettings.ConnectionMode == ConnectionMode.WebSocket)
+                SetupAutomaticWebSocketConnection();
+            else
+                SetupAutomaticSerialConnection();
 
             // Initialize theme selector
             InitializeThemeSelector();
@@ -521,6 +550,26 @@ namespace DeejNG
             // Update excluded apps list for unmapped applications feature
             _settingsManager.AppSettings.ExcludedFromUnmapped = newSettings.ExcludedFromUnmapped ?? new List<string>();
 
+            // Handle connection mode changes (Serial ↔ WebSocket)
+            bool modeChanged = _settingsManager.AppSettings.ConnectionMode != newSettings.ConnectionMode;
+            _settingsManager.AppSettings.ConnectionMode = newSettings.ConnectionMode;
+            _settingsManager.AppSettings.WebSocketHost = newSettings.WebSocketHost;
+            _settingsManager.AppSettings.WebSocketPort = newSettings.WebSocketPort;
+
+            if (modeChanged)
+            {
+                _serialManager.ManualDisconnect();
+                _wsManager.ManualDisconnect();
+                _timerCoordinator.StopSerialReconnect();
+                _timerCoordinator.StopWsReconnect();
+                _allowVolumeApplication = false;
+
+                if (newSettings.ConnectionMode == ConnectionMode.WebSocket)
+                    SetupAutomaticWebSocketConnection();
+                else
+                    SetupAutomaticSerialConnection();
+            }
+
             // Reconfigure button layout if button count changed
             ConfigureButtonLayout();
 
@@ -584,6 +633,7 @@ namespace DeejNG
 
             // Dispose managers
             _serialManager?.Dispose();
+            _wsManager?.Dispose();
             _deviceManager?.Dispose();
             _timerCoordinator?.Dispose();
 
@@ -2435,6 +2485,134 @@ namespace DeejNG
             settingsWindow.Show();
         }
 
+        private void SetupAutomaticWebSocketConnection()
+        {
+            var settings = _settingsManager.AppSettings;
+            _wsManager.Configure(settings.WebSocketHost, settings.WebSocketPort);
+
+            int attempts = 0;
+            const int maxAttempts = 3;
+            var attemptTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+
+            attemptTimer.Tick += async (s, e) =>
+            {
+                attempts++;
+                await _wsManager.ConnectAsync();
+
+                if (_wsManager.IsConnected)
+                {
+                    attemptTimer.Stop();
+                    Dispatcher.BeginInvoke(() => UpdateConnectionStatus(), DispatcherPriority.Background);
+                    return;
+                }
+
+                if (attempts >= maxAttempts)
+                {
+                    attemptTimer.Stop();
+                    if (_wsManager.ShouldAttemptReconnect)
+                        _timerCoordinator.StartWsReconnect();
+                    Dispatcher.BeginInvoke(() => UpdateConnectionStatus(), DispatcherPriority.Background);
+                }
+            };
+
+            attemptTimer.Start();
+        }
+
+        private async Task SendWebSocketInitialStateAsync()
+        {
+            // Send channel names (use first target's label per channel)
+            var names = _channelControls.Take(5)
+                .Select(c => GetChannelLabel(c))
+                .ToArray();
+            await _wsManager.SendConfigAsync(names);
+
+            // Send current volumes (0–100) and mute states so device encoders sync
+            var vols = _channelControls.Take(5)
+                .Select(c => (int)Math.Round(c.CurrentVolume * 100f))
+                .ToArray();
+            var mutes = _channelControls.Take(5)
+                .Select(c => c.IsMuted)
+                .ToArray();
+            await _wsManager.SendStateAsync(vols, mutes);
+
+            // Now allow volume application (device state is seeded)
+            _allowVolumeApplication = true;
+            _isInitializing = false;
+            SyncMuteStates();
+
+            if (!_timerCoordinator.IsMetersRunning)
+                _timerCoordinator.StartMeters();
+        }
+
+        private void HandleWebSocketUpdate(int[] vols, bool[] mutes)
+        {
+            // Raised on threadpool — dispatch to UI
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (!_allowVolumeApplication || _isClosing) return;
+
+                int count = Math.Min(vols.Length, Math.Min(_channelControls.Count, 5));
+                for (int i = 0; i < count; i++)
+                {
+                    var ctrl = _channelControls[i];
+
+                    float level = Math.Clamp(vols[i] / 100f, 0f, 1f);
+                    if (_useExponentialVolume)
+                        level = (MathF.Pow(_exponentialVolumeFactor, level) / (_exponentialVolumeFactor - 1)) - (1 / (_exponentialVolumeFactor - 1));
+
+                    float currentVolume = ctrl.CurrentVolume;
+                    if (Math.Abs(currentVolume - level) >= 0.005f)
+                    {
+                        ctrl.SmoothAndSetVolume(level, suppressEvent: false, disableSmoothing: _disableSmoothing);
+                        ApplyVolumeToTargets(ctrl, ctrl.AudioTargets, level);
+                        ShowVolumeOverlay();
+                    }
+
+                    // Sync mute state from device
+                    if (mutes.Length > i && ctrl.IsMuted != mutes[i])
+                        ctrl.SetMuted(mutes[i], applyToAudio: true);
+                }
+            });
+        }
+
+        private async void WsReconnectTimer_Tick(object? sender, EventArgs e)
+        {
+            if (_isClosing || !_wsManager.ShouldAttemptReconnect)
+            {
+                _timerCoordinator.StopWsReconnect();
+                return;
+            }
+
+            var settings = _settingsManager.AppSettings;
+            _wsManager.Configure(settings.WebSocketHost, settings.WebSocketPort);
+            await _wsManager.ConnectAsync();
+
+            if (_wsManager.IsConnected)
+                _timerCoordinator.StopWsReconnect();
+        }
+
+        /// <summary>
+        /// Triggers a WebSocket connect/disconnect from the Settings window.
+        /// </summary>
+        public async void TriggerWebSocketConnect(string host, int port)
+        {
+            _settingsManager.AppSettings.WebSocketHost = host;
+            _settingsManager.AppSettings.WebSocketPort = port;
+            _wsManager.Configure(host, port);
+            _timerCoordinator.StopWsReconnect();
+
+            if (_wsManager.IsConnected)
+            {
+                _wsManager.ManualDisconnect();
+                UpdateConnectionStatus();
+            }
+            else
+            {
+                await _wsManager.ConnectAsync();
+                UpdateConnectionStatus();
+            }
+        }
+
         private void SetupAutomaticSerialConnection()
         {
             // Clear invalid ports list on startup to give saved port a fresh chance
@@ -2890,47 +3068,66 @@ namespace DeejNG
 
         private void UpdateConnectionStatus()
         {
-            string statusText;
-            Brush statusColor;
-
-            if (_serialManager.IsConnected)
-            {
-                if (_serialManager.IsProtocolValidated)
-                {
-                    statusText = $"Connected to {_serialManager.CurrentPort}";
-                    statusColor = Brushes.Green;
-                }
-                else
-                {
-                    statusText = $"Verifying {_serialManager.CurrentPort}...";
-                    statusColor = Brushes.Orange;
-                }
-            }
-            else if (_serialManager.ShouldAttemptReconnect())
-            {
-                statusText = "Disconnected - Reconnecting...";
-                statusColor = Brushes.Orange;
-            }
-            else
-            {
-                statusText = "Disconnected";
-                statusColor = Brushes.Red;
-            }
-
-            // Ensure we're on the UI thread and use background priority to prevent focus stealing
+            // Ensure we're on the UI thread
             if (!Dispatcher.CheckAccess())
             {
                 Dispatcher.BeginInvoke(() => UpdateConnectionStatus(), DispatcherPriority.Background);
                 return;
             }
 
+            string statusText;
+            Brush statusColor;
+
+            if (_settingsManager.AppSettings.ConnectionMode == ConnectionMode.WebSocket)
+            {
+                if (_wsManager.IsConnected)
+                {
+                    statusText = $"Connected (WS {_settingsManager.AppSettings.WebSocketHost})";
+                    statusColor = Brushes.Green;
+                }
+                else if (_wsManager.ShouldAttemptReconnect)
+                {
+                    statusText = "WebSocket disconnected - Reconnecting...";
+                    statusColor = Brushes.Orange;
+                }
+                else
+                {
+                    statusText = "WebSocket disconnected";
+                    statusColor = Brushes.Red;
+                }
+                ConnectButton.Content = _wsManager.IsConnected ? "Disconnect" : "Connect";
+            }
+            else
+            {
+                if (_serialManager.IsConnected)
+                {
+                    if (_serialManager.IsProtocolValidated)
+                    {
+                        statusText = $"Connected to {_serialManager.CurrentPort}";
+                        statusColor = Brushes.Green;
+                    }
+                    else
+                    {
+                        statusText = $"Verifying {_serialManager.CurrentPort}...";
+                        statusColor = Brushes.Orange;
+                    }
+                }
+                else if (_serialManager.ShouldAttemptReconnect())
+                {
+                    statusText = "Disconnected - Reconnecting...";
+                    statusColor = Brushes.Orange;
+                }
+                else
+                {
+                    statusText = "Disconnected";
+                    statusColor = Brushes.Red;
+                }
+                ConnectButton.Content = _serialManager.IsConnected ? "Disconnect" : "Connect";
+            }
+
             ConnectionStatus.Text = statusText;
             ConnectionStatus.Foreground = statusColor;
-
             ConnectButton.IsEnabled = true;
-            ConnectButton.Content = _serialManager.IsConnected ? "Disconnect" : "Connect";
-
-
         }
 
         private void UpdateMeters(object? sender, EventArgs e)
@@ -2967,6 +3164,13 @@ namespace DeejNG
                 }
 
                 if (sessions == null) return;
+
+                // Send VU levels to OledDeej device if connected via WebSocket
+                if (_settingsManager.AppSettings.ConnectionMode == ConnectionMode.WebSocket && _wsManager.IsConnected)
+                {
+                    var vuLevels = _channelControls.Take(5).Select(c => c.MeterLevel).ToArray();
+                    _ = _wsManager.SendVuAsync(vuLevels);
+                }
 
                 foreach (var ctrl in _channelControls)
                 {

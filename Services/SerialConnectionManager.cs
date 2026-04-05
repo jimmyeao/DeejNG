@@ -245,8 +245,8 @@ namespace DeejNG.Services
                     // IMPORTANT: Threshold=1 was causing massive thread pool churn (QueueUserWorkItemCallback leak)
                     // because each byte triggered a new thread pool work item.
                     ReceivedBytesThreshold = 8,
-                    DtrEnable = true,
-                    RtsEnable = true,
+                    DtrEnable = false,
+                    RtsEnable = false,
                     NewLine = "\n"
                 };
 

@@ -3,10 +3,22 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
 namespace DeejNG.Classes
 {
+    /// <summary>
+    /// Determines how the application communicates with the hardware controller.
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum ConnectionMode
+    {
+        Serial,
+        WebSocket
+    }
+
+
     /// <summary>
     /// Represents application settings for DeejNG.
     /// </summary>
@@ -153,6 +165,22 @@ namespace DeejNG.Classes
         /// These apps will not be affected by the unmapped slider even if they aren't assigned to any slider.
         /// </summary>
         public List<string> ExcludedFromUnmapped { get; set; } = new();
+
+        /// <summary>
+        /// Gets or sets the connection mode: Serial (legacy COM port) or WebSocket (OledDeej).
+        /// </summary>
+        public ConnectionMode ConnectionMode { get; set; } = ConnectionMode.Serial;
+
+        /// <summary>
+        /// Gets or sets the WebSocket host/IP address for the OledDeej device.
+        /// </summary>
+        public string WebSocketHost { get; set; } = "192.168.1.100";
+
+        /// <summary>
+        /// Gets or sets the WebSocket port for the OledDeej device.
+        /// </summary>
+        public int WebSocketPort { get; set; } = 8765;
+
         #endregion Public Properties
     }
 

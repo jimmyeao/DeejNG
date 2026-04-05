@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Linq;
 
 namespace DeejNG.Dialogs
 {
@@ -86,6 +87,12 @@ namespace DeejNG.Dialogs
 
                 // Initialize baud rate from settings
                 InitializeBaudRateSelection();
+
+                // Initialize connection mode and WebSocket fields
+                ConnectionModeComboBox.SelectedIndex = _settings.ConnectionMode == ConnectionMode.WebSocket ? 1 : 0;
+                WsHostTextBox.Text = _settings.WebSocketHost;
+                WsPortTextBox.Text = _settings.WebSocketPort.ToString();
+                UpdateConnectionPanelVisibility();
 
                 // Initialize exclusion list from settings
                 InitializeExcludedAppsList();
@@ -416,6 +423,14 @@ namespace DeejNG.Dialogs
             // Save excluded apps list
             _settings.ExcludedFromUnmapped = ExcludedAppsListBox.Items.Cast<string>().ToList();
 
+            // Save connection mode and WebSocket settings
+            _settings.ConnectionMode = ConnectionModeComboBox.SelectedIndex == 1
+                ? ConnectionMode.WebSocket
+                : ConnectionMode.Serial;
+            _settings.WebSocketHost = WsHostTextBox.Text.Trim();
+            if (int.TryParse(WsPortTextBox.Text, out int wsPort))
+                _settings.WebSocketPort = wsPort;
+
             // Handle COM port change - use the saved baud rate
             if (_mainWindow != null && SettingComPortSelector.SelectedItem is string selectedPort)
             {
@@ -585,6 +600,41 @@ namespace DeejNG.Dialogs
                 SettingConnectButton.Content = _mainWindow.ConnectButton.Content;
                 SettingConnectButton.IsEnabled = _mainWindow.ConnectButton.IsEnabled;
             }
+        }
+
+        private void ConnectionModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateConnectionPanelVisibility();
+        }
+
+        private void UpdateConnectionPanelVisibility()
+        {
+            if (SerialPanel == null || WebSocketPanel == null) return;
+            bool isWs = ConnectionModeComboBox.SelectedIndex == 1;
+            SerialPanel.Visibility = isWs ? Visibility.Collapsed : Visibility.Visible;
+            WebSocketPanel.Visibility = isWs ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void WsConnect_Click(object sender, RoutedEventArgs e)
+        {
+            if (_mainWindow == null) return;
+            int port = int.TryParse(WsPortTextBox.Text, out int p) ? p : 8765;
+            _mainWindow.TriggerWebSocketConnect(WsHostTextBox.Text.Trim(), port);
+            WsConnectButton.Content = "Connecting...";
+            WsConnectButton.IsEnabled = false;
+
+            // Re-enable after a short delay
+            var timer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = System.TimeSpan.FromSeconds(3)
+            };
+            timer.Tick += (s, _) =>
+            {
+                timer.Stop();
+                WsConnectButton.Content = "Connect";
+                WsConnectButton.IsEnabled = true;
+            };
+            timer.Start();
         }
 
         /// <summary>

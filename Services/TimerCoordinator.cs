@@ -15,6 +15,7 @@ namespace DeejNG.Services
         private DispatcherTimer _serialReconnectTimer;
         private DispatcherTimer _serialWatchdogTimer;
         private DispatcherTimer _sessionCacheTimer;
+        private DispatcherTimer _wsReconnectTimer;
 
         #endregion Private Fields
 
@@ -33,12 +34,15 @@ namespace DeejNG.Services
 
         public event EventHandler SessionCacheUpdate;
 
+        public event EventHandler WsReconnectAttempt;
+
         #endregion Public Events
 
         #region Public Properties
 
         public bool IsMetersRunning => _meterTimer?.IsEnabled == true;
         public bool IsSerialReconnectRunning => _serialReconnectTimer?.IsEnabled == true;
+        public bool IsWsReconnectRunning => _wsReconnectTimer?.IsEnabled == true;
 
         #endregion Public Properties
 
@@ -55,6 +59,7 @@ namespace DeejNG.Services
             _forceCleanupTimer = null;
             _serialReconnectTimer = null;
             _serialWatchdogTimer = null;
+            _wsReconnectTimer = null;
             _positionSaveTimer = null;
             _periodicPositionSaveTimer = null;
         }
@@ -113,6 +118,13 @@ namespace DeejNG.Services
                 Interval = TimeSpan.FromSeconds(5)
             };
             _periodicPositionSaveTimer.Tick += (s, e) => PeriodicPositionSave?.Invoke(s, e);
+
+            // WebSocket reconnect timer - for OledDeej automatic reconnection
+            _wsReconnectTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(2)
+            };
+            _wsReconnectTimer.Tick += (s, e) => WsReconnectAttempt?.Invoke(s, e);
         }
 
         public void SetSerialReconnectInterval(TimeSpan interval)
@@ -172,6 +184,7 @@ namespace DeejNG.Services
             StopForceCleanup();
             StopSerialReconnect();
             StopSerialWatchdog();
+            StopWsReconnect();
             _positionSaveTimer?.Stop();
             _periodicPositionSaveTimer?.Stop();
         }
@@ -202,6 +215,23 @@ namespace DeejNG.Services
         public void StopSerialWatchdog()
         {
             _serialWatchdogTimer?.Stop();
+        }
+
+        public void StartWsReconnect()
+        {
+            _wsReconnectTimer?.Start();
+        }
+
+        public void StopWsReconnect()
+        {
+            if (_wsReconnectTimer != null && _wsReconnectTimer.IsEnabled)
+                _wsReconnectTimer.Stop();
+        }
+
+        public void SetWsReconnectInterval(TimeSpan interval)
+        {
+            if (_wsReconnectTimer != null)
+                _wsReconnectTimer.Interval = interval;
         }
 
         public void StopSessionCache()
