@@ -2537,7 +2537,7 @@ namespace DeejNG
         {
             if (_settingsManager.AppSettings.ConnectionMode != ConnectionMode.WebSocket || !_wsManager.IsConnected) return;
             var names = _channelControls.Take(5).Select(c => GetChannelLabel(c)).ToArray();
-            _ = _wsManager.SendConfigAsync(names);
+            _ = _wsManager.SendConfigAsync(names, _settingsManager.AppSettings.OledScreensaverTimeoutSeconds);
         }
 
         /// <summary>
@@ -2545,7 +2545,28 @@ namespace DeejNG
         /// Returns (volume, muted). Uses the first target that returns a valid reading.
         /// Falls back to the current slider position if no target can be read.
         /// </summary>
-        private (float volume, bool muted) ReadWindowsVolumeForChannel(ChannelControl ctrl)
+        /// <summary>
+        /// Gets a snapshot of the current audio sessions from the cached device.
+        /// Returns null on failure. Caller must not dispose the returned collection.
+        /// </summary>
+        private SessionCollection? GetCachedSessions()
+        {
+            try
+            {
+                var device = _cachedAudioDevice
+                    ?? _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                return device?.AudioSessionManager?.Sessions;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Reads the actual current Windows volume (0–1) and mute state for a channel's targets.
+        /// <paramref name="sessions"/> must be pre-fetched by the caller (once per batch) to avoid
+        /// creating a new MMDevice COM object per channel per call.
+        /// Falls back to the current slider position if no target can be read.
+        /// </summary>
+        private (float volume, bool muted) ReadWindowsVolumeForChannel(ChannelControl ctrl, SessionCollection? sessions)
         {
             if (ctrl.AudioTargets == null || ctrl.AudioTargets.Count == 0)
                 return (ctrl.CurrentVolume, ctrl.IsMuted);
@@ -2585,42 +2606,37 @@ namespace DeejNG
                         continue;
                     }
 
-                    // App session — scan audio sessions for a matching process
-                    if (!string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase) &&
+                    // App session — scan the caller-provided session collection
+                    if (sessions != null &&
+                        !string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase) &&
                         !string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
                     {
-                        try
+                        string targetLower = target.Name.ToLowerInvariant();
+                        string targetNoExt = System.IO.Path.GetFileNameWithoutExtension(targetLower);
+
+                        for (int i = 0; i < sessions.Count; i++)
                         {
-                            var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                            var sessions = device.AudioSessionManager.Sessions;
-                            string targetLower = target.Name.ToLowerInvariant();
-
-                            for (int i = 0; i < sessions.Count; i++)
+                            try
                             {
-                                try
+                                var session = sessions[i];
+                                if (session == null) continue;
+                                int pid = (int)session.GetProcessID;
+                                string procName = AudioUtilities.GetProcessNameSafely(pid);
+                                if (string.IsNullOrEmpty(procName)) continue;
+
+                                string procLower = procName.ToLowerInvariant();
+                                string procNoExt = System.IO.Path.GetFileNameWithoutExtension(procLower);
+
+                                if (procLower == targetLower || procNoExt == targetNoExt ||
+                                    procLower.Contains(targetNoExt) || targetNoExt.Contains(procNoExt))
                                 {
-                                    var session = sessions[i];
-                                    if (session == null) continue;
-                                    int pid = (int)session.GetProcessID;
-                                    string procName = AudioUtilities.GetProcessNameSafely(pid);
-                                    if (string.IsNullOrEmpty(procName)) continue;
-
-                                    string procLower = procName.ToLowerInvariant();
-                                    string procNoExt = System.IO.Path.GetFileNameWithoutExtension(procLower);
-                                    string targetNoExt = System.IO.Path.GetFileNameWithoutExtension(targetLower);
-
-                                    if (procLower == targetLower || procNoExt == targetNoExt ||
-                                        procLower.Contains(targetNoExt) || targetNoExt.Contains(procNoExt))
-                                    {
-                                        float vol = session.SimpleAudioVolume.Volume;
-                                        bool muted = session.SimpleAudioVolume.Mute;
-                                        return (Math.Clamp(vol, 0f, 1f), muted);
-                                    }
+                                    float vol = session.SimpleAudioVolume.Volume;
+                                    bool muted = session.SimpleAudioVolume.Mute;
+                                    return (Math.Clamp(vol, 0f, 1f), muted);
                                 }
-                                catch { }
                             }
+                            catch { }
                         }
-                        catch { }
                     }
                 }
                 catch { }
@@ -2636,7 +2652,10 @@ namespace DeejNG
             var names = _channelControls.Take(5)
                 .Select(c => GetChannelLabel(c))
                 .ToArray();
-            await _wsManager.SendConfigAsync(names);
+            await _wsManager.SendConfigAsync(names, _settingsManager.AppSettings.OledScreensaverTimeoutSeconds);
+
+            // Get sessions once — shared across all channels to avoid COM object churn
+            var sessions = GetCachedSessions();
 
             // Read actual Windows volumes for each channel and sync sliders + device
             var vols = new int[Math.Min(_channelControls.Count, 5)];
@@ -2645,7 +2664,7 @@ namespace DeejNG
             for (int i = 0; i < vols.Length; i++)
             {
                 var ctrl = _channelControls[i];
-                var (windowsVol, windowsMuted) = ReadWindowsVolumeForChannel(ctrl);
+                var (windowsVol, windowsMuted) = ReadWindowsVolumeForChannel(ctrl, sessions);
 
                 // Sync the slider to match the actual Windows volume
                 ctrl.SmoothAndSetVolume(windowsVol, suppressEvent: true, disableSmoothing: true);
@@ -2738,9 +2757,12 @@ namespace DeejNG
             var mutes = new bool[count];
             bool anyChanged = false;
 
+            // Get sessions once — reuses _cachedAudioDevice, no new COM object per channel
+            var sessions = GetCachedSessions();
+
             for (int i = 0; i < count; i++)
             {
-                var (vol, muted) = ReadWindowsVolumeForChannel(_channelControls[i]);
+                var (vol, muted) = ReadWindowsVolumeForChannel(_channelControls[i], sessions);
                 vols[i] = (int)Math.Round(vol * 100f);
                 mutes[i] = muted;
 
