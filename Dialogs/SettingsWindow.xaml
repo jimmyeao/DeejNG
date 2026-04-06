@@ -127,11 +127,11 @@
                             <StackPanel x:Name="WebSocketPanel" Visibility="Collapsed">
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                     <TextBlock Text="Host/IP:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
-                                    <TextBox x:Name="WsHostTextBox" Width="180" Style="{StaticResource ModernTextBox}"/>
+                                    <TextBox x:Name="WsHostTextBox" Width="180" Padding="4,2" VerticalContentAlignment="Center"/>
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
                                     <TextBlock Text="Port:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
-                                    <TextBox x:Name="WsPortTextBox" Width="80" Style="{StaticResource ModernTextBox}"/>
+                                    <TextBox x:Name="WsPortTextBox" Width="80" Padding="4,2" VerticalContentAlignment="Center"/>
                                     <Button x:Name="WsConnectButton" Content="Connect" Style="{StaticResource ModernButton}" Margin="8,0,0,0" Click="WsConnect_Click"/>
                                 </StackPanel>
                             </StackPanel>

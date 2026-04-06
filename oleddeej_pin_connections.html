@@ -1,0 +1,140 @@
+<style>
+*{box-sizing:border-box}
+.wrap{padding:12px 0 24px}
+.filters{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.pill{padding:3px 11px;border-radius:999px;border:1px solid var(--color-border-secondary);cursor:pointer;font-size:12px;background:transparent;color:var(--color-text-secondary)}
+.pill.on{background:var(--color-text-primary);color:var(--color-background-primary);border-color:transparent}
+.srch{width:100%;padding:6px 10px;border:1px solid var(--color-border-secondary);border-radius:6px;background:var(--color-background-secondary);color:var(--color-text-primary);font-size:12px;margin-bottom:8px;outline:none}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:5px 8px;font-size:11px;font-weight:500;color:var(--color-text-secondary);border-bottom:1.5px solid var(--color-border-secondary)}
+td{padding:4px 8px;border-bottom:1px solid var(--color-border-tertiary);color:var(--color-text-primary);vertical-align:middle}
+tr:hover td{background:var(--color-background-secondary)}
+.pn{font-family:monospace;font-size:11px;background:var(--color-background-secondary);padding:1px 5px;border-radius:3px;border:1px solid var(--color-border-tertiary);white-space:nowrap}
+.tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:500;white-space:nowrap}
+.tp{background:#FAEEDA;color:#633806}.ti{background:#E6F1FB;color:#0C447C}
+.tg{background:#EEEDFE;color:#3C3489}.tbtn{background:#E1F5EE;color:#085041}.tstr{background:#F1EFE8;color:#444441}
+.ct{font-size:11px;color:var(--color-text-secondary);margin:0 0 6px}
+@media(prefers-color-scheme:dark){
+  .tp{background:#633806;color:#FAC775}.ti{background:#0C447C;color:#B5D4F4}
+  .tg{background:#3C3489;color:#CECBF6}.tbtn{background:#085041;color:#9FE1CB}.tstr{background:#3d3d3a;color:#D3D1C7}
+}
+</style>
+<div class="wrap">
+<input class="srch" placeholder="Search component, pin name, GPIO number..." oninput="doSearch(this.value)" id="srch">
+<div class="filters">
+  <button class="pill on" onclick="setType('all',this)">All connections</button>
+  <button class="pill" onclick="setType('p',this)">Power / GND</button>
+  <button class="pill" onclick="setType('i',this)">I2C</button>
+  <button class="pill" onclick="setType('g',this)">GPIO (encoders)</button>
+  <button class="pill" onclick="setType('s',this)">Buttons</button>
+  <button class="pill" onclick="setType('r',this)">Strapping</button>
+</div>
+<div class="ct" id="ct"></div>
+<table><thead><tr>
+  <th>From component</th><th>From pin</th><th>To component</th><th>To pin</th><th>Type</th>
+</tr></thead><tbody id="tb"></tbody></table>
+</div>
+<script>
+const D=[
+['USB-C Breakout','VBUS','ESP32-S3','VIN (5V)','p','usb-c esp32 vbus vin power 5v'],
+['USB-C Breakout','VBUS','PSU (AMS1117)','USB-in','p','usb-c psu vbus power 5v ams1117'],
+['USB-C Breakout','D−','ESP32-S3','GPIO 19','p','usb-c esp32 d- gpio 19 usb cdc data'],
+['USB-C Breakout','D+','ESP32-S3','GPIO 20','p','usb-c esp32 d+ gpio 20 usb cdc data'],
+['USB-C Breakout','CC1','5.1kΩ resistor','→ GND','p','usb-c cc1 resistor pulldown 5.1k'],
+['USB-C Breakout','CC2','5.1kΩ resistor','→ GND','p','usb-c cc2 resistor pulldown 5.1k'],
+['USB-C Breakout','GND','Common GND rail','—','p','usb-c gnd ground'],
+['PSU (AMS1117)','3.3V out','TCA9548A','VCC','p','psu tca 3.3v power'],
+['PSU (AMS1117)','3.3V out','MCP23017','VDD','p','psu mcp 3.3v power'],
+['PSU (AMS1117)','3.3V out','Module 0 (OLED+EC11)','VCC','p','psu module 0 3.3v power oled'],
+['PSU (AMS1117)','3.3V out','Module 1 (OLED+EC11)','VCC','p','psu module 1 3.3v power oled'],
+['PSU (AMS1117)','3.3V out','Module 2 (OLED+EC11)','VCC','p','psu module 2 3.3v power oled'],
+['PSU (AMS1117)','3.3V out','Module 3 (OLED+EC11)','VCC','p','psu module 3 3.3v power oled'],
+['PSU (AMS1117)','3.3V out','Module 4 (OLED+EC11)','VCC','p','psu module 4 3.3v power oled'],
+['PSU (AMS1117)','GND','Common GND rail','—','p','psu gnd ground'],
+['ESP32-S3','GND','Common GND rail','—','p','esp32 gnd ground'],
+['TCA9548A','GND','Common GND rail','—','p','tca gnd ground'],
+['MCP23017','VSS','Common GND rail','—','p','mcp vss gnd ground'],
+['Module 0 (OLED+EC11)','GND','Common GND rail','—','p','module 0 gnd ground'],
+['Module 1 (OLED+EC11)','GND','Common GND rail','—','p','module 1 gnd ground'],
+['Module 2 (OLED+EC11)','GND','Common GND rail','—','p','module 2 gnd ground'],
+['Module 3 (OLED+EC11)','GND','Common GND rail','—','p','module 3 gnd ground'],
+['Module 4 (OLED+EC11)','GND','Common GND rail','—','p','module 4 gnd ground'],
+['ESP32-S3','GPIO 21 (SDA)','TCA9548A','SDA (pin 9)','i','esp32 gpio 21 sda tca i2c bus'],
+['ESP32-S3','GPIO 22 (SCL)','TCA9548A','SCL (pin 10)','i','esp32 gpio 22 scl tca i2c bus'],
+['ESP32-S3','GPIO 21 (SDA)','MCP23017','SDA (pin 13)','i','esp32 gpio 21 sda mcp i2c bus'],
+['ESP32-S3','GPIO 22 (SCL)','MCP23017','SCL (pin 12)','i','esp32 gpio 22 scl mcp i2c bus'],
+['TCA9548A','SC0','Module 0 (OLED+EC11)','SCL (OLED)','i','tca sc0 channel 0 module 0 scl oled i2c downstream'],
+['TCA9548A','SD0','Module 0 (OLED+EC11)','SDA (OLED)','i','tca sd0 channel 0 module 0 sda oled i2c downstream'],
+['TCA9548A','SC1','Module 1 (OLED+EC11)','SCL (OLED)','i','tca sc1 channel 1 module 1 scl oled i2c downstream'],
+['TCA9548A','SD1','Module 1 (OLED+EC11)','SDA (OLED)','i','tca sd1 channel 1 module 1 sda oled i2c downstream'],
+['TCA9548A','SC2','Module 2 (OLED+EC11)','SCL (OLED)','i','tca sc2 channel 2 module 2 scl oled i2c downstream'],
+['TCA9548A','SD2','Module 2 (OLED+EC11)','SDA (OLED)','i','tca sd2 channel 2 module 2 sda oled i2c downstream'],
+['TCA9548A','SC3','Module 3 (OLED+EC11)','SCL (OLED)','i','tca sc3 channel 3 module 3 scl oled i2c downstream'],
+['TCA9548A','SD3','Module 3 (OLED+EC11)','SDA (OLED)','i','tca sd3 channel 3 module 3 sda oled i2c downstream'],
+['TCA9548A','SC4','Module 4 (OLED+EC11)','SCL (OLED)','i','tca sc4 channel 4 module 4 scl oled i2c downstream'],
+['TCA9548A','SD4','Module 4 (OLED+EC11)','SDA (OLED)','i','tca sd4 channel 4 module 4 sda oled i2c downstream'],
+['Module 0 (OLED+EC11)','CLK (EC11 A)','ESP32-S3','GPIO 4','g','module 0 clk ec11 encoder gpio 4 channel 0'],
+['Module 0 (OLED+EC11)','DT (EC11 B)','ESP32-S3','GPIO 5','g','module 0 dt ec11 encoder gpio 5 channel 0'],
+['Module 0 (OLED+EC11)','SW (mute)','ESP32-S3','GPIO 6','g','module 0 sw mute encoder gpio 6 channel 0'],
+['Module 1 (OLED+EC11)','CLK (EC11 A)','ESP32-S3','GPIO 7','g','module 1 clk ec11 encoder gpio 7 channel 1'],
+['Module 1 (OLED+EC11)','DT (EC11 B)','ESP32-S3','GPIO 15','g','module 1 dt ec11 encoder gpio 15 channel 1'],
+['Module 1 (OLED+EC11)','SW (mute)','ESP32-S3','GPIO 16','g','module 1 sw mute encoder gpio 16 channel 1'],
+['Module 2 (OLED+EC11)','CLK (EC11 A)','ESP32-S3','GPIO 17','g','module 2 clk ec11 encoder gpio 17 channel 2'],
+['Module 2 (OLED+EC11)','DT (EC11 B)','ESP32-S3','GPIO 18','g','module 2 dt ec11 encoder gpio 18 channel 2'],
+['Module 2 (OLED+EC11)','SW (mute)','ESP32-S3','GPIO 33','g','module 2 sw mute encoder gpio 33 channel 2'],
+['Module 3 (OLED+EC11)','CLK (EC11 A)','ESP32-S3','GPIO 34','g','module 3 clk ec11 encoder gpio 34 channel 3'],
+['Module 3 (OLED+EC11)','DT (EC11 B)','ESP32-S3','GPIO 35','g','module 3 dt ec11 encoder gpio 35 channel 3'],
+['Module 3 (OLED+EC11)','SW (mute)','ESP32-S3','GPIO 36','g','module 3 sw mute encoder gpio 36 channel 3'],
+['Module 4 (OLED+EC11)','CLK (EC11 A)','ESP32-S3','GPIO 37','g','module 4 clk ec11 encoder gpio 37 channel 4'],
+['Module 4 (OLED+EC11)','DT (EC11 B)','ESP32-S3','GPIO 38','g','module 4 dt ec11 encoder gpio 38 channel 4'],
+['Module 4 (OLED+EC11)','SW (mute)','ESP32-S3','GPIO 39','g','module 4 sw mute encoder gpio 39 channel 4'],
+['Module 0 (OLED+EC11)','SELECT','MCP23017','GPA0','s','module 0 select mcp gpa0 button channel 0'],
+['Module 1 (OLED+EC11)','SELECT','MCP23017','GPA1','s','module 1 select mcp gpa1 button channel 1'],
+['Module 2 (OLED+EC11)','SELECT','MCP23017','GPA2','s','module 2 select mcp gpa2 button channel 2'],
+['Module 3 (OLED+EC11)','SELECT','MCP23017','GPA3','s','module 3 select mcp gpa3 button channel 3'],
+['Module 4 (OLED+EC11)','SELECT','MCP23017','GPA4','s','module 4 select mcp gpa4 button channel 4'],
+['Module 0 (OLED+EC11)','CONFIRM','MCP23017','GPB0','s','module 0 confirm mcp gpb0 button channel 0'],
+['Module 1 (OLED+EC11)','CONFIRM','MCP23017','GPB1','s','module 1 confirm mcp gpb1 button channel 1'],
+['Module 2 (OLED+EC11)','CONFIRM','MCP23017','GPB2','s','module 2 confirm mcp gpb2 button channel 2'],
+['Module 3 (OLED+EC11)','CONFIRM','MCP23017','GPB3','s','module 3 confirm mcp gpb3 button channel 3'],
+['Module 4 (OLED+EC11)','CONFIRM','MCP23017','GPB4','s','module 4 confirm mcp gpb4 button channel 4'],
+['TCA9548A','A0','GND','— (sets addr 0x70)','r','tca a0 address strap gnd 0x70'],
+['TCA9548A','A1','GND','—','r','tca a1 address strap gnd'],
+['TCA9548A','A2','GND','—','r','tca a2 address strap gnd'],
+['TCA9548A','RESET','3.3V rail','— (active LOW, tie high)','r','tca reset 3.3v tie high'],
+['MCP23017','A0','GND','— (sets addr 0x20)','r','mcp a0 address strap gnd 0x20'],
+['MCP23017','A1','GND','—','r','mcp a1 address strap gnd'],
+['MCP23017','A2','GND','—','r','mcp a2 address strap gnd'],
+['MCP23017','RESET','3.3V rail','— (active LOW, tie high)','r','mcp reset 3.3v tie high'],
+];
+
+const TC={p:'tp',i:'ti',g:'tg',s:'tbtn',r:'tstr'};
+const TL={p:'Power',i:'I2C',g:'GPIO',s:'Button',r:'Strap'};
+let curType='all', term='';
+
+function render(){
+  const tb=document.getElementById('tb');
+  tb.innerHTML='';
+  let n=0;
+  D.forEach(r=>{
+    const[fr,fp,to,tp,type,kw]=r;
+    if(curType!=='all'&&curType!==type)return;
+    if(term&&![fr,fp,to,tp,kw].join(' ').toLowerCase().includes(term))return;
+    n++;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${fr}</td><td><span class="pn">${fp}</span></td><td>${to}</td><td><span class="pn">${tp}</span></td><td><span class="tag ${TC[type]}">${TL[type]}</span></td>`;
+    tb.appendChild(tr);
+  });
+  document.getElementById('ct').textContent=n+' connection'+(n!==1?'s':'');
+}
+
+function setType(t,el){
+  curType=t;
+  document.querySelectorAll('.pill').forEach(p=>p.classList.remove('on'));
+  el.classList.add('on');
+  render();
+}
+
+function doSearch(v){term=v.toLowerCase().trim();render();}
+render();
+</script>
