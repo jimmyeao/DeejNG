@@ -64,6 +64,10 @@ namespace DeejNG
 
         private readonly WebSocketConnectionManager _wsManager;
 
+        // Tracks the last volume/mute state sent to the WS device for change detection
+        private int[] _lastWsVols;
+        private bool[] _lastWsMutes;
+
         private readonly AppSettingsManager _settingsManager;
 
         private readonly ISystemIntegrationService _systemIntegrationService;
@@ -200,6 +204,7 @@ namespace DeejNG
             _timerCoordinator.SerialWatchdogCheck += SerialWatchdogTimer_Tick;
             _timerCoordinator.PositionSave += PositionSaveTimer_Tick;
             _timerCoordinator.WsReconnectAttempt += WsReconnectTimer_Tick;
+            _timerCoordinator.WsVolumeSync += WsVolumeSyncTimer_Tick;
 
             // Setup serial manager events
             _serialManager.DataReceived += HandleSliderData;
@@ -255,11 +260,13 @@ namespace DeejNG
                     _timerCoordinator.StopWsReconnect();
                     UpdateConnectionStatus();
                     await SendWebSocketInitialStateAsync();
+                    _timerCoordinator.StartWsVolumeSync();
                 }, DispatcherPriority.Background);
             };
             _wsManager.Disconnected += () =>
             {
                 _allowVolumeApplication = false;
+                _timerCoordinator.StopWsVolumeSync();
                 Dispatcher.BeginInvoke(() =>
                 {
                     UpdateConnectionStatus();
@@ -2646,6 +2653,8 @@ namespace DeejNG
             }
 
             await _wsManager.SendStateAsync(vols, mutes);
+            _lastWsVols = vols;
+            _lastWsMutes = mutes;
 
             // Allow volume application now that device state is seeded
             _allowVolumeApplication = true;
@@ -2684,6 +2693,18 @@ namespace DeejNG
                     if (mutes.Length > i && ctrl.IsMuted != mutes[i])
                         ctrl.SetMuted(mutes[i], applyToAudio: true);
                 }
+
+                // Keep baseline in sync so the volume poll doesn't treat device-driven
+                // changes as external changes and redundantly re-send them
+                if (_lastWsVols != null && vols.Length <= _lastWsVols.Length)
+                {
+                    for (int i = 0; i < Math.Min(vols.Length, _lastWsVols.Length); i++)
+                    {
+                        _lastWsVols[i] = vols[i];
+                        if (_lastWsMutes != null && i < _lastWsMutes.Length && mutes.Length > i)
+                            _lastWsMutes[i] = mutes[i];
+                    }
+                }
             });
         }
 
@@ -2701,6 +2722,49 @@ namespace DeejNG
 
             if (_wsManager.IsConnected)
                 _timerCoordinator.StopWsReconnect();
+        }
+
+        private void WsVolumeSyncTimer_Tick(object? sender, EventArgs e)
+        {
+            if (_isClosing || !_wsManager.IsConnected || !_allowVolumeApplication) return;
+            if (_channelControls.Count == 0) return;
+
+            int count = Math.Min(_channelControls.Count, 5);
+            var vols = new int[count];
+            var mutes = new bool[count];
+            bool anyChanged = false;
+
+            for (int i = 0; i < count; i++)
+            {
+                var (vol, muted) = ReadWindowsVolumeForChannel(_channelControls[i]);
+                vols[i] = (int)Math.Round(vol * 100f);
+                mutes[i] = muted;
+
+                bool volChanged = _lastWsVols == null || i >= _lastWsVols.Length || vols[i] != _lastWsVols[i];
+                bool muteChanged = _lastWsMutes == null || i >= _lastWsMutes.Length || mutes[i] != _lastWsMutes[i];
+
+                if (volChanged || muteChanged)
+                    anyChanged = true;
+            }
+
+            if (!anyChanged) return;
+
+            _lastWsVols = vols;
+            _lastWsMutes = mutes;
+
+            // Send updated state to device
+            _ = _wsManager.SendStateAsync(vols, mutes);
+
+            // Sync sliders to match Windows (suppressed — no re-apply to audio)
+            for (int i = 0; i < count; i++)
+            {
+                var ctrl = _channelControls[i];
+                float level = vols[i] / 100f;
+                if (Math.Abs(ctrl.CurrentVolume - level) >= 0.01f)
+                    ctrl.SmoothAndSetVolume(level, suppressEvent: true, disableSmoothing: true);
+                if (ctrl.IsMuted != mutes[i])
+                    ctrl.SetMuted(mutes[i], applyToAudio: false);
+            }
         }
 
         /// <summary>

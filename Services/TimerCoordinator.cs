@@ -16,6 +16,7 @@ namespace DeejNG.Services
         private DispatcherTimer _serialWatchdogTimer;
         private DispatcherTimer _sessionCacheTimer;
         private DispatcherTimer _wsReconnectTimer;
+        private DispatcherTimer _wsVolumeSyncTimer;
 
         #endregion Private Fields
 
@@ -36,6 +37,8 @@ namespace DeejNG.Services
 
         public event EventHandler WsReconnectAttempt;
 
+        public event EventHandler WsVolumeSync;
+
         #endregion Public Events
 
         #region Public Properties
@@ -43,6 +46,7 @@ namespace DeejNG.Services
         public bool IsMetersRunning => _meterTimer?.IsEnabled == true;
         public bool IsSerialReconnectRunning => _serialReconnectTimer?.IsEnabled == true;
         public bool IsWsReconnectRunning => _wsReconnectTimer?.IsEnabled == true;
+        public bool IsWsVolumeSyncRunning => _wsVolumeSyncTimer?.IsEnabled == true;
 
         #endregion Public Properties
 
@@ -60,6 +64,7 @@ namespace DeejNG.Services
             _serialReconnectTimer = null;
             _serialWatchdogTimer = null;
             _wsReconnectTimer = null;
+            _wsVolumeSyncTimer = null;
             _positionSaveTimer = null;
             _periodicPositionSaveTimer = null;
         }
@@ -125,6 +130,13 @@ namespace DeejNG.Services
                 Interval = TimeSpan.FromSeconds(2)
             };
             _wsReconnectTimer.Tick += (s, e) => WsReconnectAttempt?.Invoke(s, e);
+
+            // WebSocket volume sync timer - polls Windows volumes and sends changes to device
+            _wsVolumeSyncTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            _wsVolumeSyncTimer.Tick += (s, e) => WsVolumeSync?.Invoke(s, e);
         }
 
         public void SetSerialReconnectInterval(TimeSpan interval)
@@ -185,6 +197,7 @@ namespace DeejNG.Services
             StopSerialReconnect();
             StopSerialWatchdog();
             StopWsReconnect();
+            StopWsVolumeSync();
             _positionSaveTimer?.Stop();
             _periodicPositionSaveTimer?.Stop();
         }
@@ -232,6 +245,17 @@ namespace DeejNG.Services
         {
             if (_wsReconnectTimer != null)
                 _wsReconnectTimer.Interval = interval;
+        }
+
+        public void StartWsVolumeSync()
+        {
+            _wsVolumeSyncTimer?.Start();
+        }
+
+        public void StopWsVolumeSync()
+        {
+            if (_wsVolumeSyncTimer != null && _wsVolumeSyncTimer.IsEnabled)
+                _wsVolumeSyncTimer.Stop();
         }
 
         public void StopSessionCache()
