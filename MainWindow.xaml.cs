@@ -2546,19 +2546,10 @@ namespace DeejNG
         /// Falls back to the current slider position if no target can be read.
         /// </summary>
         /// <summary>
-        /// Gets a snapshot of the current audio sessions from the cached device.
-        /// Returns null on failure. Caller must not dispose the returned collection.
+        /// Returns the session collection already being maintained by UpdateMeters.
+        /// Avoids calling AudioSessionManager (which creates a new COM wrapper each call).
         /// </summary>
-        private SessionCollection? GetCachedSessions()
-        {
-            try
-            {
-                var device = _cachedAudioDevice
-                    ?? _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                return device?.AudioSessionManager?.Sessions;
-            }
-            catch { return null; }
-        }
+        private SessionCollection? GetCachedSessions() => _cachedSessionsForMeters;
 
         /// <summary>
         /// Reads the actual current Windows volume (0–1) and mute state for a channel's targets.
@@ -2654,8 +2645,18 @@ namespace DeejNG
                 .ToArray();
             await _wsManager.SendConfigAsync(names, _settingsManager.AppSettings.OledScreensaverTimeoutSeconds);
 
-            // Get sessions once — shared across all channels to avoid COM object churn
-            var sessions = GetCachedSessions();
+            // Get sessions once — prefer the already-cached collection from UpdateMeters;
+            // fall back to a fresh fetch only on connect (before UpdateMeters has run).
+            SessionCollection? sessions = GetCachedSessions();
+            if (sessions == null)
+            {
+                try
+                {
+                    var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                    sessions = device.AudioSessionManager.Sessions;
+                }
+                catch { }
+            }
 
             // Read actual Windows volumes for each channel and sync sliders + device
             var vols = new int[Math.Min(_channelControls.Count, 5)];
