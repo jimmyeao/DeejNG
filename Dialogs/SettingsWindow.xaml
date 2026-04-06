@@ -129,10 +129,15 @@
                                     <TextBlock Text="Host/IP:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
                                     <TextBox x:Name="WsHostTextBox" Width="180" Padding="4,2" VerticalContentAlignment="Center"/>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                     <TextBlock Text="Port:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
                                     <TextBox x:Name="WsPortTextBox" Width="80" Padding="4,2" VerticalContentAlignment="Center"/>
                                     <Button x:Name="WsConnectButton" Content="Connect" Style="{StaticResource ModernButton}" Margin="8,0,0,0" Click="WsConnect_Click"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
+                                    <TextBlock Text="Screensaver:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
+                                    <ComboBox x:Name="ScreensaverTimeoutComboBox" Width="130" Padding="4,2" VerticalContentAlignment="Center"/>
+                                    <TextBlock Text="(0 = disabled)" VerticalAlignment="Center" Margin="8,0,0,0" Opacity="0.6" FontSize="11"/>
                                 </StackPanel>
                             </StackPanel>
                         </StackPanel>

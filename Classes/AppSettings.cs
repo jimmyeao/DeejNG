@@ -181,6 +181,13 @@ namespace DeejNG.Classes
         /// </summary>
         public int WebSocketPort { get; set; } = 8765;
 
+        /// <summary>
+        /// Gets or sets the OledDeej display screensaver timeout in seconds.
+        /// 0 = disabled. Default is 300 (5 minutes).
+        /// Sent to the device as part of the config message on connect.
+        /// </summary>
+        public int OledScreensaverTimeoutSeconds { get; set; } = 300;
+
         #endregion Public Properties
     }
 

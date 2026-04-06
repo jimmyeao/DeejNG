@@ -111,11 +111,11 @@ namespace DeejNG.Services
             DisconnectInternal();
         }
 
-        /// <summary>Sends channel names to the device OLED displays.</summary>
-        public async Task SendConfigAsync(string[] names)
+        /// <summary>Sends channel names and screensaver timeout to the device OLED displays.</summary>
+        public async Task SendConfigAsync(string[] names, int screensaverSeconds = 300)
         {
             if (!_isConnected) return;
-            var payload = JsonSerializer.Serialize(new { type = "config", names });
+            var payload = JsonSerializer.Serialize(new { type = "config", names, screensaver = screensaverSeconds });
             await SendRawAsync(payload);
         }
 

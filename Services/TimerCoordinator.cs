@@ -134,7 +134,7 @@ namespace DeejNG.Services
             // WebSocket volume sync timer - polls Windows volumes and sends changes to device
             _wsVolumeSyncTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromSeconds(1)
+                Interval = TimeSpan.FromMilliseconds(100)
             };
             _wsVolumeSyncTimer.Tick += (s, e) => WsVolumeSync?.Invoke(s, e);
         }

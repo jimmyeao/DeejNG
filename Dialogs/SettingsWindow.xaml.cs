@@ -92,6 +92,7 @@ namespace DeejNG.Dialogs
                 ConnectionModeComboBox.SelectedIndex = _settings.ConnectionMode == ConnectionMode.WebSocket ? 1 : 0;
                 WsHostTextBox.Text = _settings.WebSocketHost;
                 WsPortTextBox.Text = _settings.WebSocketPort.ToString();
+                InitializeScreensaverComboBox();
                 UpdateConnectionPanelVisibility();
 
                 // Initialize exclusion list from settings
@@ -291,6 +292,35 @@ namespace DeejNG.Dialogs
         }
 
         /// <summary>
+        /// Populates and selects the screensaver timeout ComboBox from AppSettings.
+        /// </summary>
+        private void InitializeScreensaverComboBox()
+        {
+            var options = new (string Label, int Seconds)[]
+            {
+                ("Disabled", 0),
+                ("1 minute",   60),
+                ("2 minutes",  120),
+                ("5 minutes",  300),
+                ("10 minutes", 600),
+                ("15 minutes", 900),
+                ("30 minutes", 1800),
+            };
+
+            ScreensaverTimeoutComboBox.Items.Clear();
+            int saved = _settings?.OledScreensaverTimeoutSeconds ?? 300;
+            int bestMatch = 0;
+
+            foreach (var (label, seconds) in options)
+            {
+                var item = new ComboBoxItem { Content = label, Tag = seconds.ToString() };
+                ScreensaverTimeoutComboBox.Items.Add(item);
+                if (seconds == saved) bestMatch = ScreensaverTimeoutComboBox.Items.Count - 1;
+            }
+
+            ScreensaverTimeoutComboBox.SelectedIndex = bestMatch;
+        }
+
         /// Helper to select the baud rate option matching AppSettings.BaudRate, defaulting to 9600 if not set.
         /// </summary>
         private void InitializeBaudRateSelection()
@@ -430,6 +460,9 @@ namespace DeejNG.Dialogs
             _settings.WebSocketHost = WsHostTextBox.Text.Trim();
             if (int.TryParse(WsPortTextBox.Text, out int wsPort))
                 _settings.WebSocketPort = wsPort;
+            if (ScreensaverTimeoutComboBox.SelectedItem is ComboBoxItem ssItem &&
+                int.TryParse(ssItem.Tag?.ToString(), out int ssSeconds))
+                _settings.OledScreensaverTimeoutSeconds = ssSeconds;
 
             // Handle COM port change - use the saved baud rate
             if (_mainWindow != null && SettingComPortSelector.SelectedItem is string selectedPort)
