@@ -464,8 +464,10 @@ namespace DeejNG.Dialogs
                 int.TryParse(ssItem.Tag?.ToString(), out int ssSeconds))
                 _settings.OledScreensaverTimeoutSeconds = ssSeconds;
 
-            // Handle COM port change - use the saved baud rate
-            if (_mainWindow != null && SettingComPortSelector.SelectedItem is string selectedPort)
+            // Handle COM port change - only in serial mode
+            if (_mainWindow != null &&
+                _settings.ConnectionMode == ConnectionMode.Serial &&
+                SettingComPortSelector.SelectedItem is string selectedPort)
             {
                 int baudRate = _settings.BaudRate > 0 ? _settings.BaudRate : 9600;
 

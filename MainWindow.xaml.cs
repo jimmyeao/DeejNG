@@ -529,8 +529,9 @@ namespace DeejNG
                 reconnectTimer.Tick += reconnectHandler;
                 reconnectTimer.Start();
             }
-            // If not connected, auto-connect if user selected a port
-            else if (!_serialManager.IsConnected && !_isInitializing)
+            // If not connected and in serial mode, auto-connect if user selected a port
+            else if (!_serialManager.IsConnected && !_isInitializing &&
+                     _settingsManager.AppSettings.ConnectionMode != ConnectionMode.WebSocket)
             {
 
                 _serialManager.InitSerial(newPort, baudRate);
