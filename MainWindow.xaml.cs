@@ -72,6 +72,11 @@ namespace DeejNG
         private DateTime _lastWsVuSend = DateTime.MinValue;
         private static readonly TimeSpan WsVuInterval = TimeSpan.FromMilliseconds(100);
 
+        // Suppress poll-based sync briefly after receiving a device-driven update,
+        // so Windows audio has time to settle before we re-read and potentially bounce back
+        private DateTime _lastWsReceiveTime = DateTime.MinValue;
+        private static readonly TimeSpan WsReceiveSuppressWindow = TimeSpan.FromMilliseconds(500);
+
         private readonly AppSettingsManager _settingsManager;
 
         private readonly ISystemIntegrationService _systemIntegrationService;
@@ -282,8 +287,9 @@ namespace DeejNG
 
             StartSessionCacheUpdater();
 
-            // Start timers
-            _timerCoordinator.StartSerialWatchdog();
+            // Start serial watchdog only in serial mode
+            if (_settingsManager.AppSettings.ConnectionMode != ConnectionMode.WebSocket)
+                _timerCoordinator.StartSerialWatchdog();
 
             MyNotifyIcon.Icon = new System.Drawing.Icon(iconPath);
             CreateNotifyIconContextMenu();
@@ -576,9 +582,15 @@ namespace DeejNG
                 _allowVolumeApplication = false;
 
                 if (newSettings.ConnectionMode == ConnectionMode.WebSocket)
+                {
+                    _timerCoordinator.StopSerialWatchdog();
                     SetupAutomaticWebSocketConnection();
+                }
                 else
+                {
+                    _timerCoordinator.StartSerialWatchdog();
                     SetupAutomaticSerialConnection();
+                }
             }
 
             // Reconfigure button layout if button count changed
@@ -2691,6 +2703,9 @@ namespace DeejNG
 
         private void HandleWebSocketUpdate(int[] vols, bool[] mutes)
         {
+            // Record receive time before dispatching so the poll suppression window starts immediately
+            _lastWsReceiveTime = DateTime.Now;
+
             // Raised on threadpool — dispatch to UI
             Dispatcher.BeginInvoke(() =>
             {
@@ -2752,6 +2767,9 @@ namespace DeejNG
         {
             if (_isClosing || !_wsManager.IsConnected || !_allowVolumeApplication) return;
             if (_channelControls.Count == 0) return;
+
+            // Wait for Windows audio to settle after a device-driven change before polling
+            if (DateTime.Now - _lastWsReceiveTime < WsReceiveSuppressWindow) return;
 
             int count = Math.Min(_channelControls.Count, 5);
             var vols = new int[count];

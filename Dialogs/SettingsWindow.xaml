@@ -136,7 +136,7 @@
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
                                     <TextBlock Text="Screensaver:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
-                                    <ComboBox x:Name="ScreensaverTimeoutComboBox" Width="130" Padding="4,2" VerticalContentAlignment="Center"/>
+                                    <ComboBox x:Name="ScreensaverTimeoutComboBox" Width="130" Style="{StaticResource ModernComboBox}"/>
                                     <TextBlock Text="(0 = disabled)" VerticalAlignment="Center" Margin="8,0,0,0" Opacity="0.6" FontSize="11"/>
                                 </StackPanel>
                             </StackPanel>
