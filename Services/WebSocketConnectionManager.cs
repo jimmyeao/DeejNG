@@ -130,15 +130,38 @@ namespace DeejNG.Services
             await SendRawAsync(payload);
         }
 
-        /// <summary>Sends VU meter levels (0.0–1.0) to the device for display.</summary>
+        /// <summary>
+        /// Sends VU meter levels (0.0–1.0) to the device for display.
+        /// Uses non-blocking lock acquisition — frames are dropped if the socket is busy,
+        /// which prevents VU from blocking higher-priority state/config messages.
+        /// </summary>
         public async Task SendVuAsync(float[] levels)
         {
-            if (!_isConnected) return;
+            if (!_isConnected || _ws?.State != WebSocketState.Open) return;
 
-            // Round to 2 decimal places to keep payloads compact
-            var rounded = Array.ConvertAll(levels, l => Math.Round(l, 2));
-            var payload = JsonSerializer.Serialize(new { type = "vu", levels = rounded });
-            await SendRawAsync(payload);
+            // Don't queue — drop this frame if the socket already has a send in flight
+            if (!await _sendLock.WaitAsync(0)) return;
+
+            try
+            {
+                if (_ws?.State != WebSocketState.Open) return;
+                var rounded = Array.ConvertAll(levels, l => Math.Round(l, 2));
+                var payload = JsonSerializer.Serialize(new { type = "vu", levels = rounded });
+                var bytes = Encoding.UTF8.GetBytes(payload);
+                await _ws.SendAsync(
+                    new ArraySegment<byte>(bytes),
+                    WebSocketMessageType.Text,
+                    endOfMessage: true,
+                    _cts?.Token ?? CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[WS] SendVuAsync failed: {ex.Message}");
+            }
+            finally
+            {
+                _sendLock.Release();
+            }
         }
 
         public void Dispose()

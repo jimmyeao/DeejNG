@@ -68,6 +68,10 @@ namespace DeejNG
         private int[] _lastWsVols;
         private bool[] _lastWsMutes;
 
+        // Throttle VU sends to ~10Hz to avoid flooding the socket
+        private DateTime _lastWsVuSend = DateTime.MinValue;
+        private static readonly TimeSpan WsVuInterval = TimeSpan.FromMilliseconds(100);
+
         private readonly AppSettingsManager _settingsManager;
 
         private readonly ISystemIntegrationService _systemIntegrationService;
@@ -3450,11 +3454,16 @@ namespace DeejNG
                     }
                 }
 
-                // Send freshly-computed VU levels to OledDeej device
+                // Send freshly-computed VU levels to OledDeej device (~10Hz, not 40Hz)
                 if (wsVuNeeded)
                 {
-                    var vuLevels = _channelControls.Take(5).Select(c => c.MeterLevel).ToArray();
-                    _ = _wsManager.SendVuAsync(vuLevels);
+                    var now = DateTime.Now;
+                    if (now - _lastWsVuSend >= WsVuInterval)
+                    {
+                        _lastWsVuSend = now;
+                        var vuLevels = _channelControls.Take(5).Select(c => c.MeterLevel).ToArray();
+                        _ = _wsManager.SendVuAsync(vuLevels);
+                    }
                 }
             }
             catch (Exception ex)
