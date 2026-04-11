@@ -2856,7 +2856,14 @@ namespace DeejNG
                         anyVolumeChanged = true;
                     }
 
-                    if (latestMutes != null && latestMutes.Length > i && ctrl.IsMuted != latestMutes[i])
+                    // Only apply device mute if the DEVICE changed it (latestMutes differs from
+                    // _lastWsMutes). Comparing against ctrl.IsMuted alone races with software-mute
+                    // clicks: a stale "mutes[4]=false" update queued before the click fires after it
+                    // and undoes the user's action. Channel 5 is most affected because enc4Count
+                    // noise causes frequent updates, keeping a queued callback almost always pending.
+                    bool deviceMuteChanged = latestMutes != null && latestMutes.Length > i &&
+                        (_lastWsMutes == null || i >= _lastWsMutes.Length || latestMutes[i] != _lastWsMutes[i]);
+                    if (deviceMuteChanged && ctrl.IsMuted != latestMutes[i])
                         ctrl.SetMuted(latestMutes[i], applyToAudio: true);
                 }
 
@@ -3110,11 +3117,25 @@ namespace DeejNG
                 // Track mute changes to send to device (binary — no rounding issue)
                 bool baselineMuted = _lastWsMutes != null && i < _lastWsMutes.Length
                     ? _lastWsMutes[i] : ctrl.IsMuted;
+
+                // Guard: if ctrl and device both say "muted" but Windows read-back says "not muted",
+                // the mute may not have propagated yet or failed silently — re-apply rather than
+                // telling the device to unmute.  This prevents the "mutes then immediately unmutes"
+                // race on device-initiated mute presses.
+                if (ctrl.IsMuted && !muted && ctrl.IsMuted == baselineMuted)
+                {
+                    // Re-apply the mute; treat channel as still muted for this tick
+                    ApplyVolumeToTargets(ctrl, ctrl.AudioTargets, ctrl.CurrentVolume);
+                    muted = true;
+                    mutes[i] = true;
+                }
+                else if (ctrl.IsMuted != muted)
+                {
+                    ctrl.SetMuted(muted, applyToAudio: false);
+                }
+
                 if (muted != baselineMuted)
                     anyMuteChanged = true;
-
-                if (ctrl.IsMuted != muted)
-                    ctrl.SetMuted(muted, applyToAudio: false);
             }
 
             // Only send mute-state changes to the device (never volumes from this timer)
