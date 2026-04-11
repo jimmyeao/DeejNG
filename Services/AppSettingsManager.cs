@@ -159,7 +159,11 @@ namespace DeejNG.Services
                 // Preserve WebSocket / connection mode settings
                 ConnectionMode = AppSettings.ConnectionMode,
                 WebSocketHost = AppSettings.WebSocketHost,
-                WebSocketPort = AppSettings.WebSocketPort
+                WebSocketPort = AppSettings.WebSocketPort,
+
+                // Preserve OledDeej device config settings
+                OledScreensaverTimeoutSeconds = AppSettings.OledScreensaverTimeoutSeconds,
+                OledEncoderSensitivity = AppSettings.OledEncoderSensitivity
             };
         }
 

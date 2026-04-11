@@ -188,6 +188,13 @@ namespace DeejNG.Classes
         /// </summary>
         public int OledScreensaverTimeoutSeconds { get; set; } = 300;
 
+        /// <summary>
+        /// Gets or sets the encoder sensitivity divisor sent to the OledDeej device.
+        /// 1 = coarse (4 vol units/click), 2 = medium (2/click), 4 = fine (1/click).
+        /// Sent to the device as part of the config message on connect.
+        /// </summary>
+        public int OledEncoderSensitivity { get; set; } = 4;
+
         #endregion Public Properties
     }
 

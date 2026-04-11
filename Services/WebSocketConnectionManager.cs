@@ -12,7 +12,11 @@ namespace DeejNG.Services
     /// <summary>
     /// Manages a WebSocket connection to an OledDeej device.
     /// Sends channel config, volume state, and VU meter data.
-    /// Receives volume/mute update messages from the device (rotary encoder changes).
+    /// Receives snapshot-based volume/mute updates from the device.
+    /// Protocol: the device sends absolute display values (0–100) at ≤20 Hz during
+    /// user interaction. Each "update" message is an authoritative snapshot — the latest
+    /// message always wins. The device does NOT send an unsolicited update on connect;
+    /// the app must push config + state first.
     /// </summary>
     public sealed class WebSocketConnectionManager : IConnectionManager
     {
@@ -41,7 +45,9 @@ namespace DeejNG.Services
 
         /// <summary>
         /// Raised when the device sends an "update" message (encoder turned or button pressed).
-        /// vol: per-channel volumes 0–100. mute: per-channel mute states.
+        /// Each message is a snapshot: vol contains absolute display values 0–100 (not deltas),
+        /// mute contains per-channel mute states. The latest message is always authoritative.
+        /// Arrives at ≤20 Hz during active user interaction.
         /// Raised on the thread-pool — callers must Dispatcher.BeginInvoke to touch UI.
         /// </summary>
         public event Action<int[], bool[]>? UpdateReceived;
@@ -111,17 +117,18 @@ namespace DeejNG.Services
             DisconnectInternal();
         }
 
-        /// <summary>Sends channel names and screensaver timeout to the device OLED displays.</summary>
-        public async Task SendConfigAsync(string[] names, int screensaverSeconds = 300)
+        /// <summary>Sends channel names, screensaver timeout, and encoder sensitivity to the device.</summary>
+        public async Task SendConfigAsync(string[] names, int screensaverSeconds = 300, int encoderSensitivity = 4)
         {
             if (!_isConnected) return;
-            var payload = JsonSerializer.Serialize(new { type = "config", names, screensaver = screensaverSeconds });
+            var payload = JsonSerializer.Serialize(new { type = "config", names, screensaver = screensaverSeconds, sensitivity = encoderSensitivity });
             await SendRawAsync(payload);
         }
 
         /// <summary>
         /// Sends initial volume and mute state to the device.
-        /// Must be called on connect because the device uses rotary encoders (no absolute position).
+        /// Must be called on connect (after SendConfigAsync) to seed the device's displays.
+        /// The device will not send any updates until it has received config + state.
         /// </summary>
         public async Task SendStateAsync(int[] vols, bool[] mutes)
         {
@@ -215,7 +222,6 @@ namespace DeejNG.Services
                 foreach (var el in muteEl.EnumerateArray())
                     muteArr[i++] = el.GetBoolean();
 
-                Debug.WriteLine($"[WS] Update received: vol=[{string.Join(",", volArr)}]");
                 UpdateReceived?.Invoke(volArr, muteArr);
             }
             catch (Exception ex)

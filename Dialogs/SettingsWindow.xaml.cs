@@ -93,6 +93,7 @@ namespace DeejNG.Dialogs
                 WsHostTextBox.Text = _settings.WebSocketHost;
                 WsPortTextBox.Text = _settings.WebSocketPort.ToString();
                 InitializeScreensaverComboBox();
+                InitializeEncoderSensitivityComboBox();
                 UpdateConnectionPanelVisibility();
 
                 // Initialize exclusion list from settings
@@ -321,6 +322,32 @@ namespace DeejNG.Dialogs
             ScreensaverTimeoutComboBox.SelectedIndex = bestMatch;
         }
 
+        /// <summary>
+        /// Populates and selects the encoder sensitivity ComboBox from AppSettings.
+        /// </summary>
+        private void InitializeEncoderSensitivityComboBox()
+        {
+            var options = new (string Label, int Divisor)[]
+            {
+                ("Coarse (4/click)", 1),
+                ("Medium (2/click)", 2),
+                ("Fine   (1/click)", 4),
+            };
+
+            EncoderSensitivityComboBox.Items.Clear();
+            int saved = _settings?.OledEncoderSensitivity ?? 4;
+            int bestMatch = 2; // default to Fine
+
+            foreach (var (label, divisor) in options)
+            {
+                var item = new ComboBoxItem { Content = label, Tag = divisor.ToString() };
+                EncoderSensitivityComboBox.Items.Add(item);
+                if (divisor == saved) bestMatch = EncoderSensitivityComboBox.Items.Count - 1;
+            }
+
+            EncoderSensitivityComboBox.SelectedIndex = bestMatch;
+        }
+
         /// Helper to select the baud rate option matching AppSettings.BaudRate, defaulting to 9600 if not set.
         /// </summary>
         private void InitializeBaudRateSelection()
@@ -463,6 +490,9 @@ namespace DeejNG.Dialogs
             if (ScreensaverTimeoutComboBox.SelectedItem is ComboBoxItem ssItem &&
                 int.TryParse(ssItem.Tag?.ToString(), out int ssSeconds))
                 _settings.OledScreensaverTimeoutSeconds = ssSeconds;
+            if (EncoderSensitivityComboBox.SelectedItem is ComboBoxItem sensItem &&
+                int.TryParse(sensItem.Tag?.ToString(), out int sensitivity))
+                _settings.OledEncoderSensitivity = sensitivity;
 
             // Handle COM port change - only in serial mode
             if (_mainWindow != null &&

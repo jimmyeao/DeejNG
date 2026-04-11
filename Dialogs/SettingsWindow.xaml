@@ -134,10 +134,15 @@
                                     <TextBox x:Name="WsPortTextBox" Width="80" Padding="4,2" VerticalContentAlignment="Center"/>
                                     <Button x:Name="WsConnectButton" Content="Connect" Style="{StaticResource ModernButton}" Margin="8,0,0,0" Click="WsConnect_Click"/>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                     <TextBlock Text="Screensaver:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
                                     <ComboBox x:Name="ScreensaverTimeoutComboBox" Width="130" Style="{StaticResource ModernComboBox}"/>
                                     <TextBlock Text="(0 = disabled)" VerticalAlignment="Center" Margin="8,0,0,0" Opacity="0.6" FontSize="11"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
+                                    <TextBlock Text="Sensitivity:" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Width="80"/>
+                                    <ComboBox x:Name="EncoderSensitivityComboBox" Width="130" Style="{StaticResource ModernComboBox}"/>
+                                    <TextBlock Text="(vol units/click)" VerticalAlignment="Center" Margin="8,0,0,0" Opacity="0.6" FontSize="11"/>
                                 </StackPanel>
                             </StackPanel>
                         </StackPanel>

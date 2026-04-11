@@ -72,10 +72,19 @@ namespace DeejNG
         private DateTime _lastWsVuSend = DateTime.MinValue;
         private static readonly TimeSpan WsVuInterval = TimeSpan.FromMilliseconds(100);
 
-        // Suppress poll-based sync briefly after receiving a device-driven update,
+        // Suppress poll-based sync briefly after receiving a device snapshot,
         // so Windows audio has time to settle before we re-read and potentially bounce back
         private DateTime _lastWsReceiveTime = DateTime.MinValue;
         private static readonly TimeSpan WsReceiveSuppressWindow = TimeSpan.FromMilliseconds(500);
+
+        // Tracks the last device-reported absolute volumes (0–100) as the authoritative baseline.
+        // The sync timer uses these (not Windows read-back) for comparison.
+        private int[] _wsDeviceAppliedVols;
+
+        // WebSocket message coalescing: device sends snapshots at ≤20 Hz — only process the latest
+        private volatile int[] _pendingWsVols;
+        private volatile bool[] _pendingWsMutes;
+        private volatile bool _wsUpdateQueued;
 
         private readonly AppSettingsManager _settingsManager;
 
@@ -574,6 +583,16 @@ namespace DeejNG
             _settingsManager.AppSettings.WebSocketHost = newSettings.WebSocketHost;
             _settingsManager.AppSettings.WebSocketPort = newSettings.WebSocketPort;
 
+            // Update OledDeej device config settings
+            _settingsManager.AppSettings.OledScreensaverTimeoutSeconds = newSettings.OledScreensaverTimeoutSeconds;
+            _settingsManager.AppSettings.OledEncoderSensitivity = newSettings.OledEncoderSensitivity;
+
+            // Re-send config to device immediately so new sensitivity/screensaver takes effect without restart
+            if (_settingsManager.AppSettings.ConnectionMode == ConnectionMode.WebSocket && _wsManager.IsConnected)
+            {
+                SendWebSocketChannelNames();
+            }
+
             if (modeChanged)
             {
                 _serialManager.ManualDisconnect();
@@ -1005,12 +1024,12 @@ namespace DeejNG
 
                 // AUTO-CONNECT: Handle port switching (even during initialization)
                 // Skip only if we're in the very first load and no user interaction
-                if (_hasLoadedInitialSettings)
+                // Never attempt serial connection in WebSocket mode
+                if (_hasLoadedInitialSettings &&
+                    _settingsManager.AppSettings.ConnectionMode != ConnectionMode.WebSocket)
                 {
                     bool isCurrentlyConnected = _serialManager.IsConnected;
                     string currentPort = _serialManager.CurrentPort;
-
-
 
                     // If connected to a different port, disconnect and reconnect
                     if (isCurrentlyConnected && !string.IsNullOrEmpty(currentPort) &&
@@ -2550,7 +2569,7 @@ namespace DeejNG
         {
             if (_settingsManager.AppSettings.ConnectionMode != ConnectionMode.WebSocket || !_wsManager.IsConnected) return;
             var names = _channelControls.Take(5).Select(c => GetChannelLabel(c)).ToArray();
-            _ = _wsManager.SendConfigAsync(names, _settingsManager.AppSettings.OledScreensaverTimeoutSeconds);
+            _ = _wsManager.SendConfigAsync(names, _settingsManager.AppSettings.OledScreensaverTimeoutSeconds, _settingsManager.AppSettings.OledEncoderSensitivity);
         }
 
         /// <summary>
@@ -2656,7 +2675,7 @@ namespace DeejNG
             var names = _channelControls.Take(5)
                 .Select(c => GetChannelLabel(c))
                 .ToArray();
-            await _wsManager.SendConfigAsync(names, _settingsManager.AppSettings.OledScreensaverTimeoutSeconds);
+            await _wsManager.SendConfigAsync(names, _settingsManager.AppSettings.OledScreensaverTimeoutSeconds, _settingsManager.AppSettings.OledEncoderSensitivity);
 
             // Get sessions once — prefer the already-cached collection from UpdateMeters;
             // fall back to a fresh fetch only on connect (before UpdateMeters has run).
@@ -2704,47 +2723,73 @@ namespace DeejNG
 
         private void HandleWebSocketUpdate(int[] vols, bool[] mutes)
         {
-            // Record receive time before dispatching so the poll suppression window starts immediately
+            // Record receive time before dispatching so the poll suppression window starts immediately.
+            // This is set on EVERY message so rapid encoder bursts keep the window open.
             _lastWsReceiveTime = DateTime.Now;
+
+            // Coalesce: store the latest values; only queue one dispatcher callback at a time.
+            // The device sends snapshots at ≤20 Hz — only the latest matters.
+            _pendingWsVols = vols;
+            _pendingWsMutes = mutes;
+
+            if (_wsUpdateQueued) return;
+            _wsUpdateQueued = true;
 
             // Raised on threadpool — dispatch to UI
             Dispatcher.BeginInvoke(() =>
             {
-                if (!_allowVolumeApplication || _isClosing) return;
+                // CRITICAL: Allow new callbacks to be queued BEFORE reading values.
+                // Otherwise a message arriving between the read and the flag-clear
+                // would see _wsUpdateQueued==true, skip queuing, and be lost.
+                _wsUpdateQueued = false;
 
-                int count = Math.Min(vols.Length, Math.Min(_channelControls.Count, 5));
+                var latestVols = _pendingWsVols;
+                var latestMutes = _pendingWsMutes;
+
+                if (!_allowVolumeApplication || _isClosing || latestVols == null) return;
+
+                // Refresh suppress timestamp on the UI thread too, so the sync timer
+                // (which also runs on UI thread) always sees the latest value.
+                _lastWsReceiveTime = DateTime.Now;
+
+                bool anyVolumeChanged = false;
+                int count = Math.Min(latestVols.Length, Math.Min(_channelControls.Count, 5));
                 for (int i = 0; i < count; i++)
                 {
                     var ctrl = _channelControls[i];
 
-                    float level = Math.Clamp(vols[i] / 100f, 0f, 1f);
-                    if (_useExponentialVolume)
-                        level = (MathF.Pow(_exponentialVolumeFactor, level) / (_exponentialVolumeFactor - 1)) - (1 / (_exponentialVolumeFactor - 1));
+                    // Snapshot-based protocol: the device sends absolute display values (0–100)
+                    // that represent exactly what the OLED screens show. Apply directly without
+                    // exponential curve — the device is authoritative and values must stay in step.
+                    float level = Math.Clamp(latestVols[i] / 100f, 0f, 1f);
 
                     float currentVolume = ctrl.CurrentVolume;
                     if (Math.Abs(currentVolume - level) >= 0.005f)
                     {
-                        ctrl.SmoothAndSetVolume(level, suppressEvent: false, disableSmoothing: _disableSmoothing);
+                        // Always bypass smoothing: the device already rate-limits to ≤20 Hz
+                        // and sends the final intended value. Any app-side smoothing would
+                        // cause the Windows volume to lag behind the device display.
+                        ctrl.SmoothAndSetVolume(level, suppressEvent: false, disableSmoothing: true);
                         ApplyVolumeToTargets(ctrl, ctrl.AudioTargets, level);
-                        ShowVolumeOverlay();
+                        anyVolumeChanged = true;
                     }
 
                     // Sync mute state from device
-                    if (mutes.Length > i && ctrl.IsMuted != mutes[i])
-                        ctrl.SetMuted(mutes[i], applyToAudio: true);
+                    if (latestMutes.Length > i && ctrl.IsMuted != latestMutes[i])
+                        ctrl.SetMuted(latestMutes[i], applyToAudio: true);
                 }
 
-                // Keep baseline in sync so the volume poll doesn't treat device-driven
-                // changes as external changes and redundantly re-send them
-                if (_lastWsVols != null && vols.Length <= _lastWsVols.Length)
-                {
-                    for (int i = 0; i < Math.Min(vols.Length, _lastWsVols.Length); i++)
-                    {
-                        _lastWsVols[i] = vols[i];
-                        if (_lastWsMutes != null && i < _lastWsMutes.Length && mutes.Length > i)
-                            _lastWsMutes[i] = mutes[i];
-                    }
-                }
+                // Show overlay once after processing all channels
+                if (anyVolumeChanged)
+                    ShowVolumeOverlay();
+
+                // Record the device-reported values as the authoritative baseline.
+                // The sync timer uses these (not Windows read-back) for comparison,
+                // so float→int rounding noise can never trigger a false "changed".
+                _wsDeviceAppliedVols = (int[])latestVols.Clone();
+                _lastWsVols = (int[])latestVols.Clone();
+                if (latestMutes != null)
+                    _lastWsMutes = (bool[])latestMutes.Clone();
             });
         }
 
@@ -2769,47 +2814,67 @@ namespace DeejNG
             if (_isClosing || !_wsManager.IsConnected || !_allowVolumeApplication) return;
             if (_channelControls.Count == 0) return;
 
-            // Wait for Windows audio to settle after a device-driven change before polling
+            // Suppress entirely while the device is actively sending updates.
+            // _lastWsReceiveTime is refreshed on EVERY incoming message AND when
+            // the dispatcher callback processes it, so this window stays open for
+            // the entire duration of a rapid encoder burst.
             if (DateTime.Now - _lastWsReceiveTime < WsReceiveSuppressWindow) return;
 
             int count = Math.Min(_channelControls.Count, 5);
-            var vols = new int[count];
-            var mutes = new bool[count];
-            bool anyChanged = false;
 
             // Get sessions once — reuses _cachedAudioDevice, no new COM object per channel
             var sessions = GetCachedSessions();
 
-            for (int i = 0; i < count; i++)
-            {
-                var (vol, muted) = ReadWindowsVolumeForChannel(_channelControls[i], sessions);
-                vols[i] = (int)Math.Round(vol * 100f);
-                mutes[i] = muted;
+            // Read current Windows volumes and sync mute state only.
+            // IMPORTANT: We must NEVER send volume values back to the device via
+            // SendStateAsync from this timer.  The device uses rotary encoders with
+            // no absolute position — it tracks volume internally, seeded by our app
+            // on connect.  If we send a volume "correction" here, it RESEEDS the
+            // device's internal state, creating a feedback loop:
+            //   device sends 100 → Windows rounds to 99 → we send 99 back →
+            //   device reseeds to 99 → user hasn't touched encoder but lost 1%.
+            // Volume flow is one-way: device → app.  Only mute (binary, no rounding)
+            // is safe to sync back because the user may toggle mute in Windows mixer.
+            bool anyMuteChanged = false;
+            var mutes = new bool[count];
 
-                bool volChanged = _lastWsVols == null || i >= _lastWsVols.Length || vols[i] != _lastWsVols[i];
-                bool muteChanged = _lastWsMutes == null || i >= _lastWsMutes.Length || mutes[i] != _lastWsMutes[i];
-
-                if (volChanged || muteChanged)
-                    anyChanged = true;
-            }
-
-            if (!anyChanged) return;
-
-            _lastWsVols = vols;
-            _lastWsMutes = mutes;
-
-            // Send updated state to device
-            _ = _wsManager.SendStateAsync(vols, mutes);
-
-            // Sync sliders to match Windows (suppressed — no re-apply to audio)
             for (int i = 0; i < count; i++)
             {
                 var ctrl = _channelControls[i];
-                float level = vols[i] / 100f;
-                if (Math.Abs(ctrl.CurrentVolume - level) >= 0.01f)
-                    ctrl.SmoothAndSetVolume(level, suppressEvent: true, disableSmoothing: true);
-                if (ctrl.IsMuted != mutes[i])
-                    ctrl.SetMuted(mutes[i], applyToAudio: false);
+                var (vol, muted) = ReadWindowsVolumeForChannel(ctrl, sessions);
+                mutes[i] = muted;
+
+                // Sync slider UI to reflect external Windows volume changes
+                // (e.g. user moved the Windows mixer slider directly).
+                // This does NOT re-apply to audio or send anything to the device.
+                float windowsLevel = (int)Math.Round(vol * 100f) / 100f;
+                if (Math.Abs(ctrl.CurrentVolume - windowsLevel) >= 0.02f)
+                    ctrl.SmoothAndSetVolume(windowsLevel, suppressEvent: true, disableSmoothing: true);
+
+                // Track mute changes to send to device (binary — no rounding issue)
+                bool baselineMuted = _lastWsMutes != null && i < _lastWsMutes.Length
+                    ? _lastWsMutes[i] : ctrl.IsMuted;
+                if (muted != baselineMuted)
+                    anyMuteChanged = true;
+
+                if (ctrl.IsMuted != muted)
+                    ctrl.SetMuted(muted, applyToAudio: false);
+            }
+
+            // Only send mute-state changes to the device (never volumes from this timer)
+            if (anyMuteChanged)
+            {
+                // Build current vol array from device baseline (don't use Windows read-back)
+                var vols = new int[count];
+                for (int i = 0; i < count; i++)
+                {
+                    vols[i] = (_wsDeviceAppliedVols != null && i < _wsDeviceAppliedVols.Length)
+                        ? _wsDeviceAppliedVols[i]
+                        : (_lastWsVols != null && i < _lastWsVols.Length ? _lastWsVols[i] : (int)Math.Round(_channelControls[i].CurrentVolume * 100f));
+                }
+
+                _lastWsMutes = mutes;
+                _ = _wsManager.SendStateAsync(vols, mutes);
             }
         }
 
