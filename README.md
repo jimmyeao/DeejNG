@@ -70,7 +70,8 @@ OledDeej is a Wi-Fi-enabled hardware device with an OLED display. DeejNG connect
 4. Click **Connect**. DeejNG will push channel config and current volume/mute state to the device on connect.
 
 <!-- TODO: Add screenshot of WebSocket connection settings -->
-![WebSocket Settings placeholder](docs/images/websocket-settings.png)
+<img width="449" height="289" alt="image" src="https://github.com/user-attachments/assets/da101c55-7ce1-4a20-9ecd-a4564d25796c" />
+
 
 ### 🎯 Assigning Targets
 
@@ -90,7 +91,8 @@ When using OledDeej in WebSocket mode, pressing the encoder button on a channel 
 - The overlay closes automatically on confirm or cancel.
 
 <!-- TODO: Add screenshot of channel picker overlay -->
-![Channel Picker Overlay placeholder](docs/images/channel-picker-overlay.png)
+<img width="300" height="418" alt="image" src="https://github.com/user-attachments/assets/4c44d883-43d9-496c-b04d-4ac0526e306c" />
+
 
 ### 🔇 Mute / Unmute
 
@@ -132,8 +134,7 @@ Configure physical buttons for:
 
 Configure multiple profiles for different scenarios (Gaming, Streaming, Work, etc.). Each profile stores a complete snapshot of all channel assignments and settings.
 
-<!-- TODO: Add screenshot of profiles UI -->
-![Profiles placeholder](docs/images/profiles.png)
+
 
 ### 🔔 Floating Overlay
 
