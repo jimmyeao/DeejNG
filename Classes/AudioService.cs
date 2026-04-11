@@ -395,6 +395,29 @@ namespace DeejNG.Services
 
 
         /// <summary>
+        /// Returns a sorted list of application names that currently have audio sessions,
+        /// plus the special targets "system", "unmapped", and "current".
+        /// Used to populate the hardware encoder picker.
+        /// </summary>
+        public List<string> GetRunningAppNames()
+        {
+            if ((DateTime.Now - _lastRefresh).TotalSeconds > CACHE_REFRESH_SECONDS)
+                RefreshSessionCache();
+
+            var names = new List<string> { "system", "unmapped", "current" };
+
+            lock (_cacheLock)
+            {
+                names.AddRange(
+                    _sessionCache.Keys
+                        .Where(k => !string.IsNullOrEmpty(k))
+                        .OrderBy(k => k, StringComparer.OrdinalIgnoreCase));
+            }
+
+            return names;
+        }
+
+        /// <summary>
         /// Forces cleanup of the session cache by retaining only the most recently accessed session groups
         /// and clearing all others. Also invokes a lower-level cleanup routine.
         /// </summary>

@@ -46,11 +46,13 @@ namespace DeejNG.Services
         /// <summary>
         /// Raised when the device sends an "update" message (encoder turned or button pressed).
         /// Each message is a snapshot: vol contains absolute display values 0–100 (not deltas),
-        /// mute contains per-channel mute states. The latest message is always authoritative.
+        /// mute/bak/con contain per-channel toggle states. The latest message is always authoritative.
         /// Arrives at ≤20 Hz during active user interaction.
+        /// bak = BACK button toggle state per channel (flips on each press).
+        /// con = CONFIRM button toggle state per channel (flips on each press).
         /// Raised on the thread-pool — callers must Dispatcher.BeginInvoke to touch UI.
         /// </summary>
-        public event Action<int[], bool[]>? UpdateReceived;
+        public event Action<int[], bool[], bool[], bool[]>? UpdateReceived;
 
         #endregion Public Events
 
@@ -222,7 +224,25 @@ namespace DeejNG.Services
                 foreach (var el in muteEl.EnumerateArray())
                     muteArr[i++] = el.GetBoolean();
 
-                UpdateReceived?.Invoke(volArr, muteArr);
+                // bak = BACK button toggle state (optional — older firmware may omit)
+                bool[] bakArr = new bool[volArr.Length];
+                if (root.TryGetProperty("bak", out var bakEl))
+                {
+                    i = 0;
+                    foreach (var el in bakEl.EnumerateArray())
+                        if (i < bakArr.Length) bakArr[i++] = el.GetBoolean();
+                }
+
+                // con = CONFIRM button toggle state (optional — older firmware may omit)
+                bool[] conArr = new bool[volArr.Length];
+                if (root.TryGetProperty("con", out var conEl))
+                {
+                    i = 0;
+                    foreach (var el in conEl.EnumerateArray())
+                        if (i < conArr.Length) conArr[i++] = el.GetBoolean();
+                }
+
+                UpdateReceived?.Invoke(volArr, muteArr, bakArr, conArr);
             }
             catch (Exception ex)
             {

@@ -84,7 +84,17 @@ namespace DeejNG
         // WebSocket message coalescing: device sends snapshots at ≤20 Hz — only process the latest
         private volatile int[] _pendingWsVols;
         private volatile bool[] _pendingWsMutes;
+        private volatile bool[] _pendingWsBaks;
+        private volatile bool[] _pendingWsCons;
         private volatile bool _wsUpdateQueued;
+
+        // Per-channel last-known bak/con toggle states for edge detection (false = initial)
+        private bool[] _lastBak = new bool[5];
+        private bool[] _lastCon = new bool[5];
+
+        // Hardware encoder picker state (null = picker closed)
+        private ChannelPickerState? _activePicker;
+        private ChannelPickerOverlay? _pickerOverlay;
 
         private readonly AppSettingsManager _settingsManager;
 
@@ -287,12 +297,17 @@ namespace DeejNG
                 _timerCoordinator.StopWsVolumeSync();
                 Dispatcher.BeginInvoke(() =>
                 {
+                    // Close any open picker — device is gone
+                    ClosePickerWindow();
+                });
+                Dispatcher.BeginInvoke(() =>
+                {
                     UpdateConnectionStatus();
                     if (_wsManager.ShouldAttemptReconnect)
                         _timerCoordinator.StartWsReconnect();
                 }, DispatcherPriority.Background);
             };
-            _wsManager.UpdateReceived += HandleWebSocketUpdate;
+            _wsManager.UpdateReceived += (vols, mutes, baks, cons) => HandleWebSocketUpdate(vols, mutes, baks, cons);
 
             StartSessionCacheUpdater();
 
@@ -1104,47 +1119,68 @@ namespace DeejNG
 
         private void Connect_Click(object sender, RoutedEventArgs e)
         {
-            if (_serialManager.IsConnected)
+            if (_settingsManager.AppSettings.ConnectionMode == ConnectionMode.WebSocket)
             {
-                // User wants to disconnect manually
-                _timerCoordinator.StopSerialReconnect();
-                _serialManager.ManualDisconnect();
-            }
-            else
-            {
-                // User wants to connect to selected port
-                if (ComPortSelector.SelectedItem is string selectedPort)
+                // In WebSocket mode the main Connect button toggles the WS connection
+                if (_wsManager.IsConnected)
                 {
-
-
-                    // Use the last saved baud rate if available, otherwise default to 9600
-                    int baud = _settingsManager.AppSettings.BaudRate > 0
-                        ? _settingsManager.AppSettings.BaudRate
-                        : 9600;
-
-                    // Update button state immediately
-                    ConnectButton.IsEnabled = false;
-                    ConnectButton.Content = "Connecting...";
-
-                    // Stop automatic reconnection while user is manually connecting
-                    _timerCoordinator.StopSerialReconnect();
-
-                    // Try connection
-                    _serialManager.InitSerial(selectedPort, baud);
-
-                    // Reset button after short delay
-                    var resetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-                    resetTimer.Tick += (s, args) =>
-                    {
-                        resetTimer.Stop();
-                        UpdateConnectionStatus();
-                    };
-                    resetTimer.Start();
+                    _timerCoordinator.StopWsReconnect();
+                    _wsManager.ManualDisconnect();
+                    UpdateConnectionStatus();
                 }
                 else
                 {
-                    MessageBox.Show("Please select a COM port first.", "No Port Selected",
-                                  MessageBoxButton.OK, MessageBoxImage.Information);
+                    var settings = _settingsManager.AppSettings;
+                    TriggerWebSocketConnect(settings.WebSocketHost, settings.WebSocketPort);
+                }
+            }
+            else
+            {
+                // Serial mode
+                if (_serialManager.IsConnected)
+                {
+                    // User wants to disconnect manually
+                    _timerCoordinator.StopSerialReconnect();
+                    _serialManager.ManualDisconnect();
+                }
+                else
+                {
+                    // User wants to connect to selected port
+                    if (ComPortSelector.SelectedItem is string selectedPort)
+                    {
+                        // Use the last saved baud rate if available, otherwise default to 9600
+                        int baud = _settingsManager.AppSettings.BaudRate > 0
+                            ? _settingsManager.AppSettings.BaudRate
+                            : 9600;
+
+                        // Update button state immediately
+                        ConnectButton.IsEnabled = false;
+                        ConnectButton.Content = "Connecting...";
+
+                        // Stop automatic reconnection while user is manually connecting
+                        _timerCoordinator.StopSerialReconnect();
+
+                        // Disconnect WebSocket if somehow still open
+                        if (_wsManager.IsConnected)
+                            _wsManager.ManualDisconnect();
+
+                        // Try connection
+                        _serialManager.InitSerial(selectedPort, baud);
+
+                        // Reset button after short delay
+                        var resetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                        resetTimer.Tick += (s, args) =>
+                        {
+                            resetTimer.Stop();
+                            UpdateConnectionStatus();
+                        };
+                        resetTimer.Start();
+                    }
+                    else
+                    {
+                        MessageBox.Show("Please select a COM port first.", "No Port Selected",
+                                      MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
                 }
             }
         }
@@ -2721,7 +2757,7 @@ namespace DeejNG
                 _timerCoordinator.StartMeters();
         }
 
-        private void HandleWebSocketUpdate(int[] vols, bool[] mutes)
+        private void HandleWebSocketUpdate(int[] vols, bool[] mutes, bool[] baks, bool[] cons)
         {
             // Record receive time before dispatching so the poll suppression window starts immediately.
             // This is set on EVERY message so rapid encoder bursts keep the window open.
@@ -2729,8 +2765,10 @@ namespace DeejNG
 
             // Coalesce: store the latest values; only queue one dispatcher callback at a time.
             // The device sends snapshots at ≤20 Hz — only the latest matters.
-            _pendingWsVols = vols;
+            _pendingWsVols  = vols;
             _pendingWsMutes = mutes;
+            _pendingWsBaks  = baks;
+            _pendingWsCons  = cons;
 
             if (_wsUpdateQueued) return;
             _wsUpdateQueued = true;
@@ -2743,8 +2781,10 @@ namespace DeejNG
                 // would see _wsUpdateQueued==true, skip queuing, and be lost.
                 _wsUpdateQueued = false;
 
-                var latestVols = _pendingWsVols;
+                var latestVols  = _pendingWsVols;
                 var latestMutes = _pendingWsMutes;
+                var latestBaks  = _pendingWsBaks;
+                var latestCons  = _pendingWsCons;
 
                 if (!_allowVolumeApplication || _isClosing || latestVols == null) return;
 
@@ -2752,30 +2792,71 @@ namespace DeejNG
                 // (which also runs on UI thread) always sees the latest value.
                 _lastWsReceiveTime = DateTime.Now;
 
-                bool anyVolumeChanged = false;
                 int count = Math.Min(latestVols.Length, Math.Min(_channelControls.Count, 5));
+
+                // ── 1. Process BAK/CON button edge-changes (picker control) ────────────
+                if (latestBaks != null && latestCons != null)
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        bool bakChanged = i < latestBaks.Length && latestBaks[i] != _lastBak[i];
+                        bool conChanged = i < latestCons.Length && latestCons[i] != _lastCon[i];
+
+                        if (bakChanged)
+                        {
+                            _lastBak[i] = latestBaks[i];
+                            if (_activePicker?.ChannelIndex == i)
+                                CyclePicker();
+                        }
+
+                        if (conChanged)
+                        {
+                            _lastCon[i] = latestCons[i];
+                            if (_activePicker?.ChannelIndex == i)
+                                ConfirmPicker();
+                            else
+                                OpenPicker(i, latestVols, latestMutes);
+                        }
+                    }
+                }
+
+                // ── 2. Per-channel vol/mute — suppress for the active picker channel ──
+                bool anyVolumeChanged = false;
                 for (int i = 0; i < count; i++)
                 {
                     var ctrl = _channelControls[i];
 
-                    // Snapshot-based protocol: the device sends absolute display values (0–100)
-                    // that represent exactly what the OLED screens show. Apply directly without
-                    // exponential curve — the device is authoritative and values must stay in step.
-                    float level = Math.Clamp(latestVols[i] / 100f, 0f, 1f);
+                    // Picker active for this channel: scroll instead of applying vol/mute
+                    if (_activePicker?.ChannelIndex == i)
+                    {
+                        int prevVol = (_lastWsVols != null && i < _lastWsVols.Length)
+                            ? _lastWsVols[i] : latestVols[i];
+                        int delta = latestVols[i] - prevVol;
+                        if (delta != 0)
+                            ScrollPicker(Math.Sign(delta));
 
+                        // Also treat a mute-toggle as confirm (press encoder to select)
+                        if (latestMutes != null && latestMutes.Length > i &&
+                            _lastWsMutes != null && _lastWsMutes.Length > i &&
+                            latestMutes[i] != _lastWsMutes[i])
+                        {
+                            ConfirmPicker();
+                        }
+
+                        continue; // Skip normal vol/mute application while picker is open
+                    }
+
+                    // Normal mode
+                    float level = Math.Clamp(latestVols[i] / 100f, 0f, 1f);
                     float currentVolume = ctrl.CurrentVolume;
                     if (Math.Abs(currentVolume - level) >= 0.005f)
                     {
-                        // Always bypass smoothing: the device already rate-limits to ≤20 Hz
-                        // and sends the final intended value. Any app-side smoothing would
-                        // cause the Windows volume to lag behind the device display.
                         ctrl.SmoothAndSetVolume(level, suppressEvent: false, disableSmoothing: true);
                         ApplyVolumeToTargets(ctrl, ctrl.AudioTargets, level);
                         anyVolumeChanged = true;
                     }
 
-                    // Sync mute state from device
-                    if (latestMutes.Length > i && ctrl.IsMuted != latestMutes[i])
+                    if (latestMutes != null && latestMutes.Length > i && ctrl.IsMuted != latestMutes[i])
                         ctrl.SetMuted(latestMutes[i], applyToAudio: true);
                 }
 
@@ -2784,13 +2865,188 @@ namespace DeejNG
                     ShowVolumeOverlay();
 
                 // Record the device-reported values as the authoritative baseline.
-                // The sync timer uses these (not Windows read-back) for comparison,
-                // so float→int rounding noise can never trigger a false "changed".
                 _wsDeviceAppliedVols = (int[])latestVols.Clone();
-                _lastWsVols = (int[])latestVols.Clone();
+                _lastWsVols          = (int[])latestVols.Clone();
                 if (latestMutes != null)
                     _lastWsMutes = (bool[])latestMutes.Clone();
             });
+        }
+
+        // ── Picker state machine ────────────────────────────────────────────────
+
+        /// <summary>
+        /// Opens the picker for the given channel. If another picker is already open it is
+        /// closed first (one picker at a time enforced here).
+        /// </summary>
+        private void OpenPicker(int channelIndex, int[] currentVols, bool[] currentMutes)
+        {
+            if (channelIndex < 0 || channelIndex >= _channelControls.Count) return;
+
+            // Close any existing picker without applying selection
+            if (_activePicker != null)
+                ClosePickerWindow();
+
+            int snapshotVol   = (currentVols  != null && channelIndex < currentVols.Length)  ? currentVols[channelIndex]  : 0;
+            bool snapshotMute = (currentMutes != null && channelIndex < currentMutes.Length) ? currentMutes[channelIndex] : false;
+
+            _activePicker = new ChannelPickerState
+            {
+                ChannelIndex  = channelIndex,
+                SnapshotVol   = snapshotVol,
+                SnapshotMuted = snapshotMute,
+                Category      = PickerCategory.Apps,
+            };
+
+            RefreshPickerItems();
+
+            // Pre-select the current target in the list (if it exists)
+            var ctrl = _channelControls[channelIndex];
+            string currentTargetName = ctrl.AudioTargets.FirstOrDefault()?.Name ?? "";
+            int preselect = _activePicker.Items.FindIndex(t =>
+                string.Equals(t.Name, currentTargetName, StringComparison.OrdinalIgnoreCase));
+            _activePicker.SelectedIndex = preselect >= 0 ? preselect : 0;
+
+            string channelName = ctrl.TargetExecutable.Length > 0
+                ? $"Ch {channelIndex + 1}: {ctrl.TargetExecutable}"
+                : $"Channel {channelIndex + 1}";
+
+            if (_pickerOverlay == null)
+            {
+                _pickerOverlay = new ChannelPickerOverlay();
+                _pickerOverlay.Closed += (_, _) => { _pickerOverlay = null; _activePicker = null; };
+            }
+
+            _pickerOverlay.Refresh(_activePicker, channelName);
+            _pickerOverlay.Show();
+
+            Debug.WriteLine($"[Picker] Opened for channel {channelIndex} — {_activePicker.Items.Count} items in {_activePicker.Category}");
+        }
+
+        /// <summary>Cycles the picker to the next category and refreshes the item list.</summary>
+        private void CyclePicker()
+        {
+            if (_activePicker == null || _pickerOverlay == null) return;
+
+            _activePicker.Category = _activePicker.Category switch
+            {
+                PickerCategory.Apps    => PickerCategory.Inputs,
+                PickerCategory.Inputs  => PickerCategory.Outputs,
+                _                      => PickerCategory.Apps
+            };
+
+            RefreshPickerItems();
+            _activePicker.SelectedIndex = 0;
+
+            var ctrl = _channelControls[_activePicker.ChannelIndex];
+            string channelName = $"Channel {_activePicker.ChannelIndex + 1}";
+            _pickerOverlay.Refresh(_activePicker, channelName);
+
+            Debug.WriteLine($"[Picker] Cycled to {_activePicker.Category}");
+        }
+
+        /// <summary>Moves the picker selection by <paramref name="direction"/> (+1 = down, -1 = up).</summary>
+        private void ScrollPicker(int direction)
+        {
+            if (_activePicker == null || _pickerOverlay == null) return;
+            if (_activePicker.Items.Count == 0) return;
+
+            int newIndex = _activePicker.SelectedIndex + direction;
+            newIndex = Math.Max(0, Math.Min(_activePicker.Items.Count - 1, newIndex));
+
+            if (newIndex == _activePicker.SelectedIndex) return;
+            _activePicker.SelectedIndex = newIndex;
+
+            var ctrl = _channelControls[_activePicker.ChannelIndex];
+            string channelName = $"Channel {_activePicker.ChannelIndex + 1}";
+            _pickerOverlay.Refresh(_activePicker, channelName);
+        }
+
+        /// <summary>
+        /// Applies the currently highlighted item as the channel's sole audio target,
+        /// saves settings, sends the restored vol/mute to the device, and closes the picker.
+        /// </summary>
+        private async void ConfirmPicker()
+        {
+            if (_activePicker == null) return;
+
+            int channelIndex = _activePicker.ChannelIndex;
+            var selectedTarget = (_activePicker.Items.Count > 0 && _activePicker.SelectedIndex < _activePicker.Items.Count)
+                ? _activePicker.Items[_activePicker.SelectedIndex]
+                : null;
+
+            int snapshotVol   = _activePicker.SnapshotVol;
+            bool snapshotMute = _activePicker.SnapshotMuted;
+
+            ClosePickerWindow();
+
+            if (selectedTarget != null && channelIndex < _channelControls.Count)
+            {
+                var ctrl = _channelControls[channelIndex];
+                // Replace target (single-target assignment from picker)
+                ctrl.AudioTargets = new List<AudioTarget> { selectedTarget };
+
+                // Trigger the same save path as a manual target change
+                SaveSettings();
+                SendWebSocketChannelNames();
+
+                Debug.WriteLine($"[Picker] Confirmed: Ch{channelIndex + 1} → {selectedTarget.Name}");
+            }
+
+            // Restore vol/mute on device so OLED snaps back to correct value
+            if (_wsManager.IsConnected && _lastWsVols != null)
+            {
+                var vols  = (int[])_lastWsVols.Clone();
+                var mutes = _lastWsMutes != null ? (bool[])_lastWsMutes.Clone() : new bool[vols.Length];
+
+                if (channelIndex < vols.Length)  vols[channelIndex]  = snapshotVol;
+                if (channelIndex < mutes.Length) mutes[channelIndex] = snapshotMute;
+
+                await _wsManager.SendStateAsync(vols, mutes);
+                _lastWsVols  = vols;
+                _lastWsMutes = mutes;
+            }
+        }
+
+        /// <summary>Closes the overlay window and clears picker state without applying selection.</summary>
+        private void ClosePickerWindow()
+        {
+            _activePicker = null;
+            if (_pickerOverlay != null)
+            {
+                _pickerOverlay.Close();
+                _pickerOverlay = null;
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds _activePicker.Items for the current category by querying AudioService
+        /// and DeviceCacheManager.
+        /// </summary>
+        private void RefreshPickerItems()
+        {
+            if (_activePicker == null) return;
+
+            var targets = new List<AudioTarget>();
+
+            switch (_activePicker.Category)
+            {
+                case PickerCategory.Apps:
+                    foreach (var name in _audioService.GetRunningAppNames())
+                        targets.Add(new AudioTarget { Name = name });
+                    break;
+
+                case PickerCategory.Inputs:
+                    foreach (var name in _deviceManager.GetAllInputDeviceNames())
+                        targets.Add(new AudioTarget { Name = name, IsInputDevice = true });
+                    break;
+
+                case PickerCategory.Outputs:
+                    foreach (var name in _deviceManager.GetAllOutputDeviceNames())
+                        targets.Add(new AudioTarget { Name = name, IsOutputDevice = true });
+                    break;
+            }
+
+            _activePicker.Items = targets;
         }
 
         private async void WsReconnectTimer_Tick(object? sender, EventArgs e)
@@ -2895,6 +3151,14 @@ namespace DeejNG
             }
             else
             {
+                // Ensure serial is fully stopped before opening the WebSocket connection
+                if (_serialManager.IsConnected)
+                {
+                    _timerCoordinator.StopSerialWatchdog();
+                    _timerCoordinator.StopSerialReconnect();
+                    _serialManager.ManualDisconnect();
+                }
+
                 await _wsManager.ConnectAsync();
                 UpdateConnectionStatus();
             }
