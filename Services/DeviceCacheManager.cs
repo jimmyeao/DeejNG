@@ -179,6 +179,26 @@ namespace DeejNG.Services
 
             return foundDevice;
         }
+        /// <summary>Returns the friendly names of all cached active input (capture) devices.</summary>
+        public List<string> GetAllInputDeviceNames()
+        {
+            lock (_cacheLock)
+                return _inputDeviceMap.Values
+                    .Select(d => d.FriendlyName)
+                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+        }
+
+        /// <summary>Returns the friendly names of all cached active output (render) devices.</summary>
+        public List<string> GetAllOutputDeviceNames()
+        {
+            lock (_cacheLock)
+                return _outputDeviceMap.Values
+                    .Select(d => d.FriendlyName)
+                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+        }
+
         public void RefreshCaches()
         {
             lock (_cacheLock)

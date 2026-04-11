@@ -15,6 +15,8 @@ namespace DeejNG.Services
         private DispatcherTimer _serialReconnectTimer;
         private DispatcherTimer _serialWatchdogTimer;
         private DispatcherTimer _sessionCacheTimer;
+        private DispatcherTimer _wsReconnectTimer;
+        private DispatcherTimer _wsVolumeSyncTimer;
 
         #endregion Private Fields
 
@@ -33,12 +35,18 @@ namespace DeejNG.Services
 
         public event EventHandler SessionCacheUpdate;
 
+        public event EventHandler WsReconnectAttempt;
+
+        public event EventHandler WsVolumeSync;
+
         #endregion Public Events
 
         #region Public Properties
 
         public bool IsMetersRunning => _meterTimer?.IsEnabled == true;
         public bool IsSerialReconnectRunning => _serialReconnectTimer?.IsEnabled == true;
+        public bool IsWsReconnectRunning => _wsReconnectTimer?.IsEnabled == true;
+        public bool IsWsVolumeSyncRunning => _wsVolumeSyncTimer?.IsEnabled == true;
 
         #endregion Public Properties
 
@@ -55,6 +63,8 @@ namespace DeejNG.Services
             _forceCleanupTimer = null;
             _serialReconnectTimer = null;
             _serialWatchdogTimer = null;
+            _wsReconnectTimer = null;
+            _wsVolumeSyncTimer = null;
             _positionSaveTimer = null;
             _periodicPositionSaveTimer = null;
         }
@@ -113,6 +123,20 @@ namespace DeejNG.Services
                 Interval = TimeSpan.FromSeconds(5)
             };
             _periodicPositionSaveTimer.Tick += (s, e) => PeriodicPositionSave?.Invoke(s, e);
+
+            // WebSocket reconnect timer - for OledDeej automatic reconnection
+            _wsReconnectTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(2)
+            };
+            _wsReconnectTimer.Tick += (s, e) => WsReconnectAttempt?.Invoke(s, e);
+
+            // WebSocket volume sync timer - polls Windows volumes and sends changes to device
+            _wsVolumeSyncTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(100)
+            };
+            _wsVolumeSyncTimer.Tick += (s, e) => WsVolumeSync?.Invoke(s, e);
         }
 
         public void SetSerialReconnectInterval(TimeSpan interval)
@@ -172,6 +196,8 @@ namespace DeejNG.Services
             StopForceCleanup();
             StopSerialReconnect();
             StopSerialWatchdog();
+            StopWsReconnect();
+            StopWsVolumeSync();
             _positionSaveTimer?.Stop();
             _periodicPositionSaveTimer?.Stop();
         }
@@ -202,6 +228,34 @@ namespace DeejNG.Services
         public void StopSerialWatchdog()
         {
             _serialWatchdogTimer?.Stop();
+        }
+
+        public void StartWsReconnect()
+        {
+            _wsReconnectTimer?.Start();
+        }
+
+        public void StopWsReconnect()
+        {
+            if (_wsReconnectTimer != null && _wsReconnectTimer.IsEnabled)
+                _wsReconnectTimer.Stop();
+        }
+
+        public void SetWsReconnectInterval(TimeSpan interval)
+        {
+            if (_wsReconnectTimer != null)
+                _wsReconnectTimer.Interval = interval;
+        }
+
+        public void StartWsVolumeSync()
+        {
+            _wsVolumeSyncTimer?.Start();
+        }
+
+        public void StopWsVolumeSync()
+        {
+            if (_wsVolumeSyncTimer != null && _wsVolumeSyncTimer.IsEnabled)
+                _wsVolumeSyncTimer.Stop();
         }
 
         public void StopSessionCache()

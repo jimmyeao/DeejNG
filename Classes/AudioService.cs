@@ -16,6 +16,9 @@ namespace DeejNG.Services
         private const int MAX_SESSION_CACHE_SIZE = 15;
         private readonly object _cacheLock = new object();
         private readonly MMDeviceEnumerator _deviceEnumerator = new();
+        private MMDevice _cachedRenderDevice;
+        private DateTime _cachedRenderDeviceTime = DateTime.MinValue;
+        private static readonly TimeSpan DeviceCacheDuration = TimeSpan.FromSeconds(2);
         private readonly Dictionary<string, DateTime> _sessionAccessTimes = new Dictionary<string, DateTime>();
         private readonly Dictionary<string, List<SessionInfo>> _sessionCache = new Dictionary<string, List<SessionInfo>>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<int> _systemProcessIds = new HashSet<int> { 0, 4, 8 };
@@ -50,8 +53,8 @@ namespace DeejNG.Services
         {
             try
             {
-                // Get the default audio output device (e.g., speakers)
-                var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                // Get the default audio output device (cached)
+                var device = GetCachedRenderDevice();
 
                 // Get all current audio sessions associated with that device
                 var sessions = device.AudioSessionManager.Sessions;
@@ -133,6 +136,20 @@ namespace DeejNG.Services
         /// <param name="executable">Executable name (e.g., "chrome", "spotify.exe") or "system" for master volume.</param>
         /// <param name="level">Target volume level (range 0.0f to 1.0f).</param>
         /// <param name="isMuted">Whether to mute the audio (default: false).</param>
+        /// <summary>
+        /// Returns a cached render device, refreshing every few seconds to handle device changes.
+        /// </summary>
+        private MMDevice GetCachedRenderDevice()
+        {
+            var now = DateTime.Now;
+            if (_cachedRenderDevice == null || (now - _cachedRenderDeviceTime) > DeviceCacheDuration)
+            {
+                _cachedRenderDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                _cachedRenderDeviceTime = now;
+            }
+            return _cachedRenderDevice;
+        }
+
         public void ApplyVolumeToTarget(string executable, float level, bool isMuted = false)
         {
             // Ensure the volume is within valid bounds
@@ -144,8 +161,8 @@ namespace DeejNG.Services
             {
                 try
                 {
-                    // Get the system's default audio output device
-                    var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                    // Get the system's default audio output device (cached)
+                    var device = GetCachedRenderDevice();
 
                     // Apply mute setting to the entire device
                     device.AudioEndpointVolume.Mute = isMuted;
@@ -161,6 +178,8 @@ namespace DeejNG.Services
 #if DEBUG
                     Debug.WriteLine($"[AudioService] Failed to set system volume: {ex.Message}");
 #endif
+                    // Invalidate cache in case the device changed
+                    _cachedRenderDevice = null;
                 }
 
                 // Early return as system volume has been handled
@@ -178,9 +197,8 @@ namespace DeejNG.Services
 
             try
             {
-                // Get all audio sessions from the default output device
-                var sessions = _deviceEnumerator
-                    .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
+                // Get all audio sessions from the cached output device
+                var sessions = GetCachedRenderDevice()
                     .AudioSessionManager.Sessions;
 
                 int sessionCount = 0;
@@ -241,6 +259,7 @@ namespace DeejNG.Services
             catch (Exception ex)
             {
                 // Catch all outer-level exceptions (e.g., device failure)
+                _cachedRenderDevice = null; // Invalidate cache on failure
 #if DEBUG
                 Debug.WriteLine($"[AudioService] Failed to apply volume: {ex.Message}");
 #endif
@@ -283,8 +302,8 @@ namespace DeejNG.Services
 
             try
             {
-                // Get active audio sessions on the default output device
-                var device = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                // Get active audio sessions on the cached output device
+                var device = GetCachedRenderDevice();
                 var sessions = device.AudioSessionManager.Sessions;
 
                 // Build exclusion set for efficient lookup
@@ -374,6 +393,29 @@ namespace DeejNG.Services
             }
         }
 
+
+        /// <summary>
+        /// Returns a sorted list of application names that currently have audio sessions,
+        /// plus the special targets "system", "unmapped", and "current".
+        /// Used to populate the hardware encoder picker.
+        /// </summary>
+        public List<string> GetRunningAppNames()
+        {
+            if ((DateTime.Now - _lastRefresh).TotalSeconds > CACHE_REFRESH_SECONDS)
+                RefreshSessionCache();
+
+            var names = new List<string> { "system", "unmapped", "current" };
+
+            lock (_cacheLock)
+            {
+                names.AddRange(
+                    _sessionCache.Keys
+                        .Where(k => !string.IsNullOrEmpty(k))
+                        .OrderBy(k => k, StringComparer.OrdinalIgnoreCase));
+            }
+
+            return names;
+        }
 
         /// <summary>
         /// Forces cleanup of the session cache by retaining only the most recently accessed session groups
@@ -498,9 +540,8 @@ namespace DeejNG.Services
         {
             try
             {
-                // Get all current audio sessions from the default render device (e.g., speakers)
-                var sessions = _deviceEnumerator
-                    .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
+                // Get all current audio sessions from the cached render device
+                var sessions = GetCachedRenderDevice()
                     .AudioSessionManager.Sessions;
 
                 var currentTime = DateTime.Now;
