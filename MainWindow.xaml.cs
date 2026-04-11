@@ -3139,9 +3139,10 @@ namespace DeejNG
             _pickerOverlay.Refresh(_activePicker, channelName);
             _pickerOverlay.Show();
 
-            // Tell the device to enter edit mode: shows EDIT header and unclamped encoder.
-            // Send config (sensitivity=1) BEFORE editmode so the firmware applies the new
-            // sensitivity before it starts sending encoder deltas in edit mode.
+            // Tell the device to enter edit mode, update sensitivity, and show the initial item.
+            // editmode is sent FIRST because it calls registerActivity() on the firmware,
+            // which resets the screensaver timer.  config (which does NOT reset it) follows.
+            // If config arrived first, the screensaver could fire in the gap before editmode.
             // Messages are awaited sequentially to guarantee delivery order.
             if (_settingsManager.AppSettings.ConnectionMode == ConnectionMode.WebSocket && _wsManager.IsConnected)
             {
@@ -3158,8 +3159,8 @@ namespace DeejNG
                 // For picker scrolling we want exactly 1 step per encoder click = finest = 4.
                 _ = Task.Run(async () =>
                 {
-                    await _wsManager.SendConfigAsync(pickerNames, ssTimeout, 4);
                     await _wsManager.SendEditModeAsync(channelIndex, true);
+                    await _wsManager.SendConfigAsync(pickerNames, ssTimeout, 4);
                     if (initialName != null)
                         await _wsManager.SendEditItemAsync(channelIndex, initialName);
                 });
