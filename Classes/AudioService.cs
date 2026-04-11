@@ -395,6 +395,12 @@ namespace DeejNG.Services
 
 
         /// <summary>
+        /// Forces an immediate session cache refresh, bypassing the normal 5-second throttle.
+        /// Call this before GetRunningAppNames() when a fresh list is critical (e.g. picker open).
+        /// </summary>
+        public void ForceRefreshSessionCache() => RefreshSessionCache();
+
+        /// <summary>
         /// Returns a sorted list of application names that currently have audio sessions,
         /// plus the special targets "system", "unmapped", and "current".
         /// Used to populate the hardware encoder picker.

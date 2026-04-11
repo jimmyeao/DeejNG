@@ -140,6 +140,28 @@ namespace DeejNG.Services
         }
 
         /// <summary>
+        /// Tells the device to enter or leave edit mode for a channel.
+        /// active=true  → device shows EDIT header and unclamped encoder position.
+        /// active=false → device restores saved volume and normal display.
+        /// </summary>
+        public async Task SendEditModeAsync(int channel, bool active)
+        {
+            if (!_isConnected) return;
+            var payload = JsonSerializer.Serialize(new { type = "editmode", channel, active });
+            await SendRawAsync(payload);
+        }
+
+        /// <summary>
+        /// Updates the item name shown on a channel's OLED while the user scrolls in edit mode.
+        /// </summary>
+        public async Task SendEditItemAsync(int channel, string name)
+        {
+            if (!_isConnected) return;
+            var payload = JsonSerializer.Serialize(new { type = "edititem", channel, name });
+            await SendRawAsync(payload);
+        }
+
+        /// <summary>
         /// Sends VU meter levels (0.0–1.0) to the device for display.
         /// Uses non-blocking lock acquisition — frames are dropped if the socket is busy,
         /// which prevents VU from blocking higher-priority state/config messages.

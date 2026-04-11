@@ -76,6 +76,10 @@ namespace DeejNG
         // so Windows audio has time to settle before we re-read and potentially bounce back
         private DateTime _lastWsReceiveTime = DateTime.MinValue;
         private static readonly TimeSpan WsReceiveSuppressWindow = TimeSpan.FromMilliseconds(500);
+        // After connecting, the first update from the device tells us where its encoders actually
+        // sit (which may differ from what we sent). We store that as the baseline and skip applying
+        // it to Windows — only subsequent changes (encoder-moved deltas) are applied.
+        private bool _wsCalibrated = false;
 
         // Tracks the last device-reported absolute volumes (0–100) as the authoritative baseline.
         // The sync timer uses these (not Windows read-back) for comparison.
@@ -91,10 +95,16 @@ namespace DeejNG
         // Per-channel last-known bak/con toggle states for edge detection (false = initial)
         private bool[] _lastBak = new bool[5];
         private bool[] _lastCon = new bool[5];
+        // Tracks the encoder position at the last scroll event (separate from _lastWsVols
+        // so scroll direction is correct even while _lastWsVols is frozen at snapshot)
+        private int[] _pickerScrollRef = new int[5];
 
         // Hardware encoder picker state (null = picker closed)
         private ChannelPickerState? _activePicker;
         private ChannelPickerOverlay? _pickerOverlay;
+        // Channel index whose picker was closed during the current dispatcher tick; -1 = none.
+        // Prevents the end-of-tick baseline update from overwriting ClosePickerWindow's snapshot restore.
+        private int _pickerClosedThisTick = -1;
 
         private readonly AppSettingsManager _settingsManager;
 
@@ -2636,9 +2646,39 @@ namespace DeejNG
                 {
                     if (string.Equals(target.Name, "system", StringComparison.OrdinalIgnoreCase))
                     {
-                        float vol = _systemVolume?.MasterVolumeLevelScalar ?? ctrl.CurrentVolume;
-                        bool muted = _systemVolume?.Mute ?? ctrl.IsMuted;
-                        return (Math.Clamp(vol, 0f, 1f), muted);
+                        // The COM RCW can become separated if the MMDevice was recycled
+                        // (e.g. during settings load or device change). Always try the
+                        // existing object first; on failure, re-acquire from a fresh endpoint.
+                        for (int attempt = 0; attempt < 2; attempt++)
+                        {
+                            try
+                            {
+                                if (_systemVolume != null)
+                                {
+                                    float vol = _systemVolume.MasterVolumeLevelScalar;
+                                    bool muted = _systemVolume.Mute;
+                                    return (Math.Clamp(vol, 0f, 1f), muted);
+                                }
+                            }
+                            catch (InvalidComObjectException)
+                            {
+                                // RCW separated — fall through to re-acquire below
+                            }
+
+                            // Re-acquire from a fresh default endpoint
+                            try
+                            {
+                                _audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                                _systemVolume = _audioDevice.AudioEndpointVolume;
+                                Debug.WriteLine("[ReadVol] Re-acquired _systemVolume (stale RCW)");
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"[ReadVol] Failed to re-acquire _systemVolume: {ex.Message}");
+                                break;
+                            }
+                        }
+                        continue;
                     }
 
                     if (target.IsInputDevice)
@@ -2665,10 +2705,85 @@ namespace DeejNG
                         continue;
                     }
 
-                    // App session — scan the caller-provided session collection
-                    if (sessions != null &&
-                        !string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase) &&
-                        !string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
+                    // "unmapped" — read the average volume of all sessions not assigned to a channel
+                    if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (sessions != null)
+                        {
+                            var mappedApps = GetAllMappedApplications();
+                            mappedApps.Remove("unmapped");
+                            mappedApps.Remove("current");
+
+                            float totalVol = 0f;
+                            int matchCount = 0;
+                            for (int si = 0; si < sessions.Count; si++)
+                            {
+                                try
+                                {
+                                    var session = sessions[si];
+                                    if (session == null) continue;
+                                    int pid = (int)session.GetProcessID;
+                                    if (pid == 0 || pid == 4 || pid == 8) continue; // system processes
+                                    string procName = AudioUtilities.GetProcessNameSafely(pid);
+                                    if (string.IsNullOrEmpty(procName)) continue;
+                                    string procLower = procName.ToLowerInvariant();
+                                    string procNoExt = System.IO.Path.GetFileNameWithoutExtension(procLower);
+                                    if (mappedApps.Contains(procLower) || mappedApps.Contains(procNoExt))
+                                        continue; // assigned to another channel
+                                    totalVol += session.SimpleAudioVolume.Volume;
+                                    matchCount++;
+                                }
+                                catch { }
+                            }
+                            if (matchCount > 0)
+                                return (Math.Clamp(totalVol / matchCount, 0f, 1f), false);
+                        }
+                        // No unmapped sessions found — use system volume as a sensible default
+                        if (_systemVolume != null)
+                            return (Math.Clamp(_systemVolume.MasterVolumeLevelScalar, 0f, 1f), false);
+                        continue;
+                    }
+
+                    // "current" (focused app) — read the focused app's session volume
+                    if (string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (sessions != null)
+                        {
+                            string focusTarget = AudioUtilities.GetCurrentFocusTarget();
+                            if (!string.IsNullOrEmpty(focusTarget))
+                            {
+                                string focusLower = focusTarget.ToLowerInvariant();
+                                string focusNoExt = System.IO.Path.GetFileNameWithoutExtension(focusLower);
+                                for (int si = 0; si < sessions.Count; si++)
+                                {
+                                    try
+                                    {
+                                        var session = sessions[si];
+                                        if (session == null) continue;
+                                        int pid = (int)session.GetProcessID;
+                                        string procName = AudioUtilities.GetProcessNameSafely(pid);
+                                        if (string.IsNullOrEmpty(procName)) continue;
+                                        string procLower = procName.ToLowerInvariant();
+                                        string procNoExt = System.IO.Path.GetFileNameWithoutExtension(procLower);
+                                        if (procLower == focusLower || procNoExt == focusNoExt)
+                                        {
+                                            float vol = session.SimpleAudioVolume.Volume;
+                                            bool muted = session.SimpleAudioVolume.Mute;
+                                            return (Math.Clamp(vol, 0f, 1f), muted);
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            }
+                        }
+                        // No focused app found — use system volume as fallback
+                        if (_systemVolume != null)
+                            return (Math.Clamp(_systemVolume.MasterVolumeLevelScalar, 0f, 1f), false);
+                        continue;
+                    }
+
+                    // Named app session — scan the caller-provided session collection
+                    if (sessions != null)
                     {
                         string targetLower = target.Name.ToLowerInvariant();
                         string targetNoExt = System.IO.Path.GetFileNameWithoutExtension(targetLower);
@@ -2698,10 +2813,13 @@ namespace DeejNG
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[ReadVol] Exception reading target '{target.Name}': {ex.GetType().Name}: {ex.Message}");
+                }
             }
 
-            // No target matched — fall back to current slider position
+            Debug.WriteLine($"[ReadVol] No target matched for '{ctrl.AudioTargets?.FirstOrDefault()?.Name}', fallback vol={ctrl.CurrentVolume:F3}");
             return (ctrl.CurrentVolume, ctrl.IsMuted);
         }
 
@@ -2744,11 +2862,43 @@ namespace DeejNG
                 mutes[i] = windowsMuted;
             }
 
+            Debug.WriteLine($"[WS Init] Sending state: vols=[{string.Join(",", vols)}] mutes=[{string.Join(",", mutes)}]");
+            try
+            {
+                string logPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "deejng_ws_init.log");
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"[{DateTime.Now:HH:mm:ss.fff}] SendWebSocketInitialStateAsync");
+                sb.AppendLine($"  _systemVolume is null: {_systemVolume == null}");
+                if (_systemVolume != null)
+                {
+                    try { sb.AppendLine($"  _systemVolume.MasterVolumeLevelScalar = {_systemVolume.MasterVolumeLevelScalar:F4}"); }
+                    catch (Exception ex) { sb.AppendLine($"  _systemVolume.MasterVolumeLevelScalar THREW: {ex.GetType().Name}: {ex.Message}"); }
+                }
+                sb.AppendLine($"  channelControls.Count = {_channelControls.Count}");
+                for (int d = 0; d < Math.Min(_channelControls.Count, 5); d++)
+                {
+                    var c = _channelControls[d];
+                    var tNames = c.AudioTargets?.Select(t => t.Name) ?? Enumerable.Empty<string>();
+                    sb.AppendLine($"  ch{d}: targets=[{string.Join(",", tNames)}] vol={vols[d]} mute={mutes[d]} ctrl.CurrentVolume={c.CurrentVolume:F4}");
+                }
+                System.IO.File.WriteAllText(logPath, sb.ToString());
+            }
+            catch { }
             await _wsManager.SendStateAsync(vols, mutes);
-            _lastWsVols = vols;
-            _lastWsMutes = mutes;
+            // _lastWsVols is intentionally NOT seeded here.  The device may send its stale
+            // encoder positions before it processes our SendStateAsync (e.g. all zeros).
+            // The first update received will calibrate _lastWsVols to the device's actual
+            // state; only subsequent *changes* (encoder deltas) are then applied to Windows.
+            _lastWsVols          = null;
+            _lastWsMutes         = mutes;
+            _wsDeviceAppliedVols = (int[])vols.Clone();
+            _wsCalibrated        = false;
+            // Reset button edge-detection state so stale toggle values from a previous
+            // connection don't trigger false edges on the first post-calibration update.
+            Array.Clear(_lastBak, 0, _lastBak.Length);
+            Array.Clear(_lastCon, 0, _lastCon.Length);
+            _pickerClosedThisTick = -1;
 
-            // Allow volume application now that device state is seeded
             _allowVolumeApplication = true;
             _isInitializing = false;
             SyncMuteStates();
@@ -2792,6 +2942,25 @@ namespace DeejNG
                 // (which also runs on UI thread) always sees the latest value.
                 _lastWsReceiveTime = DateTime.Now;
 
+                // Calibration: the very first update after connect tells us where the
+                // device's encoders actually sit.  Store it as the baseline and bail out —
+                // we don't apply it to Windows because the user hasn't touched anything yet.
+                // Also seed _lastBak/_lastCon so their initial toggle states don't trigger
+                // false edge-detection (which would open pickers on random channels).
+                if (!_wsCalibrated)
+                {
+                    _lastWsVols   = (int[])latestVols.Clone();
+                    _wsCalibrated = true;
+                    if (latestMutes != null) _lastWsMutes = (bool[])latestMutes.Clone();
+                    if (latestBaks != null)
+                        for (int i = 0; i < Math.Min(latestBaks.Length, _lastBak.Length); i++)
+                            _lastBak[i] = latestBaks[i];
+                    if (latestCons != null)
+                        for (int i = 0; i < Math.Min(latestCons.Length, _lastCon.Length); i++)
+                            _lastCon[i] = latestCons[i];
+                    return;
+                }
+
                 int count = Math.Min(latestVols.Length, Math.Min(_channelControls.Count, 5));
 
                 // ── 1. Process BAK/CON button edge-changes (picker control) ────────────
@@ -2805,17 +2974,22 @@ namespace DeejNG
                         if (bakChanged)
                         {
                             _lastBak[i] = latestBaks[i];
-                            if (_activePicker?.ChannelIndex == i)
+                            // Rising edge only — act on press (false→true), ignore release
+                            if (latestBaks[i] && _activePicker?.ChannelIndex == i)
                                 CyclePicker();
                         }
 
                         if (conChanged)
                         {
                             _lastCon[i] = latestCons[i];
-                            if (_activePicker?.ChannelIndex == i)
-                                ConfirmPicker();
-                            else
-                                OpenPicker(i, latestVols, latestMutes);
+                            // Rising edge only — act on press (false→true), ignore release
+                            if (latestCons[i])
+                            {
+                                if (_activePicker?.ChannelIndex == i)
+                                    ConfirmPicker();
+                                else
+                                    OpenPicker(i, latestVols, latestMutes);
+                            }
                         }
                     }
                 }
@@ -2826,14 +3000,24 @@ namespace DeejNG
                 {
                     var ctrl = _channelControls[i];
 
+                    // Channel whose picker just closed this tick: ClosePickerWindow already
+                    // restored the correct snapshot — don't let the stale encoder position
+                    // overwrite it.  (Reset at the end of the tick.)
+                    if (i == _pickerClosedThisTick) continue;
+
                     // Picker active for this channel: scroll instead of applying vol/mute
                     if (_activePicker?.ChannelIndex == i)
                     {
-                        int prevVol = (_lastWsVols != null && i < _lastWsVols.Length)
-                            ? _lastWsVols[i] : latestVols[i];
+                        // Use _pickerScrollRef (not _lastWsVols) for delta so that direction
+                        // is always correct: _pickerScrollRef tracks the last encoder position,
+                        // while _lastWsVols is frozen at the snapshot for the sync timer.
+                        int prevVol = (i < _pickerScrollRef.Length) ? _pickerScrollRef[i] : latestVols[i];
                         int delta = latestVols[i] - prevVol;
                         if (delta != 0)
+                        {
+                            _pickerScrollRef[i] = latestVols[i]; // advance tracker
                             ScrollPicker(Math.Sign(delta));
+                        }
 
                         // Also treat a mute-toggle as confirm (press encoder to select)
                         if (latestMutes != null && latestMutes.Length > i &&
@@ -2846,10 +3030,15 @@ namespace DeejNG
                         continue; // Skip normal vol/mute application while picker is open
                     }
 
-                    // Normal mode
+                    // Normal mode — only apply if the ENCODER actually moved since last tick.
+                    // Comparing against _lastWsVols (previous device report) instead of the
+                    // Windows volume prevents stale device snapshots (encoder still at 0 after
+                    // connect) from overwriting Windows volumes that were set independently.
+                    bool encoderMoved = _lastWsVols == null ||
+                                        i >= _lastWsVols.Length ||
+                                        latestVols[i] != _lastWsVols[i];
                     float level = Math.Clamp(latestVols[i] / 100f, 0f, 1f);
-                    float currentVolume = ctrl.CurrentVolume;
-                    if (Math.Abs(currentVolume - level) >= 0.005f)
+                    if (encoderMoved)
                     {
                         ctrl.SmoothAndSetVolume(level, suppressEvent: false, disableSmoothing: true);
                         ApplyVolumeToTargets(ctrl, ctrl.AudioTargets, level);
@@ -2872,8 +3061,25 @@ namespace DeejNG
                     ShowVolumeOverlay();
 
                 // Record the device-reported values as the authoritative baseline.
-                _wsDeviceAppliedVols = (int[])latestVols.Clone();
-                _lastWsVols          = (int[])latestVols.Clone();
+                // Exceptions (channels whose _lastWsVols entry must NOT be overwritten):
+                //   • Active picker channel — encoder is used as scroll wheel, not volume.
+                //   • _pickerClosedThisTick  — ClosePickerWindow just restored the snapshot;
+                //     the drifted encoder position in latestVols must not overwrite it.
+                var newBaseline = (int[])latestVols.Clone();
+                void FreezeChannel(int ch)
+                {
+                    if (_lastWsVols != null && ch >= 0 && ch < newBaseline.Length && ch < _lastWsVols.Length)
+                        newBaseline[ch] = _lastWsVols[ch];
+                }
+                if (_activePicker != null)
+                    FreezeChannel(_activePicker.ChannelIndex);
+                if (_pickerClosedThisTick >= 0)
+                {
+                    FreezeChannel(_pickerClosedThisTick);
+                    _pickerClosedThisTick = -1; // consumed
+                }
+                _wsDeviceAppliedVols = newBaseline;
+                _lastWsVols          = newBaseline;
                 if (latestMutes != null)
                     _lastWsMutes = (bool[])latestMutes.Clone();
             });
@@ -2896,6 +3102,11 @@ namespace DeejNG
             int snapshotVol   = (currentVols  != null && channelIndex < currentVols.Length)  ? currentVols[channelIndex]  : 0;
             bool snapshotMute = (currentMutes != null && channelIndex < currentMutes.Length) ? currentMutes[channelIndex] : false;
 
+            // Seed the scroll reference at the current encoder position so the first
+            // delta is relative to where the encoder actually is now, not the snapshot.
+            if (channelIndex < _pickerScrollRef.Length)
+                _pickerScrollRef[channelIndex] = snapshotVol;
+
             _activePicker = new ChannelPickerState
             {
                 ChannelIndex  = channelIndex,
@@ -2904,6 +3115,8 @@ namespace DeejNG
                 Category      = PickerCategory.Apps,
             };
 
+            // Force a fresh session enumeration so the Apps list isn't stale
+            _audioService.ForceRefreshSessionCache();
             RefreshPickerItems();
 
             // Pre-select the current target in the list (if it exists)
@@ -2925,6 +3138,32 @@ namespace DeejNG
 
             _pickerOverlay.Refresh(_activePicker, channelName);
             _pickerOverlay.Show();
+
+            // Tell the device to enter edit mode: shows EDIT header and unclamped encoder.
+            // Send config (sensitivity=1) BEFORE editmode so the firmware applies the new
+            // sensitivity before it starts sending encoder deltas in edit mode.
+            // Messages are awaited sequentially to guarantee delivery order.
+            if (_settingsManager.AppSettings.ConnectionMode == ConnectionMode.WebSocket && _wsManager.IsConnected)
+            {
+                var pickerNames = _channelControls.Take(5).Select(c => GetChannelLabel(c)).ToArray();
+                string? initialName = null;
+                if (_activePicker.Items.Count > 0)
+                {
+                    initialName = _activePicker.Items[_activePicker.SelectedIndex].Name;
+                    if (initialName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                        initialName = initialName[..^4];
+                }
+                int ssTimeout = _settingsManager.AppSettings.OledScreensaverTimeoutSeconds;
+                // Firmware sensitivity: 1=coarse(4vol/click), 2=medium, 4=fine(1vol/click).
+                // For picker scrolling we want exactly 1 step per encoder click = finest = 4.
+                _ = Task.Run(async () =>
+                {
+                    await _wsManager.SendConfigAsync(pickerNames, ssTimeout, 4);
+                    await _wsManager.SendEditModeAsync(channelIndex, true);
+                    if (initialName != null)
+                        await _wsManager.SendEditItemAsync(channelIndex, initialName);
+                });
+            }
 
             Debug.WriteLine($"[Picker] Opened for channel {channelIndex} — {_activePicker.Items.Count} items in {_activePicker.Category}");
         }
@@ -2966,13 +3205,23 @@ namespace DeejNG
             var ctrl = _channelControls[_activePicker.ChannelIndex];
             string channelName = $"Channel {_activePicker.ChannelIndex + 1}";
             _pickerOverlay.Refresh(_activePicker, channelName);
+
+            // Push the highlighted item name to the device OLED
+            if (_wsManager.IsConnected)
+            {
+                string itemName = _activePicker.Items[newIndex].Name;
+                // Strip .exe suffix for a cleaner display on the OLED
+                if (itemName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    itemName = itemName[..^4];
+                _ = _wsManager.SendEditItemAsync(_activePicker.ChannelIndex, itemName);
+            }
         }
 
         /// <summary>
         /// Applies the currently highlighted item as the channel's sole audio target,
         /// saves settings, sends the restored vol/mute to the device, and closes the picker.
         /// </summary>
-        private async void ConfirmPicker()
+        private void ConfirmPicker()
         {
             if (_activePicker == null) return;
 
@@ -2981,9 +3230,7 @@ namespace DeejNG
                 ? _activePicker.Items[_activePicker.SelectedIndex]
                 : null;
 
-            int snapshotVol   = _activePicker.SnapshotVol;
-            bool snapshotMute = _activePicker.SnapshotMuted;
-
+            // ClosePickerWindow restores snapshot vol/mute and original encoder sensitivity
             ClosePickerWindow();
 
             if (selectedTarget != null && channelIndex < _channelControls.Count)
@@ -2992,31 +3239,51 @@ namespace DeejNG
                 // Replace target (single-target assignment from picker)
                 ctrl.AudioTargets = new List<AudioTarget> { selectedTarget };
 
-                // Trigger the same save path as a manual target change
+                // Trigger the same save path as a manual target change; also re-sends
+                // config with the updated channel name and original sensitivity.
                 SaveSettings();
                 SendWebSocketChannelNames();
 
                 Debug.WriteLine($"[Picker] Confirmed: Ch{channelIndex + 1} → {selectedTarget.Name}");
-            }
-
-            // Restore vol/mute on device so OLED snaps back to correct value
-            if (_wsManager.IsConnected && _lastWsVols != null)
-            {
-                var vols  = (int[])_lastWsVols.Clone();
-                var mutes = _lastWsMutes != null ? (bool[])_lastWsMutes.Clone() : new bool[vols.Length];
-
-                if (channelIndex < vols.Length)  vols[channelIndex]  = snapshotVol;
-                if (channelIndex < mutes.Length) mutes[channelIndex] = snapshotMute;
-
-                await _wsManager.SendStateAsync(vols, mutes);
-                _lastWsVols  = vols;
-                _lastWsMutes = mutes;
             }
         }
 
         /// <summary>Closes the overlay window and clears picker state without applying selection.</summary>
         private void ClosePickerWindow()
         {
+            if (_activePicker != null)
+            {
+                int channelIndex  = _activePicker.ChannelIndex;
+                int snapshotVol   = _activePicker.SnapshotVol;
+                bool snapshotMute = _activePicker.SnapshotMuted;
+
+                // Tell the device to leave edit mode — it restores saved volume and normal display.
+                if (_wsManager.IsConnected)
+                    _ = _wsManager.SendEditModeAsync(channelIndex, false);
+                // NOTE: Do NOT call SendWebSocketChannelNames() here.
+                // ConfirmPicker calls it after ClosePickerWindow; calling it here too would send
+                // config twice, which resets the device screensaver timer on every picker close.
+                // For non-confirm closes (cancel / interrupt), sensitivity is restored by the next
+                // SendWebSocketChannelNames() call (profile switch, reconnect, or confirm).
+
+                // Resync PC-side state arrays to the pre-picker snapshot so the WsVolumeSyncTimer
+                // doesn't see a stale difference and fight the device's own restore.
+                if (_lastWsVols != null)
+                {
+                    var vols  = (int[])_lastWsVols.Clone();
+                    var mutes = _lastWsMutes != null ? (bool[])_lastWsMutes.Clone() : new bool[vols.Length];
+                    if (channelIndex < vols.Length)  vols[channelIndex]  = snapshotVol;
+                    if (channelIndex < mutes.Length) mutes[channelIndex] = snapshotMute;
+                    _lastWsVols          = vols;
+                    _lastWsMutes         = mutes;
+                    _wsDeviceAppliedVols = (int[])vols.Clone();
+                }
+
+                // Mark this channel so the current HandleWebSocketUpdate tick doesn't overwrite
+                // the snapshot we just restored with the drifted encoder position.
+                _pickerClosedThisTick = channelIndex;
+            }
+
             _activePicker = null;
             if (_pickerOverlay != null)
             {
@@ -3103,6 +3370,14 @@ namespace DeejNG
 
             for (int i = 0; i < count; i++)
             {
+                // Never touch the active picker channel from this timer — vol is being
+                // used as a scroll wheel and the encoder position is irrelevant to audio.
+                if (_activePicker?.ChannelIndex == i)
+                {
+                    mutes[i] = _lastWsMutes != null && i < _lastWsMutes.Length ? _lastWsMutes[i] : false;
+                    continue;
+                }
+
                 var ctrl = _channelControls[i];
                 var (vol, muted) = ReadWindowsVolumeForChannel(ctrl, sessions);
                 mutes[i] = muted;
