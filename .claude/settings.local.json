@@ -18,7 +18,10 @@
       "Bash(Select-String -Pattern \"error|Build succeeded\")",
       "Bash(git checkout:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh api:*)",
+      "Bash(python3 -c ':*)"
     ],
     "deny": [],
     "ask": []

@@ -211,8 +211,8 @@ namespace DeejNG.Services
                 if (!root.TryGetProperty("type", out var typeEl)) return;
                 if (typeEl.GetString() != "update") return;
 
-                if (!root.TryGetProperty("vol", out var volEl)) return;
-                if (!root.TryGetProperty("mute", out var muteEl)) return;
+                if (!root.TryGetProperty("vol", out var volEl) || volEl.ValueKind != JsonValueKind.Array) return;
+                if (!root.TryGetProperty("mute", out var muteEl) || muteEl.ValueKind != JsonValueKind.Array) return;
 
                 var volArr = new int[volEl.GetArrayLength()];
                 int i = 0;
@@ -226,7 +226,7 @@ namespace DeejNG.Services
 
                 // bak = BACK button toggle state (optional — older firmware may omit)
                 bool[] bakArr = new bool[volArr.Length];
-                if (root.TryGetProperty("bak", out var bakEl))
+                if (root.TryGetProperty("bak", out var bakEl) && bakEl.ValueKind == JsonValueKind.Array)
                 {
                     i = 0;
                     foreach (var el in bakEl.EnumerateArray())
@@ -235,7 +235,7 @@ namespace DeejNG.Services
 
                 // con = CONFIRM button toggle state (optional — older firmware may omit)
                 bool[] conArr = new bool[volArr.Length];
-                if (root.TryGetProperty("con", out var conEl))
+                if (root.TryGetProperty("con", out var conEl) && conEl.ValueKind == JsonValueKind.Array)
                 {
                     i = 0;
                     foreach (var el in conEl.EnumerateArray())
