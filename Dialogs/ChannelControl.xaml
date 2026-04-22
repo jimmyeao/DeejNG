@@ -187,13 +187,22 @@
                                     PaintSurface="SkiaCanvas_PaintSurface" Margin="0,0,-5,0"/>
                 </Grid>
 
-                <!-- dB Labels -->
-                <StackPanel HorizontalAlignment="Left" Margin="35,0,0,8" Grid.ColumnSpan="2">
-                    <TextBlock Text="0" FontSize="8" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                    <TextBlock Text="-6" FontSize="8" Margin="0,24,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                    <TextBlock Text="-12" FontSize="8" Margin="0,24,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                    <TextBlock Text="-18" FontSize="8" Margin="0,24,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                </StackPanel>
+                <!-- dB Labels - positioned to align with meter scale -->
+                <Canvas Grid.Column="3" Grid.ColumnSpan="2"
+                        Height="180" VerticalAlignment="Bottom" Margin="0,0,0,8">
+                    <!-- 0 dB at top -->
+                    <TextBlock Canvas.Top="0" Text="0" FontSize="8" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    <!-- -3 dB at ~17% from top (power ratio 0.5) -->
+                    <TextBlock Canvas.Top="30" Text="-3" FontSize="8" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    <!-- -6 dB at ~33% from top -->
+                    <TextBlock Canvas.Top="60" Text="-6" FontSize="8" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    <!-- -10 dB at ~50% from top -->
+                    <TextBlock Canvas.Top="90" Text="-10" FontSize="8" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    <!-- -20 dB at ~72% from top -->
+                    <TextBlock Canvas.Top="130" Text="-20" FontSize="8" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    <!-- -40 dB near bottom -->
+                    <TextBlock Canvas.Top="162" Text="-40" FontSize="8" Foreground="{DynamicResource TextSecondaryBrush}"/>
+                </Canvas>
 
             </Grid>
 

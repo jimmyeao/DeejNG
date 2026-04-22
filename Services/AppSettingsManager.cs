@@ -163,7 +163,11 @@ namespace DeejNG.Services
 
                 // Preserve OledDeej device config settings
                 OledScreensaverTimeoutSeconds = AppSettings.OledScreensaverTimeoutSeconds,
-                OledEncoderSensitivity = AppSettings.OledEncoderSensitivity
+                OledEncoderSensitivity = AppSettings.OledEncoderSensitivity,
+
+                // Preserve last-known volume/mute state for WebSocket boot recovery
+                LastKnownVolumes = AppSettings.LastKnownVolumes ?? new Dictionary<string, int>(),
+                LastKnownMutes = AppSettings.LastKnownMutes ?? new Dictionary<string, bool>()
             };
         }
 
