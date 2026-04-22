@@ -195,6 +195,20 @@ namespace DeejNG.Classes
         /// </summary>
         public int OledEncoderSensitivity { get; set; } = 4;
 
+        /// <summary>
+        /// Persisted last-known volume (0–100) for each mapped application target.
+        /// Key = target name (lowercase, e.g. "spotify.exe"), Value = volume 0–100.
+        /// Used in WebSocket mode to restore volume for apps that aren't running at boot.
+        /// </summary>
+        public Dictionary<string, int> LastKnownVolumes { get; set; } = new();
+
+        /// <summary>
+        /// Persisted last-known mute state for each mapped application target.
+        /// Key = target name (lowercase), Value = mute state.
+        /// Used in WebSocket mode to restore mute state for apps that aren't running at boot.
+        /// </summary>
+        public Dictionary<string, bool> LastKnownMutes { get; set; } = new();
+
         #endregion Public Properties
     }
 

@@ -85,6 +85,14 @@ namespace DeejNG
         // The sync timer uses these (not Windows read-back) for comparison.
         private int[] _wsDeviceAppliedVols;
 
+        // Tracks which named-app targets currently have a running audio session.
+        // Used by the WS sync timer to detect newly started apps and apply remembered volume.
+        private readonly HashSet<string> _knownRunningSessions = new(StringComparer.OrdinalIgnoreCase);
+
+        // Throttle persisting last-known volumes to disk (not every encoder tick)
+        private DateTime _lastLkvFlush = DateTime.MinValue;
+        private static readonly TimeSpan LkvFlushInterval = TimeSpan.FromSeconds(5);
+
         // WebSocket message coalescing: device sends snapshots at ≤20 Hz — only process the latest
         private volatile int[] _pendingWsVols;
         private volatile bool[] _pendingWsMutes;
@@ -863,6 +871,46 @@ namespace DeejNG
             }
         }
 
+        /// <summary>
+        /// Persists the last-known volume and mute state for every named-app target on
+        /// the given channel.  Called whenever an encoder change or UI slider change is
+        /// applied so that the values survive an app restart.
+        /// </summary>
+        private void PersistLastKnownVolume(ChannelControl ctrl, float level)
+        {
+            if (ctrl.AudioTargets == null) return;
+            var lkv = _settingsManager.AppSettings.LastKnownVolumes ??= new Dictionary<string, int>();
+            var lkm = _settingsManager.AppSettings.LastKnownMutes ??= new Dictionary<string, bool>();
+
+            int volInt = (int)Math.Round(Math.Clamp(level, 0f, 1f) * 100f);
+            bool muted = ctrl.IsMuted;
+
+            foreach (var target in ctrl.AudioTargets)
+            {
+                if (string.IsNullOrWhiteSpace(target.Name)) continue;
+                if (target.IsInputDevice || target.IsOutputDevice) continue;
+                string name = target.Name.ToLowerInvariant();
+                if (name == "system" || name == "unmapped" || name == "current") continue;
+
+                lkv[name] = volInt;
+                lkm[name] = muted;
+            }
+        }
+
+        /// <summary>
+        /// Saves all current channel volumes to the persisted last-known-volumes store
+        /// and writes to disk.  Throttled — call freely.
+        /// </summary>
+        private void FlushLastKnownVolumes()
+        {
+            foreach (var ctrl in _channelControls)
+            {
+                PersistLastKnownVolume(ctrl, ctrl.CurrentVolume);
+            }
+            // Persist to disk via the normal settings save path
+            _settingsManager.SaveSettings(_settingsManager.AppSettings);
+        }
+
         private void AudioEndpointVolume_OnVolumeNotification(AudioVolumeNotificationData data)
         {
             Dispatcher.Invoke(() =>
@@ -1431,6 +1479,7 @@ namespace DeejNG
                 {
                     if (!_allowVolumeApplication) return;
                     ApplyVolumeToTargets(control, targets, vol);
+                    PersistLastKnownVolume(control, vol);
 
                     // Update button indicators when mute state changes via UI
                     UpdateMuteButtonIndicators();
@@ -2819,7 +2868,33 @@ namespace DeejNG
                 }
             }
 
-            Debug.WriteLine($"[ReadVol] No target matched for '{ctrl.AudioTargets?.FirstOrDefault()?.Name}', fallback vol={ctrl.CurrentVolume:F3}");
+            // If the target is a named app that simply isn't running, use the
+            // persisted last-known volume so we don't default to zero on boot.
+            var firstTarget = ctrl.AudioTargets?.FirstOrDefault();
+            if (firstTarget != null && !string.IsNullOrWhiteSpace(firstTarget.Name) &&
+                !firstTarget.IsInputDevice && !firstTarget.IsOutputDevice &&
+                !string.Equals(firstTarget.Name, "system", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(firstTarget.Name, "unmapped", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(firstTarget.Name, "current", StringComparison.OrdinalIgnoreCase))
+            {
+                var lkv = _settingsManager.AppSettings.LastKnownVolumes;
+                var lkm = _settingsManager.AppSettings.LastKnownMutes;
+                if (lkv != null)
+                {
+                    // Try exact key first, then without extension
+                    string key = firstTarget.Name.ToLowerInvariant();
+                    string keyNoExt = System.IO.Path.GetFileNameWithoutExtension(key);
+                    if (lkv.TryGetValue(key, out int savedVol) || lkv.TryGetValue(keyNoExt, out savedVol))
+                    {
+                        string matchedKey = lkv.ContainsKey(key) ? key : keyNoExt;
+                        bool savedMute = lkm != null && (lkm.TryGetValue(key, out bool m) || lkm.TryGetValue(keyNoExt, out m)) && m;
+                        Debug.WriteLine($"[ReadVol] Using persisted volume for '{matchedKey}': vol={savedVol} mute={savedMute}");
+                        return (Math.Clamp(savedVol / 100f, 0f, 1f), savedMute);
+                    }
+                }
+            }
+
+            Debug.WriteLine($"[ReadVol] No target matched for '{firstTarget?.Name}', fallback vol={ctrl.CurrentVolume:F3}");
             return (ctrl.CurrentVolume, ctrl.IsMuted);
         }
 
@@ -2857,6 +2932,10 @@ namespace DeejNG
                 ctrl.SmoothAndSetVolume(windowsVol, suppressEvent: true, disableSmoothing: true);
                 if (ctrl.IsMuted != windowsMuted)
                     ctrl.SetMuted(windowsMuted, applyToAudio: false);
+
+                // Seed / refresh the persisted volume store so apps that are currently
+                // running have their volume remembered for next boot.
+                PersistLastKnownVolume(ctrl, windowsVol);
 
                 vols[i] = (int)Math.Round(windowsVol * 100f);
                 mutes[i] = windowsMuted;
@@ -2898,6 +2977,27 @@ namespace DeejNG
             Array.Clear(_lastBak, 0, _lastBak.Length);
             Array.Clear(_lastCon, 0, _lastCon.Length);
             _pickerClosedThisTick = -1;
+
+            // Seed known-running-sessions so the sync timer doesn't falsely treat
+            // already-running apps as "newly started" and re-apply volume.
+            _knownRunningSessions.Clear();
+            if (sessions != null)
+            {
+                for (int s = 0; s < sessions.Count; s++)
+                {
+                    try
+                    {
+                        var session = sessions[s];
+                        if (session == null) continue;
+                        int pid = (int)session.GetProcessID;
+                        if (pid == 0 || pid == 4 || pid == 8) continue;
+                        string procName = AudioUtilities.GetProcessNameSafely(pid);
+                        if (!string.IsNullOrEmpty(procName))
+                            _knownRunningSessions.Add(procName.ToLowerInvariant());
+                    }
+                    catch { }
+                }
+            }
 
             _allowVolumeApplication = true;
             _isInitializing = false;
@@ -3042,6 +3142,7 @@ namespace DeejNG
                     {
                         ctrl.SmoothAndSetVolume(level, suppressEvent: false, disableSmoothing: true);
                         ApplyVolumeToTargets(ctrl, ctrl.AudioTargets, level);
+                        PersistLastKnownVolume(ctrl, level);
                         anyVolumeChanged = true;
                     }
 
@@ -3053,7 +3154,10 @@ namespace DeejNG
                     bool deviceMuteChanged = latestMutes != null && latestMutes.Length > i &&
                         (_lastWsMutes == null || i >= _lastWsMutes.Length || latestMutes[i] != _lastWsMutes[i]);
                     if (deviceMuteChanged && ctrl.IsMuted != latestMutes[i])
+                    {
                         ctrl.SetMuted(latestMutes[i], applyToAudio: true);
+                        PersistLastKnownVolume(ctrl, ctrl.CurrentVolume);
+                    }
                 }
 
                 // Show overlay once after processing all channels
@@ -3428,6 +3532,68 @@ namespace DeejNG
 
                 _lastWsMutes = mutes;
                 _ = _wsManager.SendStateAsync(vols, mutes);
+            }
+
+            // ── Detect newly started apps and apply their remembered volume ──────
+            // Build a set of currently running session process names for quick lookup.
+            if (sessions != null)
+            {
+                var currentlyRunning = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                for (int s = 0; s < sessions.Count; s++)
+                {
+                    try
+                    {
+                        var session = sessions[s];
+                        if (session == null) continue;
+                        int pid = (int)session.GetProcessID;
+                        if (pid == 0 || pid == 4 || pid == 8) continue;
+                        string procName = AudioUtilities.GetProcessNameSafely(pid);
+                        if (!string.IsNullOrEmpty(procName))
+                            currentlyRunning.Add(procName.ToLowerInvariant());
+                    }
+                    catch { }
+                }
+
+                for (int i = 0; i < count; i++)
+                {
+                    var ctrl = _channelControls[i];
+                    if (ctrl.AudioTargets == null) continue;
+
+                    foreach (var target in ctrl.AudioTargets)
+                    {
+                        if (string.IsNullOrWhiteSpace(target.Name) || target.IsInputDevice || target.IsOutputDevice) continue;
+                        string name = target.Name.ToLowerInvariant();
+                        if (name == "system" || name == "unmapped" || name == "current") continue;
+
+                        string nameNoExt = System.IO.Path.GetFileNameWithoutExtension(name);
+
+                        // Check if any running session matches this target
+                        bool isRunning = currentlyRunning.Contains(name) || currentlyRunning.Contains(nameNoExt) ||
+                            currentlyRunning.Any(r => r.Contains(nameNoExt) || nameNoExt.Contains(System.IO.Path.GetFileNameWithoutExtension(r)));
+
+                        if (isRunning && !_knownRunningSessions.Contains(name))
+                        {
+                            // Newly started app — apply the slider's current volume
+                            _knownRunningSessions.Add(name);
+                            float level = ctrl.CurrentVolume;
+                            Debug.WriteLine($"[WS Sync] New session detected for '{name}', applying vol={level:F2} mute={ctrl.IsMuted}");
+                            ApplyVolumeToTargets(ctrl, ctrl.AudioTargets, level);
+                        }
+                        else if (!isRunning && _knownRunningSessions.Contains(name))
+                        {
+                            // App stopped — remove from known set
+                            _knownRunningSessions.Remove(name);
+                        }
+                    }
+                }
+            }
+
+            // Periodically flush last-known volumes to disk
+            var now2 = DateTime.Now;
+            if (now2 - _lastLkvFlush > LkvFlushInterval)
+            {
+                _lastLkvFlush = now2;
+                _settingsManager.SaveSettings(_settingsManager.AppSettings);
             }
         }
 
