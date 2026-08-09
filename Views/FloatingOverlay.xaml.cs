@@ -541,17 +541,17 @@ namespace DeejNG.Views
             SKColor textColor = GetTextColor();
 
             // Draw volume percentage text in center
-            using var volumeTextPaint = new SKPaint
-            {
-                Color = textColor,
-                TextSize = 16,
-                IsAntialias = true,
-                TextAlign = SKTextAlign.Center,
-                Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold)
-            };
+            var volumeTypeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold);
+using var volumeFont = volumeTypeface.ToFont(16);
+using var volumeTextPaint = new SKPaint
+{
+    Color = textColor,
+    IsAntialias = true
+};
 
-            string volumeText = $"{(value * 100):F0}%";
-            canvas.DrawText(volumeText, center.X, center.Y + 6, volumeTextPaint);
+string volumeText = $"{(value * 100):F0}%";
+var textWidth = volumeFont.MeasureText(volumeText);
+canvas.DrawText(volumeText, center.X - textWidth / 2, center.Y + 6, volumeFont, volumeTextPaint);
 
             // Draw the channel label below the meter
             DrawWrappedLabel(canvas, label, center.X, center.Y + labelOffset);
@@ -567,13 +567,12 @@ namespace DeejNG.Views
             SKColor textColor = GetTextColor();
 
             // Configure paint settings for the label text
+            var labelTypeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Normal);
+            using var labelFont = labelTypeface.ToFont(11);
             using var labelPaint = new SKPaint
             {
                 Color = textColor,
-                TextSize = 11,
-                IsAntialias = true,
-                TextAlign = SKTextAlign.Center,
-                Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Normal)
+                IsAntialias = true
             };
 
             const float maxWidth = 120f;     // Maximum allowed line width in pixels
@@ -588,10 +587,9 @@ namespace DeejNG.Views
             foreach (var word in words)
             {
                 var testLine = string.IsNullOrEmpty(currentLine) ? word : $"{currentLine} {word}";
-                var bounds = new SKRect();
-                labelPaint.MeasureText(testLine, ref bounds);
+                var testWidth = labelFont.MeasureText(testLine);
 
-                if (bounds.Width <= maxWidth || string.IsNullOrEmpty(currentLine))
+                if (testWidth <= maxWidth || string.IsNullOrEmpty(currentLine))
                 {
                     currentLine = testLine;
                 }
@@ -625,11 +623,11 @@ namespace DeejNG.Views
             // Draw each line of text
             foreach (var line in lines)
             {
-                canvas.DrawText(line, centerX, currentY, labelPaint);
+                var lineWidth = labelFont.MeasureText(line);
+                canvas.DrawText(line, centerX - lineWidth / 2, currentY, labelFont, labelPaint);
                 currentY += lineHeight;
             }
         }
-
         /// <summary>
         /// Retrieves the color of a specific screen pixel using Win32 API calls.
         /// </summary>
