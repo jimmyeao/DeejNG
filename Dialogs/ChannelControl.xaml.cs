@@ -7,8 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using SkiaSharp;
-using SkiaSharp.Views.Desktop;
-using SkiaSharp.Views.WPF;
+using DeejNG.Controls;
 using DeejNG.Views;
 
 namespace DeejNG.Dialogs
@@ -487,7 +486,7 @@ namespace DeejNG.Dialogs
             }
         }
 
-        private void SkiaCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)
+        private void SkiaCanvas_PaintSurface(object sender, SkiaPaintSurfaceEventArgs e)
         {
             var canvas = e.Surface.Canvas;
             var info = e.Info;

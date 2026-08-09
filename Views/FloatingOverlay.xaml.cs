@@ -1,9 +1,8 @@
 ﻿// Updated FloatingOverlay.xaml.cs with proper text color handling
 
 using DeejNG.Classes;
+using DeejNG.Controls;
 using SkiaSharp;
-using SkiaSharp.Views.Desktop;
-using SkiaSharp.Views.WPF;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -680,7 +679,7 @@ canvas.DrawText(volumeText, center.X - textWidth / 2, center.Y + 6, volumeFont, 
         /// Handles the paint event for the overlay canvas.
         /// Draws the semi-transparent background, border, and all volume meters with labels.
         /// </summary>
-        private void OverlayCanvas_PaintSurface(object sender, SKPaintSurfaceEventArgs e)
+        private void OverlayCanvas_PaintSurface(object sender, SkiaPaintSurfaceEventArgs e)
         {
             var canvas = e.Surface.Canvas;
 

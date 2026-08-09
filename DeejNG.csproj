@@ -33,7 +33,6 @@
     <PackageReference Include="NAudio.Core" Version="2.3.0" />
     <PackageReference Include="NAudio.Extras" Version="2.3.0" />
     <PackageReference Include="SkiaSharp" Version="4.151.1" />
-    <PackageReference Include="SkiaSharp.Views.WPF" Version="4.151.1" />
     <PackageReference Include="System.IO.Ports" Version="10.0.10" />
   </ItemGroup>
 
