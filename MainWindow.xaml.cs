@@ -674,7 +674,7 @@ namespace DeejNG
                 }
                 catch (Exception ex)
                 {
-
+                    Debug.WriteLine($"[OnClosed] Failed to save profile: {ex}");
                 }
             }
 
@@ -1772,6 +1772,9 @@ namespace DeejNG
                                 _channelControls[i].AudioTargets = currentTargets[i];
                             }
 
+                            // GenerateSliders sets _isInitializing, which makes SaveSettings() a no-op.
+                            // Targets are fully restored above, so clear it to persist the new slider count.
+                            _isInitializing = false;
                             SaveSettings();
                             return;
                         }
@@ -2343,7 +2346,7 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
-
+                Debug.WriteLine($"[PositionSaveTimer] Failed to save profile: {ex}");
             }
         }
 
@@ -2520,7 +2523,7 @@ namespace DeejNG
             }
             catch (Exception ex)
             {
-
+                Debug.WriteLine($"[SaveSettings] Failed: {ex}");
             }
         }
 

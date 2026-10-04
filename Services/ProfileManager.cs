@@ -22,6 +22,19 @@ namespace DeejNG.Services
         private string _cachedProfilesPath = null;
         private ProfileCollection _profileCollection = new ProfileCollection();
 
+        // Overlay coordinates can be NaN (WPF reports NaN for Left/Top of windows that have not been shown).
+        // Without this, Serialize throws and every save fails.
+        private static readonly JsonSerializerOptions ReadOptions = new JsonSerializerOptions
+        {
+            NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals
+        };
+
+        private static readonly JsonSerializerOptions WriteOptions = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals
+        };
+
         #endregion Private Fields
 
         #region Public Constructors
@@ -156,7 +169,7 @@ namespace DeejNG.Services
                 {
                     // Load existing profiles
                     var json = File.ReadAllText(ProfilesPath);
-                    _profileCollection = JsonSerializer.Deserialize<ProfileCollection>(json) ?? new ProfileCollection();
+                    _profileCollection = JsonSerializer.Deserialize<ProfileCollection>(json, ReadOptions) ?? new ProfileCollection();
 
 
                 }
@@ -182,7 +195,7 @@ namespace DeejNG.Services
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[ProfileManager] Failed to load profiles: {ex.Message}");
+                LogError("Failed to load profiles", ex);
 
                 // Keep a copy of the unreadable file so it is not silently overwritten by the next save
                 try
@@ -236,11 +249,7 @@ namespace DeejNG.Services
                         activeProfile.LastModified = DateTime.Now;
                     }
 
-                    var options = new JsonSerializerOptions
-                    {
-                        WriteIndented = true
-                    };
-                    var json = JsonSerializer.Serialize(_profileCollection, options);
+                    var json = JsonSerializer.Serialize(_profileCollection, WriteOptions);
 
                     // Ensure directory exists
                     var dir = Path.GetDirectoryName(ProfilesPath);
@@ -262,7 +271,7 @@ namespace DeejNG.Services
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[ProfileManager] Failed to save profiles: {ex.Message}");
+                    LogError("Failed to save profiles", ex);
                 }
             }
         }
@@ -362,7 +371,7 @@ namespace DeejNG.Services
                     }
                     catch (Exception ex)
                     {
-
+                        LogError("Failed to rename legacy settings file after migration", ex);
                     }
                 }
                 else
@@ -372,7 +381,26 @@ namespace DeejNG.Services
             }
             catch (Exception ex)
             {
+                LogError("Failed to migrate legacy settings", ex);
+            }
+        }
 
+        /// <summary>
+        /// Logs to the debug output and, best effort, to profiles.error.log next to profiles.json
+        /// so users can attach it to bug reports (Debug output is not available in release builds).
+        /// </summary>
+        private void LogError(string message, Exception ex)
+        {
+            Debug.WriteLine($"[ProfileManager] {message}: {ex}");
+
+            try
+            {
+                var logPath = ProfilesPath + ".error.log";
+                File.AppendAllText(logPath, $"{DateTime.Now:O} {message}: {ex}{Environment.NewLine}");
+            }
+            catch
+            {
+                // Logging must never throw
             }
         }
 

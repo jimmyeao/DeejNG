@@ -17,6 +17,12 @@ namespace DeejNG.Services
         #region Private Fields
 
         private readonly object _settingsLock = new object();
+        private static readonly JsonSerializerOptions NanSafeOptions = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals
+        };
+
         private string _cachedSettingsPath = null;
         private DateTime _lastSettingsSave = DateTime.MinValue;
 
@@ -240,7 +246,7 @@ namespace DeejNG.Services
                     var json = File.ReadAllText(SettingsPath);
 
 
-                    AppSettings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+                    AppSettings = JsonSerializer.Deserialize<AppSettings>(json, NanSafeOptions) ?? new AppSettings();
 
 
 
@@ -256,7 +262,7 @@ namespace DeejNG.Services
             }
             catch (Exception ex)
             {
-
+                System.Diagnostics.Debug.WriteLine($"[AppSettingsManager] Failed to load settings: {ex}");
             }
 
             AppSettings = new AppSettings();
@@ -286,11 +292,7 @@ namespace DeejNG.Services
                 {
                     AppSettings = newSettings;
 
-                    var options = new JsonSerializerOptions
-                    {
-                        WriteIndented = true
-                    };
-                    var json = JsonSerializer.Serialize(AppSettings, options);
+                    var json = JsonSerializer.Serialize(AppSettings, NanSafeOptions);
 
                     // Ensure directory exists
                     var dir = Path.GetDirectoryName(SettingsPath);
@@ -331,7 +333,7 @@ namespace DeejNG.Services
                 }
                 catch (Exception ex)
                 {
-
+                    System.Diagnostics.Debug.WriteLine($"[AppSettingsManager] Failed to save settings: {ex}");
                 }
             }
         }

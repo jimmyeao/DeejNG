@@ -56,8 +56,12 @@ namespace DeejNG.Models
         private AppSettings CloneSettings(AppSettings original)
         {
             // Deep copy through serialization so no setting (buttons, theme, connection mode, etc.) is lost
-            var json = JsonSerializer.Serialize(original ?? new AppSettings());
-            return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+            var options = new JsonSerializerOptions
+            {
+                NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals
+            };
+            var json = JsonSerializer.Serialize(original ?? new AppSettings(), options);
+            return JsonSerializer.Deserialize<AppSettings>(json, options) ?? new AppSettings();
         }
 
         #endregion Private Methods
