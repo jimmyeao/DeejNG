@@ -182,6 +182,20 @@ namespace DeejNG.Services
             }
             catch (Exception ex)
             {
+                Debug.WriteLine($"[ProfileManager] Failed to load profiles: {ex.Message}");
+
+                // Keep a copy of the unreadable file so it is not silently overwritten by the next save
+                try
+                {
+                    if (File.Exists(ProfilesPath))
+                    {
+                        File.Copy(ProfilesPath, ProfilesPath + ".corrupt", true);
+                    }
+                }
+                catch (Exception backupEx)
+                {
+                    Debug.WriteLine($"[ProfileManager] Failed to back up unreadable profiles: {backupEx.Message}");
+                }
 
                 // Create default profile on error
                 _profileCollection = new ProfileCollection();
@@ -235,20 +249,20 @@ namespace DeejNG.Services
                         Directory.CreateDirectory(dir);
                     }
 
-                    // Write with explicit flush for Server 2022 compatibility
-                    using (var fileStream = new FileStream(ProfilesPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                    // Write to a temp file first so a failed write never truncates existing profiles
+                    var tempPath = ProfilesPath + ".tmp";
+                    using (var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
                     using (var writer = new StreamWriter(fileStream))
                     {
                         writer.Write(json);
                         writer.Flush();
                         fileStream.Flush(true);
                     }
-
-
+                    File.Move(tempPath, ProfilesPath, true);
                 }
                 catch (Exception ex)
                 {
-
+                    Debug.WriteLine($"[ProfileManager] Failed to save profiles: {ex.Message}");
                 }
             }
         }
