@@ -1,5 +1,6 @@
 using DeejNG.Classes;
 using System;
+using System.Text.Json;
 
 namespace DeejNG.Models
 {
@@ -54,35 +55,13 @@ namespace DeejNG.Models
 
         private AppSettings CloneSettings(AppSettings original)
         {
-            // Create a new AppSettings with all values copied
-            return new AppSettings
+            // Deep copy through serialization so no setting (buttons, theme, connection mode, etc.) is lost
+            var options = new JsonSerializerOptions
             {
-                PortName = original.PortName,
-                SliderTargets = original.SliderTargets?.Select(list =>
-                    list?.Select(target => new AudioTarget
-                    {
-                        Name = target.Name,
-                        IsInputDevice = target.IsInputDevice,
-                        IsOutputDevice = target.IsOutputDevice
-                    }).ToList() ?? new List<AudioTarget>()
-                ).ToList() ?? new List<List<AudioTarget>>(),
-                IsDarkTheme = original.IsDarkTheme,
-                IsSliderInverted = original.IsSliderInverted,
-                VuMeters = original.VuMeters,
-                StartOnBoot = original.StartOnBoot,
-                StartMinimized = original.StartMinimized,
-                DisableSmoothing = original.DisableSmoothing,
-                InputModes = original.InputModes?.ToList() ?? new List<bool>(),
-                MuteStates = original.MuteStates?.ToList() ?? new List<bool>(),
-                OverlayEnabled = original.OverlayEnabled,
-                OverlayTimeoutSeconds = original.OverlayTimeoutSeconds,
-                OverlayX = original.OverlayX,
-                OverlayY = original.OverlayY,
-                OverlayScreenDevice = original.OverlayScreenDevice,
-                OverlayScreenBounds = original.OverlayScreenBounds,
-                OverlayOpacity = original.OverlayOpacity,
-                OverlayTextColor = original.OverlayTextColor
+                NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals
             };
+            var json = JsonSerializer.Serialize(original ?? new AppSettings(), options);
+            return JsonSerializer.Deserialize<AppSettings>(json, options) ?? new AppSettings();
         }
 
         #endregion Private Methods
