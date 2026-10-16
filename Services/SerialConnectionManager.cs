@@ -250,6 +250,11 @@ namespace DeejNG.Services
                     NewLine = "\n"
                 };
 
+                // Don't carry bytes over from a previous connection: a stale partial line would
+                // be concatenated onto the first line of this one. Cleared before the handlers are
+                // attached so no data can be framed ahead of it.
+                _leftover = string.Empty;
+
                 _serialPort.DataReceived += SerialPort_DataReceived;
                 _serialPort.ErrorReceived += SerialPort_ErrorReceived;
                 _serialPort.Open();
@@ -409,6 +414,10 @@ namespace DeejNG.Services
 
                 // Reset button state initialization flag on disconnect
                 _buttonStatesInitialized = false;
+
+                // Drop any partial line so it cannot be concatenated onto the next connection's
+                // first line.
+                _leftover = string.Empty;
             }
             catch (Exception ex)
             {

@@ -1757,25 +1757,47 @@ namespace DeejNG
                 {
                     try
                     {
-                        // Hardware slider count takes priority
-                        if (_channelControls.Count != parts.Length)
+                        // The device is reporting a different slider count than we have channels for.
+                        if (SliderLayoutReconciler.IsRebuildWarranted(_channelControls.Count, parts.Length))
                         {
 
 
-                            var currentTargets = _channelControls.Select(c => c.AudioTargets).ToList();
+                            var previousTargets = _channelControls.Select(c => c.AudioTargets).ToList();
                             _expectedSliderCount = parts.Length;
                             GenerateSliders(parts.Length);
                             AutoSizeToChannels();
 
-                            for (int i = 0; i < Math.Min(currentTargets.Count, _channelControls.Count); i++)
+                            // GenerateSliders refills every channel from the active profile, so a
+                            // channel the profile has no mapping for comes back empty. Carry the
+                            // mappings that were in use across the change instead: a channel that
+                            // had a target keeps it, and only the channels this layout did not have
+                            // before fall back to the profile.
+                            var restoredTargets = _channelControls.Select(c => c.AudioTargets).ToList();
+                            var mergedTargets = SliderLayoutReconciler.ApplyPreviousMappings(
+                                restoredTargets, previousTargets, _channelControls.Count);
+                            for (int i = 0; i < _channelControls.Count; i++)
                             {
-                                _channelControls[i].AudioTargets = currentTargets[i];
+                                _channelControls[i].AudioTargets = mergedTargets[i];
                             }
 
-                            // GenerateSliders sets _isInitializing, which makes SaveSettings() a no-op.
-                            // Targets are fully restored above, so clear it to persist the new slider count.
+                            // GenerateSliders clears both of these and nothing else puts them back,
+                            // so restore them here: otherwise SaveSettings() stays a no-op and
+                            // volume stops being applied for the rest of the session.
+                            _allowVolumeApplication = true;
                             _isInitializing = false;
-                            SaveSettings();
+
+                            SyncMuteStates();
+
+                            if (!_timerCoordinator.IsMetersRunning)
+                            {
+                                _timerCoordinator.StartMeters();
+                            }
+
+                            // Deliberately does not save. The new count comes from hardware
+                            // detection rather than a user edit, and persisting it here turned a
+                            // single truncated payload into permanent loss of the user's channel
+                            // mappings (jimmyeao/DeejNG#125). The layout is persisted on the next
+                            // ordinary save instead.
                             return;
                         }
 
