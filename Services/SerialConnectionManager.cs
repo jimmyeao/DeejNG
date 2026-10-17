@@ -121,19 +121,33 @@ namespace DeejNG.Services
 
                     if (elapsed >= WatchdogQuietThreshold)
                     {
-                        _noDataCounter++;
-
-                        if (_serialPort.BytesToRead == 0 && WatchdogProbeByte != 0)
+                        // Bytes waiting in the driver's buffer mean the board, the cable and the
+                        // port are all still alive - what has stalled is our own reading of them.
+                        // Counting that as silence used to end in HandleSerialDisconnection, and
+                        // reopening the port asserts DTR, which reboots the board: it then reports
+                        // every slider at zero for about half a minute, and with inverted sliders
+                        // that is 100% on every channel. Drain here instead, so the stream is
+                        // revived without tearing the port down.
+                        if (_serialPort.BytesToRead > 0)
                         {
-                            try { _serialPort.Write(new[] { WatchdogProbeByte }, 0, 1); }
-                            catch { /* ignore; disconnect if persistent */ }
-                        }
-
-                        if (_noDataCounter >= WatchdogMaxQuietIntervals)
-                        {
-
-                            HandleSerialDisconnection();
+                            DrainSerialBuffer();
                             _noDataCounter = 0;
+                        }
+                        else
+                        {
+                            _noDataCounter++;
+
+                            if (WatchdogProbeByte != 0)
+                            {
+                                try { _serialPort.Write(new[] { WatchdogProbeByte }, 0, 1); }
+                                catch { /* ignore; disconnect if persistent */ }
+                            }
+
+                            if (_noDataCounter >= WatchdogMaxQuietIntervals)
+                            {
+                                HandleSerialDisconnection();
+                                _noDataCounter = 0;
+                            }
                         }
                     }
                     else
@@ -560,6 +574,19 @@ namespace DeejNG.Services
                 HandleSerialDisconnection();
                 return;
             }
+
+            DrainSerialBuffer();
+        }
+
+        /// <summary>
+        /// Reads whatever the driver has buffered and frames the complete lines in it.
+        /// Runs from the SerialPort callback, and from the watchdog when bytes are still
+        /// waiting but that callback has stopped arriving - so the stream can be revived
+        /// without closing the port, and closing the port is what resets the board (DTR).
+        /// </summary>
+        private void DrainSerialBuffer()
+        {
+            if (_serialPort == null || !_serialPort.IsOpen) return;
 
             // Prevent re-entrant entry from the driver
             if (Interlocked.Exchange(ref _reading, 1) == 1)
