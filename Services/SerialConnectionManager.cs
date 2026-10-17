@@ -29,6 +29,8 @@ namespace DeejNG.Services
         private bool _buttonStatesInitialized = false;
 
         private DateTime _connectionStartTime = DateTime.MinValue;
+        // One reset pulse per connection, see CheckConnection.
+        private bool _dtrNudged = false;
         private bool _expectingData = false;
         private HashSet<string> _invalidPorts = new HashSet<string>();
         private DateTime _invalidPortsClearTime = DateTime.MinValue;
@@ -99,6 +101,18 @@ namespace DeejNG.Services
                     var elapsed = DateTime.Now - _connectionStartTime;
                     if (elapsed >= ValidationTimeout)
                     {
+                        // A sketch that only reports when a slider moves can sit silent on a port
+                        // that is perfectly healthy. Asserting DTR drops the Arduino's reset line
+                        // and makes it boot and emit a frame, and DtrEnable is settable on an open
+                        // port, so this is done without closing and reopening it. Only a board that
+                        // stays silent after this is written off as invalid.
+                        if (!_dtrNudged)
+                        {
+                            _dtrNudged = true;
+                            try { _serialPort.DtrEnable = true; } catch { }
+                            _connectionStartTime = DateTime.Now;
+                            return;
+                        }
 
                         // Mark this port as invalid
                         if (!string.IsNullOrEmpty(CurrentPort))
@@ -117,24 +131,26 @@ namespace DeejNG.Services
 
                 if (_expectingData)
                 {
-                    var elapsed = DateTime.Now - _lastValidDataTimestamp;
+                    var quiet = DateTime.Now - _lastValidDataTimestamp >= WatchdogQuietThreshold;
 
-                    if (elapsed >= WatchdogQuietThreshold)
+                    // The rule itself lives in WatchdogPolicy so that "bytes waiting in the
+                    // buffer prove the link is alive" can be pinned down by a test instead of
+                    // only being checkable with the hardware attached.
+                    switch (WatchdogPolicy.Decide(quiet, _serialPort.BytesToRead, _noDataCounter, WatchdogMaxQuietIntervals))
                     {
-                        // Bytes waiting in the driver's buffer mean the board, the cable and the
-                        // port are all still alive - what has stalled is our own reading of them.
-                        // Counting that as silence used to end in HandleSerialDisconnection, and
-                        // reopening the port asserts DTR, which reboots the board: it then reports
-                        // every slider at zero for about half a minute, and with inverted sliders
-                        // that is 100% on every channel. Drain here instead, so the stream is
-                        // revived without tearing the port down.
-                        if (_serialPort.BytesToRead > 0)
-                        {
+                        case WatchdogVerdict.Healthy:
+                            _noDataCounter = 0;
+                            break;
+
+                        case WatchdogVerdict.DrainPendingBytes:
+                            // Read them rather than counting them as silence: the connection is
+                            // kept and the stalled read is revived in the same step. See
+                            // WatchdogPolicy for what counting them used to cost.
                             DrainSerialBuffer();
                             _noDataCounter = 0;
-                        }
-                        else
-                        {
+                            break;
+
+                        case WatchdogVerdict.Probe:
                             _noDataCounter++;
 
                             if (WatchdogProbeByte != 0)
@@ -142,17 +158,13 @@ namespace DeejNG.Services
                                 try { _serialPort.Write(new[] { WatchdogProbeByte }, 0, 1); }
                                 catch { /* ignore; disconnect if persistent */ }
                             }
+                            break;
 
-                            if (_noDataCounter >= WatchdogMaxQuietIntervals)
-                            {
-                                HandleSerialDisconnection();
-                                _noDataCounter = 0;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        _noDataCounter = 0;
+                        case WatchdogVerdict.Disconnect:
+                            _noDataCounter++;
+                            HandleSerialDisconnection();
+                            _noDataCounter = 0;
+                            break;
                     }
                 }
                 else if (IsConnected && (DateTime.Now - _lastValidDataTimestamp).TotalSeconds > 10)
@@ -265,7 +277,12 @@ namespace DeejNG.Services
                     // dropped or duplicated mid-number, which is what the UI used to rebuild itself
                     // from. 32 KiB covers roughly half a minute of the same stream.
                     ReadBufferSize = 32768,
-                    DtrEnable = true,
+                    // Held deasserted so that opening the port leaves a board that is already
+                    // running alone. Asserting DTR here resets the Arduino, which then reports
+                    // every slider at zero for about half a minute before the readings come
+                    // back, one channel at a time - inverted, that is 100% on every channel.
+                    // A board that never speaks is nudged instead, see CheckConnection.
+                    DtrEnable = false,
                     RtsEnable = true,
                     NewLine = "\n"
                 };
@@ -291,6 +308,7 @@ namespace DeejNG.Services
                 // Reset protocol validation state
                 _isProtocolValidated = false;
                 _connectionStartTime = DateTime.Now;
+                _dtrNudged = false;
 
                 Connected?.Invoke();
 
@@ -581,8 +599,8 @@ namespace DeejNG.Services
         /// <summary>
         /// Reads whatever the driver has buffered and frames the complete lines in it.
         /// Runs from the SerialPort callback, and from the watchdog when bytes are still
-        /// waiting but that callback has stopped arriving - so the stream can be revived
-        /// without closing the port, and closing the port is what resets the board (DTR).
+        /// waiting but that callback has stopped arriving - so a stalled read is revived
+        /// without closing the port, and without disturbing the board on the other end.
         /// </summary>
         private void DrainSerialBuffer()
         {
