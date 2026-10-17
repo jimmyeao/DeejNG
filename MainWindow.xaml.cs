@@ -148,6 +148,10 @@ namespace DeejNG
 
         private int _expectedSliderCount = -1;
 
+        // Guards against a damaged serial frame being mistaken for a hardware layout change. See
+        // SliderCountStabilizer for why a single disagreeing field count must not rebuild the panel.
+        private readonly SliderCountStabilizer _sliderCountStabilizer = new SliderCountStabilizer(0);
+
         private float _exponentialVolumeFactor = 2f;
 
         private bool _hasLoadedInitialSettings = false;
@@ -1439,6 +1443,11 @@ namespace DeejNG
             _isInitializing = true;
             _allowVolumeApplication = false;
 
+            // Every layout change funnels through here, so this is the one place the stabilizer
+            // needs to be put back in step: whatever count it was still weighing up is moot now
+            // that the on-screen channels are being replaced.
+            _sliderCountStabilizer.Reset(count);
+
 
 
             for (int i = 0; i < count; i++)
@@ -1760,7 +1769,15 @@ namespace DeejNG
                         // The device is reporting a different slider count than we have channels for.
                         if (SliderLayoutReconciler.IsRebuildWarranted(_channelControls.Count, parts.Length))
                         {
-
+                            // One disagreeing count is far more likely to be a damaged frame than a
+                            // hardware change: the link is saturated, and an overrun returns lines
+                            // with bytes dropped mid-number. Rebuilding on every one of those turned
+                            // a burst of damaged data into a storm that froze the UI for ~30s, so
+                            // wait for the device to repeat the new count and hold it.
+                            if (!_sliderCountStabilizer.Accepts(parts.Length, DateTime.Now))
+                            {
+                                return;
+                            }
 
                             var previousTargets = _channelControls.Select(c => c.AudioTargets).ToList();
                             _expectedSliderCount = parts.Length;
@@ -1800,6 +1817,11 @@ namespace DeejNG
                             // ordinary save instead.
                             return;
                         }
+
+                        // The frame agrees with the layout, so any count waiting to be confirmed
+                        // was contradicted. Starting the count over is what stops a burst of
+                        // damaged frames from accumulating into a change.
+                        _sliderCountStabilizer.Reset(_channelControls.Count);
 
                         // Process slider data
                         int maxIndex = Math.Min(parts.Length, _channelControls.Count);

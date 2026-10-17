@@ -245,6 +245,12 @@ namespace DeejNG.Services
                     // IMPORTANT: Threshold=1 was causing massive thread pool churn (QueueUserWorkItemCallback leak)
                     // because each byte triggered a new thread pool work item.
                     ReceivedBytesThreshold = 8,
+                    // The default 4096 byte buffer holds only about four seconds of a continuously
+                    // streaming sketch, and the reader can be starved for longer than that when the
+                    // machine is busy. Once the buffer fills, the driver returns bytes with values
+                    // dropped or duplicated mid-number, which is what the UI used to rebuild itself
+                    // from. 32 KiB covers roughly half a minute of the same stream.
+                    ReadBufferSize = 32768,
                     DtrEnable = true,
                     RtsEnable = true,
                     NewLine = "\n"
@@ -442,54 +448,6 @@ namespace DeejNG.Services
         }
 
         /// <summary>
-        /// Validates if the received data is valid DeejNG protocol (pipe-delimited numeric values)
-        /// Accepts:
-        /// - Raw ADC values (0-1023)
-        /// - Normalized floats (0.0-1.0)
-        /// - Inline mute trigger (9999)
-        /// - Button states (10000=OFF, 10001=ON)
-        /// </summary>
-        private bool IsValidDeejNGData(string line)
-        {
-            if (string.IsNullOrWhiteSpace(line))
-                return false;
-
-            var parts = line.Split('|');
-
-            // DeejNG data should have at least one value
-            if (parts.Length == 0)
-                return false;
-
-            // Check if at least the first few values are valid numbers
-            int validCount = 0;
-            int maxCheck = Math.Min(parts.Length, 3); // Check first 3 values
-
-            for (int i = 0; i < maxCheck; i++)
-            {
-                if (float.TryParse(parts[i].Trim(), out float value))
-                {
-                    // Accept four formats:
-                    // 1. Raw ADC values (0-1023 for 10-bit ADC, typical Arduino)
-                    // 2. Normalized float values (0.0-1.0)
-                    // 3. Inline mute trigger value (9999)
-                    // 4. Button states (10000=OFF, 10001=ON)
-                    // Also allow some tolerance for noise/calibration
-                    bool isRawADC = value >= -10 && value <= 1100;  // 0-1023 range with tolerance
-                    bool isNormalized = value >= -0.1f && value <= 1.1f;  // 0.0-1.0 range with tolerance
-                    bool isInlineMute = value >= 9998 && value <= 10000;  // 9999 inline mute trigger with tolerance
-                    bool isButton = value >= 9999.5f && value <= 10001.5f;  // 10000 or 10001 button states
-
-                    if (isRawADC || isNormalized || isInlineMute || isButton)
-                    {
-                        validCount++;
-                    }
-                }
-            }
-
-            // Consider valid if at least half of checked values are valid numbers in range
-            return validCount >= (maxCheck / 2.0);
-        }
-        /// <summary>
         /// Processes a complete serial line, auto-detecting and separating slider and button data.
         /// Sliders: 0-1023 (or 9999 for inline mute)
         /// Buttons: 10000 (OFF) or 10001 (ON)
@@ -498,21 +456,25 @@ namespace DeejNG.Services
         {
             if (string.IsNullOrWhiteSpace(line)) return;
 
-            // Validate protocol if not yet validated
+            // Framing is checked on every line, not only until the protocol is first recognised.
+            // The link runs at the full rate the sketch can drive it, so a starved reader lets the
+            // driver buffer overrun and the bytes that come back have values dropped, duplicated or
+            // reordered mid-number. Those lines used to be accepted unconditionally once the
+            // protocol had been seen once, and every one whose field count differed from the live
+            // layout rebuilt the whole slider panel: a burst of them became a rebuild storm that
+            // saturated the UI thread for tens of seconds.
+            if (!SerialFrameValidator.IsPlausible(line))
+            {
+                // Don't process invalid data
+                return;
+            }
+
+            // The first line that looks like deej data proves this port is talking the protocol.
             if (!_isProtocolValidated)
             {
-                if (IsValidDeejNGData(line))
-                {
-                    _isProtocolValidated = true;
+                _isProtocolValidated = true;
 
-                    ProtocolValidated?.Invoke(CurrentPort);
-                }
-                else
-                {
-
-                    // Don't process invalid data
-                    return;
-                }
+                ProtocolValidated?.Invoke(CurrentPort);
             }
 
             // Split the line
