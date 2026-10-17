@@ -148,8 +148,7 @@ namespace DeejNG
 
         private int _expectedSliderCount = -1;
 
-        // Guards against a damaged serial frame being mistaken for a hardware layout change. See
-        // SliderCountStabilizer for why a single disagreeing field count must not rebuild the panel.
+        // A single disagreeing field count must not rebuild the panel; see SliderCountStabilizer.
         private readonly SliderCountStabilizer _sliderCountStabilizer = new SliderCountStabilizer(0);
 
         private float _exponentialVolumeFactor = 2f;
@@ -1443,9 +1442,7 @@ namespace DeejNG
             _isInitializing = true;
             _allowVolumeApplication = false;
 
-            // Every layout change funnels through here, so this is the one place the stabilizer
-            // needs to be put back in step: whatever count it was still weighing up is moot now
-            // that the on-screen channels are being replaced.
+            // Every layout change funnels through here, so this is where the stabilizer resets.
             _sliderCountStabilizer.Reset(count);
 
 
@@ -1766,14 +1763,10 @@ namespace DeejNG
                 {
                     try
                     {
-                        // The device is reporting a different slider count than we have channels for.
                         if (SliderLayoutReconciler.IsRebuildWarranted(_channelControls.Count, parts.Length))
                         {
-                            // One disagreeing count is far more likely to be a damaged frame than a
-                            // hardware change: the link is saturated, and an overrun returns lines
-                            // with bytes dropped mid-number. Rebuilding on every one of those turned
-                            // a burst of damaged data into a storm that froze the UI for ~30s, so
-                            // wait for the device to repeat the new count and hold it.
+                            // One disagreeing count is far more likely a damaged frame than a
+                            // hardware change; wait for the device to repeat the count and hold it.
                             if (!_sliderCountStabilizer.Accepts(parts.Length, DateTime.Now))
                             {
                                 return;
@@ -1784,11 +1777,8 @@ namespace DeejNG
                             GenerateSliders(parts.Length);
                             AutoSizeToChannels();
 
-                            // GenerateSliders refills every channel from the active profile, so a
-                            // channel the profile has no mapping for comes back empty. Carry the
-                            // mappings that were in use across the change instead: a channel that
-                            // had a target keeps it, and only the channels this layout did not have
-                            // before fall back to the profile.
+                            // GenerateSliders refills from the profile, so carry the mappings
+                            // already in use across the change instead.
                             var restoredTargets = _channelControls.Select(c => c.AudioTargets).ToList();
                             var mergedTargets = SliderLayoutReconciler.ApplyPreviousMappings(
                                 restoredTargets, previousTargets, _channelControls.Count);
@@ -1797,9 +1787,8 @@ namespace DeejNG
                                 _channelControls[i].AudioTargets = mergedTargets[i];
                             }
 
-                            // GenerateSliders clears both of these and nothing else puts them back,
-                            // so restore them here: otherwise SaveSettings() stays a no-op and
-                            // volume stops being applied for the rest of the session.
+                            // GenerateSliders clears both and nothing else restores them; without
+                            // this, saving and volume application stay off for the session.
                             _allowVolumeApplication = true;
                             _isInitializing = false;
 
@@ -1810,17 +1799,12 @@ namespace DeejNG
                                 _timerCoordinator.StartMeters();
                             }
 
-                            // Deliberately does not save. The new count comes from hardware
-                            // detection rather than a user edit, and persisting it here turned a
-                            // single truncated payload into permanent loss of the user's channel
-                            // mappings (jimmyeao/DeejNG#125). The layout is persisted on the next
-                            // ordinary save instead.
+                            // Deliberately does not save: persisting a hardware-detected count let one
+                            // truncated payload destroy the mappings. The next ordinary save persists.
                             return;
                         }
 
-                        // The frame agrees with the layout, so any count waiting to be confirmed
-                        // was contradicted. Starting the count over is what stops a burst of
-                        // damaged frames from accumulating into a change.
+                        // A frame that agrees with the layout contradicts any pending change.
                         _sliderCountStabilizer.Reset(_channelControls.Count);
 
                         // Process slider data

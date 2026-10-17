@@ -6,35 +6,18 @@ using Xunit;
 
 namespace DeejNG.Tests
 {
-    /// <summary>
-    /// Covers the guard that stops a damaged serial frame from being mistaken for a hardware
-    /// layout change.
-    ///
-    /// On 2026-10-17 the reporter's machine was under game load, the serial reader was starved,
-    /// the receive buffer overran, and the damaged bytes that came back produced frames of 1, 2,
-    /// 3, 4, 6, 7, 8, 9, 13 and 15 fields. Every one rebuilt the whole slider panel, which cost
-    /// about 600ms of UI time, which starved the reader further. The storm ran for 29 seconds and
-    /// left the panel showing whatever count the last damaged frame happened to have — the user
-    /// saw one slider, then eight.
-    ///
-    /// The payloads in <see cref="RecordedStormPayloads"/> are those frames in the order the
-    /// diagnostic log recorded them.
-    /// </summary>
+    // On 2026-10-17 a starved reader let the driver buffer overrun; the damaged frames came
+    // back with 1, 2, 3, 4, 6, 7, 8, 9, 13 and 15 fields, and every one rebuilt the panel.
     public class SliderCountStabilizerTests
     {
         private static readonly DateTime T0 = new DateTime(2026, 10, 17, 14, 29, 47);
 
-        /// <summary>One frame interval at 9600 baud with a five-slider sketch.</summary>
         private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(52);
 
         private const int HealthyFrameFields = 5;
 
-        /// <summary>
-        /// Every slider payload MainWindow was handed during the rebuild storm, in order, exactly
-        /// as the diagnostic log recorded them in the `payload=` field of each REBUILD line.
-        /// Entries with five fields are the healthy frames the device kept sending, which the log
-        /// recorded whenever a previous rebuild had left the live count at something else.
-        /// </summary>
+        // Every payload MainWindow was handed during the 2026-10-17 storm, in log order.
+        // Five-field entries are the healthy frames sent between the damaged ones.
         private static readonly string[] RecordedStormPayloads =
         {
             "327",                                                             // first line after the DTR reset
@@ -117,11 +100,7 @@ namespace DeejNG.Tests
             "34|745|244|227|432"
         };
 
-        /// <summary>
-        /// Runs the recorded payloads through the same decision MainWindow makes, returning how
-        /// many rebuilds it performed, the channel count it ended on, and how many frames asked
-        /// for a rebuild outright (which is what the guard exists to refuse).
-        /// </summary>
+        // Runs the payloads through the same decision MainWindow makes.
         private static (int Rebuilds, int Triggers, int Live) Replay(
             IEnumerable<string> payloads, int initialLive = 5)
         {
@@ -162,8 +141,7 @@ namespace DeejNG.Tests
         {
             var (rebuilds, triggers, live) = Replay(RecordedStormPayloads);
 
-            // The recording really does demand a rebuild over and over; the zero below is the
-            // guard refusing all of them, not a scenario with nothing to refuse.
+            // The zero is the guard refusing, not a scenario with nothing to refuse.
             Assert.True(triggers >= 30, $"only {triggers} frames asked for a rebuild");
             Assert.Equal(0, rebuilds);
             Assert.Equal(5, live);
@@ -172,8 +150,7 @@ namespace DeejNG.Tests
         [Fact]
         public void ReplayingOnlyTheDamagedFrames_RebuildsNothing()
         {
-            // Worst case: the healthy frames the log also recorded are removed, so the damaged
-            // counts sit back to back with nothing to contradict them.
+            // Worst case: damaged counts back to back, nothing to contradict them.
             var damaged = RecordedStormPayloads
                 .Where(p => p.Split('|').Length != HealthyFrameFields);
 
@@ -198,8 +175,7 @@ namespace DeejNG.Tests
             var stabilizer = new SliderCountStabilizer(5);
             var now = T0;
 
-            // The longest run of one damaged count in the recording: six two-field frames back to
-            // back. That spans 260ms, which is still inside the stability window.
+            // The recording's longest damaged run: six frames = 260ms, inside the window.
             for (int i = 0; i < 6; i++)
             {
                 Assert.False(stabilizer.Accepts(2, now));
@@ -224,8 +200,7 @@ namespace DeejNG.Tests
         {
             var stabilizer = new SliderCountStabilizer(5);
 
-            // Damaged, healthy, damaged, healthy... never the three in a row a change needs, even
-            // though each damaged pair here is seconds apart.
+            // Never three disagreeing frames in a row, however long the alternation runs.
             for (int i = 0; i < 10; i++)
             {
                 Assert.False(stabilizer.Accepts(8, T0.AddMilliseconds(i * 500)));
@@ -287,8 +262,7 @@ namespace DeejNG.Tests
         [Fact]
         public void TheGuardStillLetsARealLayoutChangeThrough()
         {
-            // The counterpart to the storm tests: a device that really did change keeps reporting
-            // the new count, so it is still picked up, about 300ms later.
+            // A device that really changed keeps reporting the new count, so it lands ~300ms later.
             var (rebuilds, triggers, live) = Replay(
                 Enumerable.Repeat("34|745|244|227|432|0", 40),
                 initialLive: 5);

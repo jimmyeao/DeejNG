@@ -5,16 +5,8 @@ using Xunit;
 
 namespace DeejNG.Tests
 {
-    /// <summary>
-    /// Covers the always-on framing check applied to every serial line.
-    ///
-    /// The lines in <see cref="DamagedLines_AreRejected"/> are the shapes actually recorded in
-    /// the diagnostic log during the rebuild storm of 2026-10-17 14:29:47-14:30:16, when the
-    /// receive buffer overran because the reader was starved under game load.
-    ///
-    /// Damage that only changes the field count while leaving every value in range is not this
-    /// class's job — see <see cref="SliderCountStabilizerTests"/>.
-    /// </summary>
+    // The damaged shapes below were recorded during the 2026-10-17 rebuild storm. Damage that
+    // only changes the field count is SliderCountStabilizer's job, not this check's.
     public class SerialFrameValidatorTests
     {
         [Theory]
@@ -79,8 +71,7 @@ namespace DeejNG.Tests
         [Fact]
         public void DecimalFieldsAreReadInvariantlyWhateverTheSystemLocale()
         {
-            // The firmware prints '.' no matter what locale the machine is set to, so a
-            // comma-decimal locale must not start rejecting perfectly good frames.
+            // The firmware prints '.' whatever the locale; id-ID uses ',' as its separator.
             var previous = CultureInfo.CurrentCulture;
             try
             {

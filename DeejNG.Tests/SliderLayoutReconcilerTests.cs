@@ -7,11 +7,7 @@ using Xunit;
 
 namespace DeejNG.Tests
 {
-    /// <summary>
-    /// Covers the merge policy used when the serial device reports a different slider count than
-    /// the layout currently on screen. The regression these pin is jimmyeao/DeejNG#125, where a
-    /// single short payload permanently destroyed the user's channel mappings.
-    /// </summary>
+    // Pins the regression where one short payload permanently destroyed the channel mappings.
     public class SliderLayoutReconcilerTests
     {
         private static List<AudioTarget> Targets(params string[] names)
@@ -165,12 +161,8 @@ namespace DeejNG.Tests
             Assert.Equal(expected, SliderLayoutReconciler.IsRebuildWarranted(liveCount, payloadCount));
         }
 
-        /// <summary>
-        /// Characterization test: the restore loop that shipped before this fix assigned every
-        /// overlapping channel unconditionally, so a channel that happened to be unmapped at the
-        /// moment of a rebuild overwrote the mapping the profile had just restored. SaveSettings()
-        /// then persisted that erasure.
-        /// </summary>
+        // Characterization: the old restore loop overwrote restored mappings with whatever was
+        // live at the moment, and SaveSettings() persisted the erasure.
         [Fact]
         public void PreviousImplementation_LostMappingsThatThisFixPreserves()
         {

@@ -18,9 +18,7 @@ namespace DeejNG.Services
         // ---- Tuning ----
         private const int MaxRemainderBytes = 4096;
 
-        // How long the dedicated reader thread dozes between BytesToRead polls. Frames
-        // arrive about every 50 ms, so the added latency is a rounding error next to the
-        // frame interval.
+        // Frames arrive about every 50 ms, so the polling latency is a rounding error.
         private const int ReaderPollMilliseconds = 15;
 
         private const int WatchdogMaxQuietIntervals = 3;
@@ -54,14 +52,12 @@ namespace DeejNG.Services
         private int _numberOfSliders = 0;
 
         private volatile int _reading = 0;
-        // The dedicated read loop, one thread per connection. See SerialReaderLoop.
         private Thread _readerThread;
         private volatile bool _readerStop;
         private bool _serialDisconnected = false;
         private SerialPort _serialPort;
         private bool _serialPortFullyInitialized = false;
-        // Stall-breaker state, driven by the watchdog on quiet ticks. See
-        // SerialStallBreakerPolicy.
+        // Driven by the watchdog on quiet ticks; see SerialStallBreakerPolicy.
         private int _stallPinnedTicks = 0;
         private int _stallPreviousBytes = -1;
         private string _userSelectedPort = string.Empty;
@@ -113,11 +109,8 @@ namespace DeejNG.Services
                     var elapsed = DateTime.Now - _connectionStartTime;
                     if (elapsed >= ValidationTimeout)
                     {
-                        // A sketch that only reports when a slider moves can sit silent on a port
-                        // that is perfectly healthy. Asserting DTR drops the Arduino's reset line
-                        // and makes it boot and emit a frame, and DtrEnable is settable on an open
-                        // port, so this is done without closing and reopening it. Only a board that
-                        // stays silent after this is written off as invalid.
+                        // A send-only-on-change sketch can sit silent on a healthy port. Asserting
+                        // DTR boots the board and makes it emit a frame, done on the open port.
                         if (!_dtrNudged)
                         {
                             _dtrNudged = true;
@@ -146,9 +139,7 @@ namespace DeejNG.Services
                     var quiet = DateTime.Now - _lastValidDataTimestamp >= WatchdogQuietThreshold;
                     var bytesToRead = _serialPort.BytesToRead;
 
-                    // The rule itself lives in WatchdogPolicy so that "bytes waiting in the
-                    // buffer prove the link is alive" can be pinned down by a test instead of
-                    // only being checkable with the hardware attached.
+                    // The rule lives in WatchdogPolicy so a test can pin it without hardware.
                     switch (WatchdogPolicy.Decide(quiet, bytesToRead, _noDataCounter, WatchdogMaxQuietIntervals))
                     {
                         case WatchdogVerdict.Healthy:
@@ -157,18 +148,13 @@ namespace DeejNG.Services
                             break;
 
                         case WatchdogVerdict.DrainPendingBytes:
-                            // Read them rather than counting them as silence: the connection is
-                            // kept and the stalled read is revived in the same step. See
-                            // WatchdogPolicy for what counting them used to cost.
+                            // Read them rather than counting them as silence; see WatchdogPolicy.
                             DrainSerialBuffer();
                             _noDataCounter = 0;
 
-                            // Normally the drain above consumes the buffer and the next quiet
-                            // tick sees a different byte count. When the count is pinned at
-                            // the same value instead, the drain was a no-op behind a jammed
-                            // read path, and after a few pinned ticks the only remedy left is
-                            // to cycle the port. Reopening no longer resets the board, because
-                            // DTR is held low at open.
+                            // A byte count pinned across ticks means the drain above was a
+                            // no-op behind a jammed read path; the only remedy is to cycle
+                            // the port (safe now that opening never asserts DTR).
                             if (TrackStallAndCheckBreaker(bytesToRead))
                             {
                                 HandleSerialDisconnection();
@@ -292,35 +278,24 @@ namespace DeejNG.Services
                 {
                     ReadTimeout = 1000,
                     WriteTimeout = 1000,
-                    // The default 4096 byte buffer holds only about four seconds of a continuously
-                    // streaming sketch, and the reader can be starved for longer than that when the
-                    // machine is busy. Once the buffer fills, the driver returns bytes with values
-                    // dropped or duplicated mid-number, which is what the UI used to rebuild itself
-                    // from. 32 KiB covers roughly half a minute of the same stream.
+                    // The 4096 default holds ~4 s of a continuous stream; a full buffer returns
+                    // bytes with values dropped or duplicated mid-number. 32 KiB holds ~30 s.
                     ReadBufferSize = 32768,
-                    // Held deasserted so that opening the port leaves a board that is already
-                    // running alone. Asserting DTR here resets the Arduino, which then reports
-                    // every slider at zero for about half a minute before the readings come
-                    // back, one channel at a time - inverted, that is 100% on every channel.
-                    // A board that never speaks is nudged instead, see CheckConnection.
+                    // Asserted DTR on open resets the Arduino, which then reports zero on every
+                    // slider for ~30 s - 100% on every channel when inverted. Held low, and a
+                    // board that never speaks is nudged once instead (see CheckConnection).
                     DtrEnable = false,
                     RtsEnable = true,
                     NewLine = "\n"
                 };
 
-                // Don't carry bytes over from a previous connection: a stale partial line would
-                // be concatenated onto the first line of this one. Cleared before the reader is
-                // started so no data can be framed ahead of it.
+                // A stale partial line must not concatenate onto this connection's first line.
                 _leftover = string.Empty;
 
-                // The driver's DataReceived event is deliberately not used. .NET raises it on a
-                // threadpool thread while holding the port's internal lock, and a read that
-                // stalls inside the handler parks every later event behind that lock - the
-                // 2026-10-17 thread dump caught eight of them queued behind one, with the
-                // buffer full and unread. (When this port still subscribed at
-                // ReceivedBytesThreshold = 1, each byte queued another work item, which is the
-                // thread-pool churn the old comment warned about.) A reader of our own cannot
-                // jam that way; see SerialReaderLoop.
+                // The driver's DataReceived event is deliberately not used: .NET raises it on a
+                // threadpool thread while holding the port's internal lock, so one stalled read
+                // parks every later event behind that lock (the 2026-10-17 thread dump caught
+                // eight queued). Our own reader thread cannot jam that way; see SerialReaderLoop.
                 _serialPort.ErrorReceived += SerialPort_ErrorReceived;
                 _serialPort.Open();
 
@@ -473,9 +448,8 @@ namespace DeejNG.Services
         {
             try
             {
-                // Stop the reader before the port is torn down, so it is not mid-read on a
-                // port being disposed. Bounded join: if a drain is wedged, this port is
-                // being cycled anyway and the background thread dies with the process.
+                // Stop the reader before the port is torn down, so it is never mid-read on a
+                // disposed port. The join is bounded: a wedged drain dies with the process.
                 _readerStop = true;
                 var reader = _readerThread;
                 if (reader != null && reader.IsAlive)
@@ -537,13 +511,9 @@ namespace DeejNG.Services
         {
             if (string.IsNullOrWhiteSpace(line)) return;
 
-            // Framing is checked on every line, not only until the protocol is first recognised.
-            // The link runs at the full rate the sketch can drive it, so a starved reader lets the
-            // driver buffer overrun and the bytes that come back have values dropped, duplicated or
-            // reordered mid-number. Those lines used to be accepted unconditionally once the
-            // protocol had been seen once, and every one whose field count differed from the live
-            // layout rebuilt the whole slider panel: a burst of them became a rebuild storm that
-            // saturated the UI thread for tens of seconds.
+            // Framing is checked on every line, not only until the protocol is first recognised:
+            // a starved reader lets the buffer overrun, and those damaged lines used to rebuild
+            // the whole slider panel. See SerialFrameValidator and SliderCountStabilizer.
             if (!SerialFrameValidator.IsPlausible(line))
             {
                 // Don't process invalid data
@@ -634,16 +604,9 @@ namespace DeejNG.Services
             }
         }
 
-        /// <summary>
-        /// The dedicated read loop: one background thread per connection, polling
-        /// BytesToRead and draining whenever bytes are waiting. BytesToRead is a
-        /// ClearCommError call that takes no lock a reader can be parked behind, so this
-        /// loop keeps draining even when the machine is under load - which is what the
-        /// driver's DataReceived event could not guarantee, raised as it is on a starved
-        /// threadpool thread from inside the port's internal lock. A thread of our own
-        /// also sits outside the threadpool, so pool starvation cannot queue behind it.
-        /// Exits when the connection is closed; the next one starts its own reader.
-        /// </summary>
+        // BytesToRead is a ClearCommError call that takes no lock a reader can be parked
+        // behind, so this loop keeps draining under load - which DataReceived, raised inside
+        // the port's lock on a starved threadpool thread, could not guarantee.
         private void SerialReaderLoop()
         {
             while (!_readerStop)
@@ -672,11 +635,7 @@ namespace DeejNG.Services
             _stallPreviousBytes = -1;
         }
 
-        /// <summary>
-        /// Folds one quiet watchdog tick into the stall breaker. Returns true when the
-        /// receive byte count has been pinned long enough that the port must be cycled;
-        /// see SerialStallBreakerPolicy.
-        /// </summary>
+        // Returns true when the byte count has been pinned long enough to cycle the port.
         private bool TrackStallAndCheckBreaker(int bytesToRead)
         {
             var (pinnedTicks, stalled) = SerialStallBreakerPolicy.Advance(
@@ -693,13 +652,7 @@ namespace DeejNG.Services
             return stalled;
         }
 
-        /// <summary>
-        /// Reads whatever the driver has buffered and frames the complete lines in it.
-        /// Runs from the dedicated reader thread, and from the watchdog when bytes are
-        /// still waiting but the reader has stopped delivering - so a stalled read is
-        /// revived without closing the port, and without disturbing the board on the
-        /// other end.
-        /// </summary>
+        // Runs on the reader thread, and from the watchdog when the reader has stalled.
         private void DrainSerialBuffer()
         {
             if (_serialPort == null || !_serialPort.IsOpen) return;
