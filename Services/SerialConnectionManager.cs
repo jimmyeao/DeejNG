@@ -18,6 +18,11 @@ namespace DeejNG.Services
         // ---- Tuning ----
         private const int MaxRemainderBytes = 4096;
 
+        // How long the dedicated reader thread dozes between BytesToRead polls. Frames
+        // arrive about every 50 ms, so the added latency is a rounding error next to the
+        // frame interval.
+        private const int ReaderPollMilliseconds = 15;
+
         private const int WatchdogMaxQuietIntervals = 3;
         private const byte WatchdogProbeByte = 10;
         private static readonly TimeSpan InvalidPortsRetryInterval = TimeSpan.FromMinutes(2);
@@ -49,9 +54,16 @@ namespace DeejNG.Services
         private int _numberOfSliders = 0;
 
         private volatile int _reading = 0;
+        // The dedicated read loop, one thread per connection. See SerialReaderLoop.
+        private Thread _readerThread;
+        private volatile bool _readerStop;
         private bool _serialDisconnected = false;
         private SerialPort _serialPort;
         private bool _serialPortFullyInitialized = false;
+        // Stall-breaker state, driven by the watchdog on quiet ticks. See
+        // SerialStallBreakerPolicy.
+        private int _stallPinnedTicks = 0;
+        private int _stallPreviousBytes = -1;
         private string _userSelectedPort = string.Empty;
 
         #endregion Private Fields
@@ -132,14 +144,16 @@ namespace DeejNG.Services
                 if (_expectingData)
                 {
                     var quiet = DateTime.Now - _lastValidDataTimestamp >= WatchdogQuietThreshold;
+                    var bytesToRead = _serialPort.BytesToRead;
 
                     // The rule itself lives in WatchdogPolicy so that "bytes waiting in the
                     // buffer prove the link is alive" can be pinned down by a test instead of
                     // only being checkable with the hardware attached.
-                    switch (WatchdogPolicy.Decide(quiet, _serialPort.BytesToRead, _noDataCounter, WatchdogMaxQuietIntervals))
+                    switch (WatchdogPolicy.Decide(quiet, bytesToRead, _noDataCounter, WatchdogMaxQuietIntervals))
                     {
                         case WatchdogVerdict.Healthy:
                             _noDataCounter = 0;
+                            ResetStallTracking();
                             break;
 
                         case WatchdogVerdict.DrainPendingBytes:
@@ -148,10 +162,22 @@ namespace DeejNG.Services
                             // WatchdogPolicy for what counting them used to cost.
                             DrainSerialBuffer();
                             _noDataCounter = 0;
+
+                            // Normally the drain above consumes the buffer and the next quiet
+                            // tick sees a different byte count. When the count is pinned at
+                            // the same value instead, the drain was a no-op behind a jammed
+                            // read path, and after a few pinned ticks the only remedy left is
+                            // to cycle the port. Reopening no longer resets the board, because
+                            // DTR is held low at open.
+                            if (TrackStallAndCheckBreaker(bytesToRead))
+                            {
+                                HandleSerialDisconnection();
+                            }
                             break;
 
                         case WatchdogVerdict.Probe:
                             _noDataCounter++;
+                            ResetStallTracking();
 
                             if (WatchdogProbeByte != 0)
                             {
@@ -266,11 +292,6 @@ namespace DeejNG.Services
                 {
                     ReadTimeout = 1000,
                     WriteTimeout = 1000,
-                    // Typical slider message is ~20-30 bytes (e.g., "0.5|0.3|0.8|1.0|0.0\n")
-                    // Setting threshold to 8 reduces DataReceived events while maintaining responsiveness.
-                    // IMPORTANT: Threshold=1 was causing massive thread pool churn (QueueUserWorkItemCallback leak)
-                    // because each byte triggered a new thread pool work item.
-                    ReceivedBytesThreshold = 8,
                     // The default 4096 byte buffer holds only about four seconds of a continuously
                     // streaming sketch, and the reader can be starved for longer than that when the
                     // machine is busy. Once the buffer fills, the driver returns bytes with values
@@ -288,11 +309,18 @@ namespace DeejNG.Services
                 };
 
                 // Don't carry bytes over from a previous connection: a stale partial line would
-                // be concatenated onto the first line of this one. Cleared before the handlers are
-                // attached so no data can be framed ahead of it.
+                // be concatenated onto the first line of this one. Cleared before the reader is
+                // started so no data can be framed ahead of it.
                 _leftover = string.Empty;
 
-                _serialPort.DataReceived += SerialPort_DataReceived;
+                // The driver's DataReceived event is deliberately not used. .NET raises it on a
+                // threadpool thread while holding the port's internal lock, and a read that
+                // stalls inside the handler parks every later event behind that lock - the
+                // 2026-10-17 thread dump caught eight of them queued behind one, with the
+                // buffer full and unread. (When this port still subscribed at
+                // ReceivedBytesThreshold = 1, each byte queued another work item, which is the
+                // thread-pool churn the old comment warned about.) A reader of our own cannot
+                // jam that way; see SerialReaderLoop.
                 _serialPort.ErrorReceived += SerialPort_ErrorReceived;
                 _serialPort.Open();
 
@@ -310,7 +338,18 @@ namespace DeejNG.Services
                 _connectionStartTime = DateTime.Now;
                 _dtrNudged = false;
 
+                // Fresh link, fresh breaker state.
+                ResetStallTracking();
+
                 Connected?.Invoke();
+
+                _readerStop = false;
+                _readerThread = new Thread(SerialReaderLoop)
+                {
+                    IsBackground = true,
+                    Name = "DeejNG-SerialReader"
+                };
+                _readerThread.Start();
 
             }
             catch (Exception ex)
@@ -434,9 +473,19 @@ namespace DeejNG.Services
         {
             try
             {
+                // Stop the reader before the port is torn down, so it is not mid-read on a
+                // port being disposed. Bounded join: if a drain is wedged, this port is
+                // being cycled anyway and the background thread dies with the process.
+                _readerStop = true;
+                var reader = _readerThread;
+                if (reader != null && reader.IsAlive)
+                {
+                    try { reader.Join(500); } catch { }
+                }
+                _readerThread = null;
+
                 if (_serialPort != null)
                 {
-                    _serialPort.DataReceived -= SerialPort_DataReceived;
                     _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
 
                     if (_serialPort.IsOpen)
@@ -585,22 +634,71 @@ namespace DeejNG.Services
             }
         }
 
-        private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
+        /// <summary>
+        /// The dedicated read loop: one background thread per connection, polling
+        /// BytesToRead and draining whenever bytes are waiting. BytesToRead is a
+        /// ClearCommError call that takes no lock a reader can be parked behind, so this
+        /// loop keeps draining even when the machine is under load - which is what the
+        /// driver's DataReceived event could not guarantee, raised as it is on a starved
+        /// threadpool thread from inside the port's internal lock. A thread of our own
+        /// also sits outside the threadpool, so pool starvation cannot queue behind it.
+        /// Exits when the connection is closed; the next one starts its own reader.
+        /// </summary>
+        private void SerialReaderLoop()
         {
-            if (_serialPort == null || !_serialPort.IsOpen)
+            while (!_readerStop)
             {
-                HandleSerialDisconnection();
-                return;
+                try
+                {
+                    var port = _serialPort;
+                    if (port == null || !port.IsOpen) return;
+
+                    if (port.BytesToRead > 0)
+                        DrainSerialBuffer();
+                    else
+                        Thread.Sleep(ReaderPollMilliseconds);
+                }
+                catch
+                {
+                    // The port was torn down underneath us by a reconnect or a close.
+                    return;
+                }
+            }
+        }
+
+        private void ResetStallTracking()
+        {
+            _stallPinnedTicks = 0;
+            _stallPreviousBytes = -1;
+        }
+
+        /// <summary>
+        /// Folds one quiet watchdog tick into the stall breaker. Returns true when the
+        /// receive byte count has been pinned long enough that the port must be cycled;
+        /// see SerialStallBreakerPolicy.
+        /// </summary>
+        private bool TrackStallAndCheckBreaker(int bytesToRead)
+        {
+            var (pinnedTicks, stalled) = SerialStallBreakerPolicy.Advance(
+                _stallPinnedTicks, _stallPreviousBytes, bytesToRead);
+
+            _stallPinnedTicks = pinnedTicks;
+            _stallPreviousBytes = bytesToRead;
+
+            if (stalled)
+            {
+                ResetStallTracking();
             }
 
-            DrainSerialBuffer();
+            return stalled;
         }
 
         /// <summary>
         /// Reads whatever the driver has buffered and frames the complete lines in it.
-        /// Runs from the SerialPort callback, and from the watchdog when bytes are still
-        /// waiting but that callback has stopped arriving - so a stalled read is revived
-        /// without closing the port, and without disturbing the board on the other end.
+        /// Runs from the dedicated reader thread, and from the watchdog when bytes are
+        /// still waiting but the reader has stopped delivering - so a stalled read is
+        /// revived without closing the port, and without disturbing the board on the
+        /// other end.
         /// </summary>
         private void DrainSerialBuffer()
         {
