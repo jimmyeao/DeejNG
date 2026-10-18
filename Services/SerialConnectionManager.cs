@@ -148,8 +148,7 @@ namespace DeejNG.Services
                             break;
 
                         case WatchdogVerdict.DrainPendingBytes:
-                            // Read them rather than counting them as silence; see WatchdogPolicy.
-                            DrainSerialBuffer();
+                            // Leave draining to the dedicated reader; keep the watchdog responsive.
                             _noDataCounter = 0;
 
                             // A byte count pinned across ticks means the drain above was a
