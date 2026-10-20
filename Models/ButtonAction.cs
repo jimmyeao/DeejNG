@@ -43,6 +43,16 @@ namespace DeejNG.Models
         /// <summary>
         /// Toggle input/output mode for a specific channel.
         /// </summary>
-        ToggleInputOutput = 7
+        ToggleInputOutput = 7,
+
+        /// <summary>
+        /// Send a keyboard shortcut (e.g. "Ctrl+Shift+M"). Uses ButtonActionBinding.KeyCombo.
+        /// </summary>
+        SendKeys = 8,
+
+        /// <summary>
+        /// Run a shell command line via cmd.exe. Uses ButtonActionBinding.Command.
+        /// </summary>
+        RunCommand = 9
     }
 }

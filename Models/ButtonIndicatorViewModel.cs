@@ -42,7 +42,7 @@ namespace DeejNG.Models
                     ButtonAction.MediaNext => "#10B981",        // Green for next
                     ButtonAction.MediaPrevious => "#10B981",    // Green for previous
                     ButtonAction.MediaStop => "#10B981",        // Green for stop
-                    _ => null
+                    _ => "#8B5CF6"                              // Purple for keys, commands and hold layers
                 };
             }
         }

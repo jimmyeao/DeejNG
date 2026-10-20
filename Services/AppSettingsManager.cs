@@ -155,6 +155,8 @@ namespace DeejNG.Services
                 // Preserve button settings from current settings
                 NumberOfButtons = AppSettings.NumberOfButtons,
                 ButtonMappings = AppSettings.ButtonMappings,
+                LongPressThresholdMs = AppSettings.LongPressThresholdMs,
+                DoublePressWindowMs = AppSettings.DoublePressWindowMs,
 
                 // Persist the selected theme with the profile settings
                 SelectedTheme = AppSettings.SelectedTheme,

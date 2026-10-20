@@ -156,6 +156,16 @@ namespace DeejNG.Classes
         public List<ButtonMapping> ButtonMappings { get; set; } = new();
 
         /// <summary>
+        /// Gets or sets how long (ms) a button must be held to count as a long press.
+        /// </summary>
+        public int LongPressThresholdMs { get; set; } = 500;
+
+        /// <summary>
+        /// Gets or sets the maximum time (ms) between two presses to count as a double press.
+        /// </summary>
+        public int DoublePressWindowMs { get; set; } = 300;
+
+        /// <summary>
         /// Gets or sets the baud rate used for the serial connection.
         /// </summary>
         public int BaudRate { get; set; } = 9600;

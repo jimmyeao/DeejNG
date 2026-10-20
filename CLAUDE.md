@@ -169,17 +169,30 @@ The system distinguishes between two button types based on their action, even th
 - `MuteChannel` - Toggle mute for specific channel (requires TargetChannelIndex)
 - `GlobalMute` - Toggle mute for all channels
 - `ToggleInputOutput` - Reserved for future use
+- `SendKeys` - Send a keyboard shortcut (`KeyCombo`, e.g. "Ctrl+Shift+M", sequences comma-separated)
+- `RunCommand` - Run a command line via `cmd.exe /c` (`Command`)
 
 **Button Mapping (Models/ButtonMapping.cs):**
-Each button has a mapping configuration:
+`ButtonMapping` derives from `ButtonActionBinding` (Action, TargetChannelIndex, KeyCombo, Command).
+The inherited fields are the short-press action; `LongPress` is a second binding; `HoldLayer`
+lists slider overrides that are active while the button is held:
 ```csharp
 {
     ButtonIndex = 0,                    // 0-based button index
     Action = ButtonAction.MediaPlayPause,
     TargetChannelIndex = -1,            // -1 for global, 0+ for specific channel
-    FriendlyName = "Play/Pause"
+    FriendlyName = "Play/Pause",
+    LongPress = { Action = ButtonAction.SendKeys, KeyCombo = "Ctrl+Shift+M" },
+    HoldLayer = [ { ChannelIndex = 2, Targets = [ { Name = "discord.exe" } ] } ]
 }
 ```
+
+**Gestures (Services/ButtonGestureController.cs):**
+- Only a short action: fires immediately on press (old behavior)
+- Short + long, no layer: long fires once `AppSettings.LongPressThresholdMs` is reached while held, otherwise short fires on release
+- With a hold layer: layer is active while held; if a layer slider moved, nothing fires on release, otherwise long/short is decided on release
+- With a double press (`DoublePress`, window `AppSettings.DoublePressWindowMs`): a short tap is held back for the window; a second press inside it fires the double action immediately
+- Slider pickup: after any routing switch (layer on/off) a slider value is ignored until it moves more than `PickupThreshold` from where it was, so neither target jumps
 
 **Button UI Indicators:**
 Buttons are displayed in the UI as indicator chips showing:
@@ -201,10 +214,10 @@ Indicators use WPF DataTriggers bound to `ButtonIndicatorViewModel.IsPressed`:
 1. Serial data received → `SerialConnectionManager` detects button value (10000/10001)
 2. `ButtonStateChanged` event raised with (buttonIndex, isPressed)
 3. `MainWindow.HandleButtonPress()` processes the event:
-   - For momentary buttons: Update indicator.IsPressed = isPressed
-   - For press events (not release): Execute the button action
+   - For non-latched indicators: Update indicator.IsPressed = isPressed
+   - Passes the event to `ButtonGestureController.OnButtonChanged()`, which calls back `ExecuteButtonBinding()`
    - For latched buttons: Update indicator to show actual state after action
-4. `ButtonActionHandler.ExecuteAction()` performs the action (media keys or mute toggle)
+4. `ButtonActionHandler.ExecuteAction()` performs the action (media keys, mute toggle, keys, command)
 5. UI indicator updates automatically via INotifyPropertyChanged
 
 **Implementation Details:**
@@ -219,7 +232,8 @@ Indicators use WPF DataTriggers bound to `ButtonIndicatorViewModel.IsPressed`:
 - "Latched" refers to the UI indicator behavior, not the physical button
 - Play/Pause state is tracked in software since Windows doesn't report media state
 - All button events fire on both press AND release for UI feedback
-- Actions only execute on press (not release) to prevent double-triggering
+- Plain buttons execute on press; buttons with long press or hold layer decide on release (or at the long-press threshold)
+- `HandleSliderData` asks `ButtonGestureController.RouteSliderValue()` where each value goes (normal targets, layer targets, or ignored during pickup)
 
 ### VU Meter Implementation
 
