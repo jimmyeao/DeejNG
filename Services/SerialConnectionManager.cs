@@ -39,6 +39,9 @@ namespace DeejNG.Services
         private string _lastConnectedPort = string.Empty;
         private DateTime _lastValidDataTimestamp = DateTime.MinValue;
         private string _leftover = string.Empty;
+
+        // The first line after opening the port usually starts mid-transmission
+        private bool _discardFirstLine = false;
         private bool _manualDisconnect = false;
         private int _noDataCounter = 0;
         private int _numberOfButtons = 0;
@@ -258,6 +261,8 @@ namespace DeejNG.Services
                 _serialDisconnected = false;
                 _serialPortFullyInitialized = false;
                 _lastConnectedPort = portName;
+                _leftover = string.Empty;
+                _discardFirstLine = true;
 
                 _lastValidDataTimestamp = DateTime.Now;
                 _noDataCounter = 0;
@@ -619,7 +624,11 @@ namespace DeejNG.Services
                         if (len > 0)
                         {
                             var line = combined.AsSpan(start, len).Trim().ToString();
-                            if (line.Length > 0 && line.Length <= MaxLineLength)
+                            if (_discardFirstLine)
+                            {
+                                _discardFirstLine = false;
+                            }
+                            else if (line.Length > 0 && line.Length <= MaxLineLength)
                             {
                                 ProcessSerialLine(line);
 

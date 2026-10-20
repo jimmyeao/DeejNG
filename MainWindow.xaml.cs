@@ -148,6 +148,13 @@ namespace DeejNG
 
         private int _expectedSliderCount = -1;
 
+        // Slider-count change debounce (see HandleSliderData)
+        private const int SLIDER_COUNT_CONFIRM_LINES = 5;
+
+        private int _pendingSliderCount = -1;
+
+        private int _pendingSliderCountHits = 0;
+
         private float _exponentialVolumeFactor = 2f;
 
         private bool _hasLoadedInitialSettings = false;
@@ -1760,7 +1767,20 @@ namespace DeejNG
                         // Hardware slider count takes priority
                         if (_channelControls.Count != parts.Length)
                         {
+                            // A truncated line (e.g. the first partial line after connecting) must not
+                            // regenerate sliders: that would persist fewer slider groups and silently
+                            // drop the targets of the last slider(s). Only accept a count that is stable
+                            // across several consecutive lines.
+                            if (_pendingSliderCount != parts.Length)
+                            {
+                                _pendingSliderCount = parts.Length;
+                                _pendingSliderCountHits = 0;
+                            }
+                            if (++_pendingSliderCountHits < SLIDER_COUNT_CONFIRM_LINES)
+                                return;
 
+                            _pendingSliderCount = -1;
+                            _pendingSliderCountHits = 0;
 
                             var currentTargets = _channelControls.Select(c => c.AudioTargets).ToList();
                             _expectedSliderCount = parts.Length;
@@ -1778,6 +1798,9 @@ namespace DeejNG
                             SaveSettings();
                             return;
                         }
+
+                        _pendingSliderCount = -1;
+                        _pendingSliderCountHits = 0;
 
                         // Process slider data
                         int maxIndex = Math.Min(parts.Length, _channelControls.Count);
