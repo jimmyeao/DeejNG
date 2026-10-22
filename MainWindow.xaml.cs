@@ -3416,9 +3416,7 @@ namespace DeejNG
                 int snapshotVol   = _activePicker.SnapshotVol;
                 bool snapshotMute = _activePicker.SnapshotMuted;
 
-                // Tell the device to leave edit mode — it restores saved volume and normal display.
-                if (_wsManager.IsConnected)
-                    _ = _wsManager.SendEditModeAsync(channelIndex, false);
+                bool wsConnected = _wsManager.IsConnected;
                 // NOTE: Do NOT call SendWebSocketChannelNames() here.
                 // ConfirmPicker calls it after ClosePickerWindow; calling it here too would send
                 // config twice, which resets the device screensaver timer on every picker close.
@@ -3436,6 +3434,25 @@ namespace DeejNG
                     _lastWsVols          = vols;
                     _lastWsMutes         = mutes;
                     _wsDeviceAppliedVols = (int[])vols.Clone();
+
+                    // Leave edit mode, then re-seed the device's encoder positions. Edit mode
+                    // uses an unclamped count; without this the encoder can stay out of range
+                    // and ignore turns until the device is reset.
+                    if (wsConnected)
+                    {
+                        var stateVols = (int[])vols.Clone();
+                        var stateMutes = (bool[])mutes.Clone();
+                        _ = Task.Run(async () =>
+                        {
+                            await _wsManager.SendEditModeAsync(channelIndex, false);
+                            await _wsManager.SendStateAsync(stateVols, stateMutes);
+                        });
+                    }
+                }
+                else if (wsConnected)
+                {
+                    // Tell the device to leave edit mode — it restores saved volume and normal display.
+                    _ = _wsManager.SendEditModeAsync(channelIndex, false);
                 }
 
                 // Mark this channel so the current HandleWebSocketUpdate tick doesn't overwrite
