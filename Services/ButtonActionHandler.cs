@@ -212,7 +212,9 @@ namespace DeejNG.Services
         {
             if (string.IsNullOrWhiteSpace(command)) return;
 
-            var psi = new ProcessStartInfo("cmd.exe", "/c " + command)
+            // /s with an outer quote pair keeps the command's own quoting intact
+            // ("C:\Program Files\x.exe" "C:\My Docs\in.txt" would otherwise lose its first and last quote)
+            var psi = new ProcessStartInfo("cmd.exe", "/s /c \"" + command + "\"")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,

@@ -24,7 +24,7 @@ namespace DeejNG.Services
         private readonly HashSet<int> _systemProcessIds = new HashSet<int> { 0, 4, 8 };
         private HashSet<string> _lastMappedApps = new();
         private DateTime _lastRefresh = DateTime.MinValue;
-        private bool _lastUnmappedMuted = false;
+        private bool? _lastUnmappedMuted = false;
         private float _lastUnmappedVolume = -1f;
         private DateTime _lastUnmappedVolumeCall = DateTime.MinValue;
 
@@ -150,7 +150,8 @@ namespace DeejNG.Services
             return _cachedRenderDevice;
         }
 
-        public void ApplyVolumeToTarget(string executable, float level, bool isMuted = false)
+        /// <param name="isMuted">Mute state to apply; null keeps each session's current mute state.</param>
+        public void ApplyVolumeToTarget(string executable, float level, bool? isMuted = false)
         {
             // Ensure the volume is within valid bounds
             level = Math.Clamp(level, 0.0f, 1.0f);
@@ -165,10 +166,11 @@ namespace DeejNG.Services
                     var device = GetCachedRenderDevice();
 
                     // Apply mute setting to the entire device
-                    device.AudioEndpointVolume.Mute = isMuted;
+                    if (isMuted is bool mute)
+                        device.AudioEndpointVolume.Mute = mute;
 
                     // Set volume only if not muted
-                    if (!isMuted)
+                    if (isMuted != true)
                     {
                         device.AudioEndpointVolume.MasterVolumeLevelScalar = level;
                     }
@@ -223,9 +225,10 @@ namespace DeejNG.Services
                         // If the process name matches the target executable (exact or fuzzy), apply settings
                         if (IsProcessNameMatch(cleanedProcName, cleanedExecutable))
                         {
-                            session.SimpleAudioVolume.Mute = isMuted;
+                            if (isMuted is bool mute)
+                                session.SimpleAudioVolume.Mute = mute;
 
-                            if (!isMuted)
+                            if (isMuted != true)
                             {
                                 session.SimpleAudioVolume.Volume = level;
                             }
@@ -272,10 +275,10 @@ namespace DeejNG.Services
         /// Avoids over-processing by checking for significant changes or rapid re-calls.
         /// </summary>
         /// <param name="level">Volume level (0.0 to 1.0).</param>
-        /// <param name="isMuted">Whether the session should be muted.</param>
+        /// <param name="isMuted">Whether the session should be muted; null keeps each session's current mute state.</param>
         /// <param name="mappedApplications">Set of known/mapped application process names to exclude.</param>
         /// <param name="excludedApplications">Optional list of applications to exclude from unmapped control.</param>
-        public void ApplyVolumeToUnmappedApplications(float level, bool isMuted, HashSet<string> mappedApplications, IEnumerable<string> excludedApplications = null)
+        public void ApplyVolumeToUnmappedApplications(float level, bool? isMuted, HashSet<string> mappedApplications, IEnumerable<string> excludedApplications = null)
         {
             // Clamp volume level to valid range [0.0, 1.0]
             level = Math.Clamp(level, 0.0f, 1.0f);
@@ -352,8 +355,9 @@ namespace DeejNG.Services
                         if (isMapped) continue;
 
                         // Apply mute/volume only to unmapped apps
-                        session.SimpleAudioVolume.Mute = isMuted;
-                        if (!isMuted)
+                        if (isMuted is bool mute)
+                            session.SimpleAudioVolume.Mute = mute;
+                        if (isMuted != true)
                         {
                             session.SimpleAudioVolume.Volume = level;
                         }
@@ -383,8 +387,8 @@ namespace DeejNG.Services
         /// mapped to the currently focused window's application.
         /// </summary>
         /// <param name="level">Volume level (0.0 to 1.0).</param>
-        /// <param name="isMuted">Whether the session should be muted.</param>
-        public void ApplyVolumeToCurrent(float level, bool isMuted)
+        /// <param name="isMuted">Whether the session should be muted; null keeps the current mute state.</param>
+        public void ApplyVolumeToCurrent(float level, bool? isMuted)
         {
             var currentTarget = AudioUtilities.GetCurrentFocusTarget();
             if (currentTarget != "")

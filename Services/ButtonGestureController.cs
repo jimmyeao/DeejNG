@@ -20,7 +20,8 @@ namespace DeejNG.Services
     /// - With a hold layer: the layer is active while held. If any layer slider was moved, nothing
     ///   else fires on release. Otherwise long (held >= threshold) or short fires on release.
     /// - With a double press: a short tap is held back for the double-press window. A second press
-    ///   inside the window fires the double action immediately; otherwise the short action fires late.
+    ///   inside the window (measured from the first press) fires the double action immediately;
+    ///   otherwise the short action fires when the window ends.
     ///
     /// Slider pickup: whenever a channel switches between its normal targets and layer targets,
     /// the slider position at that moment is taken as an anchor. Values are ignored until the slider
@@ -33,6 +34,11 @@ namespace DeejNG.Services
         /// Minimum slider travel (normalized 0..1) after a layer switch before values are applied.
         /// </summary>
         public const float PickupThreshold = 0.03f;
+
+        /// <summary>
+        /// Minimum change (normalized 0..1) before a layer slider value is applied again.
+        /// </summary>
+        private const float LayerChangeThreshold = 0.01f;
 
         private readonly Func<int> _longPressThresholdMs;
         private readonly Func<int> _doublePressWindowMs;
@@ -77,26 +83,51 @@ namespace DeejNG.Services
         }
 
         /// <summary>
-        /// Releases all held buttons without firing actions (e.g. on disconnect or settings change).
+        /// Releases all held buttons and cancels pending gestures without firing actions
+        /// (e.g. on disconnect, reconnect or settings change).
         /// </summary>
+        /// <remarks>
+        /// Routes are left alone: a channel that was on a layer notices the switch back to its
+        /// normal targets on its next value and arms pickup then. Other channels keep their state.
+        /// </remarks>
         public void Reset()
         {
             foreach (var state in _states.Values)
             {
                 state.Timer?.Stop();
                 state.DoubleTimer?.Stop();
+
+                if (state.IsDown && state.Mapping?.HasHoldLayer == true)
+                    LayerStateChanged?.Invoke(state.Mapping, false);
+
                 state.IsDown = false;
                 state.Mapping = null;
             }
             _states.Clear();
+        }
 
-            foreach (var route in _routes.Values)
-                route.Anchor = route.LastLevel;
+        /// <summary>
+        /// Returns the targets of all currently active hold layers.
+        /// </summary>
+        public IEnumerable<AudioTarget> GetActiveLayerTargets()
+        {
+            foreach (var state in _states.Values)
+            {
+                if (!state.IsDown || state.Mapping?.HoldLayer == null) continue;
+
+                foreach (var layer in state.Mapping.HoldLayer)
+                {
+                    if (layer.Targets == null) continue;
+                    foreach (var target in layer.Targets)
+                        yield return target;
+                }
+            }
         }
 
         /// <summary>
         /// Decides where a slider value should go. Call once per incoming value with the final
-        /// (inverted/curved) level. Returns false if the value should be ignored (pickup pending).
+        /// (inverted/curved) level. Returns false if the value should be ignored (pickup pending,
+        /// or a layer slider that has not moved since its last applied value).
         /// <paramref name="layerTargets"/> is null for the channel's normal targets.
         /// </summary>
         public bool RouteSliderValue(int channelIndex, float level, out List<AudioTarget>? layerTargets)
@@ -115,6 +146,7 @@ namespace DeejNG.Services
                 // Routing switched since the last value: anchor at the last known position
                 route.CurrentLayerButton = layerButton;
                 route.Anchor = route.LastLevel;
+                route.LastLayerLevel = null;
             }
 
             route.LastLevel = level;
@@ -127,8 +159,17 @@ namespace DeejNG.Services
                 route.Anchor = null;
             }
 
-            if (layerButton >= 0 && _states.TryGetValue(layerButton, out var state))
-                state.LayerUsed = true;
+            if (layerButton >= 0)
+            {
+                // The normal path skips unchanged values via the channel's volume; layer values need their own check
+                if (route.LastLayerLevel is float last && Math.Abs(level - last) < LayerChangeThreshold)
+                    return false;
+
+                route.LastLayerLevel = level;
+
+                if (_states.TryGetValue(layerButton, out var state))
+                    state.LayerUsed = true;
+            }
 
             return true;
         }
@@ -153,12 +194,21 @@ namespace DeejNG.Services
             bool hasLong = mapping.HasLongPress;
             bool hasLayer = mapping.HasHoldLayer;
 
-            // Second press inside the double-press window
             if (state.DoubleTimer?.IsEnabled == true)
             {
                 state.DoubleTimer.Stop();
-                state.Consumed = true;
-                Fire(mapping, mapping.DoublePress);
+
+                if (state.DownAt <= state.DoubleDeadline)
+                {
+                    // Second press inside the double-press window
+                    state.Consumed = true;
+                    Fire(mapping, mapping.DoublePress);
+                }
+                else
+                {
+                    // Window is over but the timer has not ticked yet: run the pending single press first
+                    Fire(mapping, mapping);
+                }
             }
             else if (!hasLong && !hasLayer && !mapping.HasDoublePress)
             {
@@ -212,16 +262,32 @@ namespace DeejNG.Services
             if (!hasLong && !hasLayer && !mapping.HasDoublePress) return;   // already fired on press
             if (state.Consumed || state.LongFired || state.LayerUsed) return;
 
-            bool isLong = DateTime.UtcNow - state.DownAt >= LongPressThreshold;
-            if (isLong && hasLong)
+            // Only a button with a long-press binding treats a long hold differently
+            bool isLong = hasLong && DateTime.UtcNow - state.DownAt >= LongPressThreshold;
+            if (isLong)
             {
                 Fire(mapping, mapping.LongPress);
+                return;
             }
-            else if (!isLong && mapping.HasDoublePress)
+
+            if (!mapping.HasDoublePress)
+            {
+                Fire(mapping, mapping);
+                return;
+            }
+
+            // The double-press window runs from the first press, not from the release
+            state.DoubleDeadline = state.DownAt + DoublePressWindow;
+            var remaining = state.DoubleDeadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                Fire(mapping, mapping);
+            }
+            else
             {
                 // Wait for a possible second press before running the single-press action
                 state.DoubleTimer ??= new DispatcherTimer();
-                state.DoubleTimer.Interval = DoublePressWindow;
+                state.DoubleTimer.Interval = remaining;
                 state.DoubleTimer.Tick -= state.DoubleTimerHandler;
                 state.DoubleTimerHandler = (_, _) =>
                 {
@@ -230,10 +296,6 @@ namespace DeejNG.Services
                 };
                 state.DoubleTimer.Tick += state.DoubleTimerHandler;
                 state.DoubleTimer.Start();
-            }
-            else if (!isLong)
-            {
-                Fire(mapping, mapping);
             }
         }
 
@@ -279,6 +341,7 @@ namespace DeejNG.Services
             public DispatcherTimer? Timer;
             public EventHandler? TimerHandler;
             public DispatcherTimer? DoubleTimer;
+            public DateTime DoubleDeadline;
             public EventHandler? DoubleTimerHandler;
         }
 
@@ -287,6 +350,7 @@ namespace DeejNG.Services
             public int CurrentLayerButton = -1;
             public float? LastLevel;
             public float? Anchor;
+            public float? LastLayerLevel;
         }
     }
 }

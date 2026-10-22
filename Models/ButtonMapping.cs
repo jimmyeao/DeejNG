@@ -28,7 +28,7 @@ namespace DeejNG.Models
         public string KeyCombo { get; set; } = string.Empty;
 
         /// <summary>
-        /// Command line for <see cref="ButtonAction.RunCommand"/>, executed via cmd.exe /c.
+        /// Command line for <see cref="ButtonAction.RunCommand"/>, executed via cmd.exe /s /c.
         /// </summary>
         public string Command { get; set; } = string.Empty;
 

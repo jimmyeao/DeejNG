@@ -63,12 +63,12 @@ Configure up to 8 button actions (buttons auto-detect when hardware sends data):
 
 #### Keyboard & Commands
 - **Keyboard Shortcut** - Sends a key combination such as `Ctrl+Shift+M`, `F13` or `Alt+F4`. Separate several combos with commas to send them one after another (`Ctrl+K, Ctrl+C`). Use *Record* in the dialog to capture a combo.
-- **Run Command / Script** - Runs a command line via `cmd.exe /c` without a console window, e.g. `"C:\scripts\scene.bat"`, `powershell -NoProfile -File "C:\x.ps1"` or `start spotify:`.
+- **Run Command / Script** - Runs a command line via `cmd.exe /s /c` without a console window, e.g. `"C:\scripts\scene.bat"`, `powershell -NoProfile -File "C:\x.ps1"` or `start spotify:`.
 
 #### Short Press, Long Press and Hold Layers
 Each button has three slots:
 - **Press** - runs immediately on press if nothing else is configured. With a long press or hold layer, it runs on release if the button was only tapped.
-- **Double press** - runs when the button is pressed twice within the double-press window (default 300 ms). If set, a single press waits for that window before running.
+- **Double press** - runs when the button is pressed twice within the double-press window (default 300 ms, measured from the first press). If set, a single press waits until that window has passed before running.
 - **Long press** - runs when the button is held longer than the long-press threshold (default 500 ms).
 - **Hold layer** - while the button is held, the listed sliders control other targets (e.g. slider 3 controls Discord instead of Chrome). After switching, a slider only takes over once it actually moves, so neither app jumps to the other's level. If a layer slider was moved, no press action runs on release.
 

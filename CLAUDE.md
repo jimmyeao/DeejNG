@@ -170,7 +170,7 @@ The system distinguishes between two button types based on their action, even th
 - `GlobalMute` - Toggle mute for all channels
 - `ToggleInputOutput` - Reserved for future use
 - `SendKeys` - Send a keyboard shortcut (`KeyCombo`, e.g. "Ctrl+Shift+M", sequences comma-separated)
-- `RunCommand` - Run a command line via `cmd.exe /c` (`Command`)
+- `RunCommand` - Run a command line via `cmd.exe /s /c` (`Command`)
 
 **Button Mapping (Models/ButtonMapping.cs):**
 `ButtonMapping` derives from `ButtonActionBinding` (Action, TargetChannelIndex, KeyCombo, Command).
@@ -191,7 +191,7 @@ lists slider overrides that are active while the button is held:
 - Only a short action: fires immediately on press (old behavior)
 - Short + long, no layer: long fires once `AppSettings.LongPressThresholdMs` is reached while held, otherwise short fires on release
 - With a hold layer: layer is active while held; if a layer slider moved, nothing fires on release, otherwise long/short is decided on release
-- With a double press (`DoublePress`, window `AppSettings.DoublePressWindowMs`): a short tap is held back for the window; a second press inside it fires the double action immediately
+- With a double press (`DoublePress`, window `AppSettings.DoublePressWindowMs`): a short tap is held back until the window (counted from the first press) ends; a second press inside it fires the double action immediately
 - Slider pickup: after any routing switch (layer on/off) a slider value is ignored until it moves more than `PickupThreshold` from where it was, so neither target jumps
 
 **Button UI Indicators:**

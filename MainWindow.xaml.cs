@@ -266,6 +266,8 @@ namespace DeejNG
             _serialManager.ButtonStateChanged += HandleButtonPress;
             _serialManager.Connected += () =>
             {
+                // Normal priority, queued before any button event of the new connection
+                Dispatcher.BeginInvoke(ResetButtonGestures);
                 Dispatcher.BeginInvoke(() =>
                 {
                     UpdateConnectionStatus();
@@ -283,6 +285,7 @@ namespace DeejNG
             _serialManager.Disconnected += () =>
             {
                 _allowVolumeApplication = false;
+                Dispatcher.BeginInvoke(ResetButtonGestures);
                 Dispatcher.BeginInvoke(() =>
                 {
                     UpdateConnectionStatus();
@@ -421,6 +424,18 @@ namespace DeejNG
             foreach (var control in _channelControls)
             {
                 foreach (var target in control.AudioTargets)
+                {
+                    if (!target.IsInputDevice && !string.IsNullOrEmpty(target.Name))
+                    {
+                        _tempStringSet.Add(target.Name.ToLowerInvariant());
+                    }
+                }
+            }
+
+            // Apps controlled by a held layer are mapped too, otherwise Unmapped would fight the layer
+            if (_buttonGestures != null)
+            {
+                foreach (var target in _buttonGestures.GetActiveLayerTargets())
                 {
                     if (!target.IsInputDevice && !string.IsNullOrEmpty(target.Name))
                     {
@@ -828,7 +843,8 @@ namespace DeejNG
         private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level) =>
             ApplyVolumeToTargets(ctrl, targets, level, ctrl.IsMuted);
 
-        private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level, bool isMuted)
+        /// <param name="isMuted">Mute state to apply; null keeps each target's current mute state.</param>
+        private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level, bool? isMuted)
         {
             if (!_allowVolumeApplication) return;
 
@@ -1675,6 +1691,23 @@ namespace DeejNG
         }
 
         /// <summary>
+        /// Cancels held layers and pending gestures and clears pressed indicators,
+        /// e.g. when the serial port disconnects or is reopened. Must be called on the UI thread.
+        /// </summary>
+        private void ResetButtonGestures()
+        {
+            _buttonGestures?.Reset();
+
+            var mappings = _settingsManager.AppSettings?.ButtonMappings;
+            foreach (var indicator in _buttonIndicators)
+            {
+                var mapping = mappings?.FirstOrDefault(m => m.ButtonIndex == indicator.ButtonIndex);
+                if (mapping != null && !IsLatchedIndicator(mapping))
+                    indicator.IsPressed = false;
+            }
+        }
+
+        /// <summary>
         /// Creates the button action handler and gesture controller on first use.
         /// </summary>
         private void EnsureButtonHandlers()
@@ -1834,7 +1867,8 @@ namespace DeejNG
 
                                 if (layerTargets != null)
                                 {
-                                    ApplyVolumeToTargets(ctrl, layerTargets, level, isMuted: false);
+                                    // The layer has no mute of its own: leave each destination's mute state alone
+                                    ApplyVolumeToTargets(ctrl, layerTargets, level, isMuted: null);
                                     continue;
                                 }
                             }
