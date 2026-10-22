@@ -18,6 +18,9 @@ namespace DeejNG.Services
         // ---- Tuning ----
         private const int MaxRemainderBytes = 4096;
 
+        // Frames arrive about every 50 ms, so the polling latency is a rounding error.
+        private const int ReaderPollMilliseconds = 15;
+
         private const int WatchdogMaxQuietIntervals = 3;
         private const byte WatchdogProbeByte = 10;
         private static readonly TimeSpan InvalidPortsRetryInterval = TimeSpan.FromMinutes(2);
@@ -29,6 +32,8 @@ namespace DeejNG.Services
         private bool _buttonStatesInitialized = false;
 
         private DateTime _connectionStartTime = DateTime.MinValue;
+        // One reset pulse per connection, see CheckConnection.
+        private bool _dtrNudged = false;
         private bool _expectingData = false;
         private HashSet<string> _invalidPorts = new HashSet<string>();
         private DateTime _invalidPortsClearTime = DateTime.MinValue;
@@ -39,6 +44,9 @@ namespace DeejNG.Services
         private string _lastConnectedPort = string.Empty;
         private DateTime _lastValidDataTimestamp = DateTime.MinValue;
         private string _leftover = string.Empty;
+
+        // The first line after opening the port usually starts mid-transmission
+        private bool _discardFirstLine = false;
         private bool _manualDisconnect = false;
         private int _noDataCounter = 0;
         private int _numberOfButtons = 0;
@@ -47,9 +55,14 @@ namespace DeejNG.Services
         private int _numberOfSliders = 0;
 
         private volatile int _reading = 0;
+        private Thread _readerThread;
+        private volatile bool _readerStop;
         private bool _serialDisconnected = false;
         private SerialPort _serialPort;
         private bool _serialPortFullyInitialized = false;
+        // Driven by the watchdog on quiet ticks; see SerialStallBreakerPolicy.
+        private int _stallPinnedTicks = 0;
+        private int _stallPreviousBytes = -1;
         private string _userSelectedPort = string.Empty;
 
         #endregion Private Fields
@@ -99,6 +112,15 @@ namespace DeejNG.Services
                     var elapsed = DateTime.Now - _connectionStartTime;
                     if (elapsed >= ValidationTimeout)
                     {
+                        // A send-only-on-change sketch can sit silent on a healthy port. Asserting
+                        // DTR boots the board and makes it emit a frame, done on the open port.
+                        if (!_dtrNudged)
+                        {
+                            _dtrNudged = true;
+                            try { _serialPort.DtrEnable = true; } catch { }
+                            _connectionStartTime = DateTime.Now;
+                            return;
+                        }
 
                         // Mark this port as invalid
                         if (!string.IsNullOrEmpty(CurrentPort))
@@ -117,28 +139,46 @@ namespace DeejNG.Services
 
                 if (_expectingData)
                 {
-                    var elapsed = DateTime.Now - _lastValidDataTimestamp;
+                    var quiet = DateTime.Now - _lastValidDataTimestamp >= WatchdogQuietThreshold;
+                    var bytesToRead = _serialPort.BytesToRead;
 
-                    if (elapsed >= WatchdogQuietThreshold)
+                    // The rule lives in WatchdogPolicy so a test can pin it without hardware.
+                    switch (WatchdogPolicy.Decide(quiet, bytesToRead, _noDataCounter, WatchdogMaxQuietIntervals))
                     {
-                        _noDataCounter++;
+                        case WatchdogVerdict.Healthy:
+                            _noDataCounter = 0;
+                            ResetStallTracking();
+                            break;
 
-                        if (_serialPort.BytesToRead == 0 && WatchdogProbeByte != 0)
-                        {
-                            try { _serialPort.Write(new[] { WatchdogProbeByte }, 0, 1); }
-                            catch { /* ignore; disconnect if persistent */ }
-                        }
+                        case WatchdogVerdict.DrainPendingBytes:
+                            // Leave draining to the dedicated reader; keep the watchdog responsive.
+                            _noDataCounter = 0;
 
-                        if (_noDataCounter >= WatchdogMaxQuietIntervals)
-                        {
+                            // A byte count pinned across ticks means the drain above was a
+                            // no-op behind a jammed read path; the only remedy is to cycle
+                            // the port (safe now that opening never asserts DTR).
+                            if (TrackStallAndCheckBreaker(bytesToRead))
+                            {
+                                HandleSerialDisconnection();
+                            }
+                            break;
 
+                        case WatchdogVerdict.Probe:
+                            _noDataCounter++;
+                            ResetStallTracking();
+
+                            if (WatchdogProbeByte != 0)
+                            {
+                                try { _serialPort.Write(new[] { WatchdogProbeByte }, 0, 1); }
+                                catch { /* ignore; disconnect if persistent */ }
+                            }
+                            break;
+
+                        case WatchdogVerdict.Disconnect:
+                            _noDataCounter++;
                             HandleSerialDisconnection();
                             _noDataCounter = 0;
-                        }
-                    }
-                    else
-                    {
-                        _noDataCounter = 0;
+                            break;
                     }
                 }
                 else if (IsConnected && (DateTime.Now - _lastValidDataTimestamp).TotalSeconds > 10)
@@ -240,17 +280,24 @@ namespace DeejNG.Services
                 {
                     ReadTimeout = 1000,
                     WriteTimeout = 1000,
-                    // Typical slider message is ~20-30 bytes (e.g., "0.5|0.3|0.8|1.0|0.0\n")
-                    // Setting threshold to 8 reduces DataReceived events while maintaining responsiveness.
-                    // IMPORTANT: Threshold=1 was causing massive thread pool churn (QueueUserWorkItemCallback leak)
-                    // because each byte triggered a new thread pool work item.
-                    ReceivedBytesThreshold = 8,
-                    DtrEnable = true,
+                    // The 4096 default holds ~4 s of a continuous stream; a full buffer returns
+                    // bytes with values dropped or duplicated mid-number. 32 KiB holds ~30 s.
+                    ReadBufferSize = 32768,
+                    // Asserted DTR on open resets the Arduino, which then reports zero on every
+                    // slider for ~30 s - 100% on every channel when inverted. Held low, and a
+                    // board that never speaks is nudged once instead (see CheckConnection).
+                    DtrEnable = false,
                     RtsEnable = true,
                     NewLine = "\n"
                 };
 
-                _serialPort.DataReceived += SerialPort_DataReceived;
+                // A stale partial line must not concatenate onto this connection's first line.
+                _leftover = string.Empty;
+
+                // The driver's DataReceived event is deliberately not used: .NET raises it on a
+                // threadpool thread while holding the port's internal lock, so one stalled read
+                // parks every later event behind that lock (the 2026-10-17 thread dump caught
+                // eight queued). Our own reader thread cannot jam that way; see SerialReaderLoop.
                 _serialPort.ErrorReceived += SerialPort_ErrorReceived;
                 _serialPort.Open();
 
@@ -258,6 +305,8 @@ namespace DeejNG.Services
                 _serialDisconnected = false;
                 _serialPortFullyInitialized = false;
                 _lastConnectedPort = portName;
+                _leftover = string.Empty;
+                _discardFirstLine = true;
 
                 _lastValidDataTimestamp = DateTime.Now;
                 _noDataCounter = 0;
@@ -266,8 +315,20 @@ namespace DeejNG.Services
                 // Reset protocol validation state
                 _isProtocolValidated = false;
                 _connectionStartTime = DateTime.Now;
+                _dtrNudged = false;
+
+                // Fresh link, fresh breaker state.
+                ResetStallTracking();
 
                 Connected?.Invoke();
+
+                _readerStop = false;
+                _readerThread = new Thread(SerialReaderLoop)
+                {
+                    IsBackground = true,
+                    Name = "DeejNG-SerialReader"
+                };
+                _readerThread.Start();
 
             }
             catch (Exception ex)
@@ -391,9 +452,18 @@ namespace DeejNG.Services
         {
             try
             {
+                // Stop the reader before the port is torn down, so it is never mid-read on a
+                // disposed port. The join is bounded: a wedged drain dies with the process.
+                _readerStop = true;
+                var reader = _readerThread;
+                if (reader != null && reader.IsAlive)
+                {
+                    try { reader.Join(500); } catch { }
+                }
+                _readerThread = null;
+
                 if (_serialPort != null)
                 {
-                    _serialPort.DataReceived -= SerialPort_DataReceived;
                     _serialPort.ErrorReceived -= SerialPort_ErrorReceived;
 
                     if (_serialPort.IsOpen)
@@ -409,6 +479,10 @@ namespace DeejNG.Services
 
                 // Reset button state initialization flag on disconnect
                 _buttonStatesInitialized = false;
+
+                // Drop any partial line so it cannot be concatenated onto the next connection's
+                // first line.
+                _leftover = string.Empty;
             }
             catch (Exception ex)
             {
@@ -433,54 +507,6 @@ namespace DeejNG.Services
         }
 
         /// <summary>
-        /// Validates if the received data is valid DeejNG protocol (pipe-delimited numeric values)
-        /// Accepts:
-        /// - Raw ADC values (0-1023)
-        /// - Normalized floats (0.0-1.0)
-        /// - Inline mute trigger (9999)
-        /// - Button states (10000=OFF, 10001=ON)
-        /// </summary>
-        private bool IsValidDeejNGData(string line)
-        {
-            if (string.IsNullOrWhiteSpace(line))
-                return false;
-
-            var parts = line.Split('|');
-
-            // DeejNG data should have at least one value
-            if (parts.Length == 0)
-                return false;
-
-            // Check if at least the first few values are valid numbers
-            int validCount = 0;
-            int maxCheck = Math.Min(parts.Length, 3); // Check first 3 values
-
-            for (int i = 0; i < maxCheck; i++)
-            {
-                if (float.TryParse(parts[i].Trim(), out float value))
-                {
-                    // Accept four formats:
-                    // 1. Raw ADC values (0-1023 for 10-bit ADC, typical Arduino)
-                    // 2. Normalized float values (0.0-1.0)
-                    // 3. Inline mute trigger value (9999)
-                    // 4. Button states (10000=OFF, 10001=ON)
-                    // Also allow some tolerance for noise/calibration
-                    bool isRawADC = value >= -10 && value <= 1100;  // 0-1023 range with tolerance
-                    bool isNormalized = value >= -0.1f && value <= 1.1f;  // 0.0-1.0 range with tolerance
-                    bool isInlineMute = value >= 9998 && value <= 10000;  // 9999 inline mute trigger with tolerance
-                    bool isButton = value >= 9999.5f && value <= 10001.5f;  // 10000 or 10001 button states
-
-                    if (isRawADC || isNormalized || isInlineMute || isButton)
-                    {
-                        validCount++;
-                    }
-                }
-            }
-
-            // Consider valid if at least half of checked values are valid numbers in range
-            return validCount >= (maxCheck / 2.0);
-        }
-        /// <summary>
         /// Processes a complete serial line, auto-detecting and separating slider and button data.
         /// Sliders: 0-1023 (or 9999 for inline mute)
         /// Buttons: 10000 (OFF) or 10001 (ON)
@@ -489,21 +515,21 @@ namespace DeejNG.Services
         {
             if (string.IsNullOrWhiteSpace(line)) return;
 
-            // Validate protocol if not yet validated
+            // Framing is checked on every line, not only until the protocol is first recognised:
+            // a starved reader lets the buffer overrun, and those damaged lines used to rebuild
+            // the whole slider panel. See SerialFrameValidator and SliderCountStabilizer.
+            if (!SerialFrameValidator.IsPlausible(line))
+            {
+                // Don't process invalid data
+                return;
+            }
+
+            // The first line that looks like deej data proves this port is talking the protocol.
             if (!_isProtocolValidated)
             {
-                if (IsValidDeejNGData(line))
-                {
-                    _isProtocolValidated = true;
+                _isProtocolValidated = true;
 
-                    ProtocolValidated?.Invoke(CurrentPort);
-                }
-                else
-                {
-
-                    // Don't process invalid data
-                    return;
-                }
+                ProtocolValidated?.Invoke(CurrentPort);
             }
 
             // Split the line
@@ -582,13 +608,58 @@ namespace DeejNG.Services
             }
         }
 
-        private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
+        // BytesToRead is a ClearCommError call that takes no lock a reader can be parked
+        // behind, so this loop keeps draining under load - which DataReceived, raised inside
+        // the port's lock on a starved threadpool thread, could not guarantee.
+        private void SerialReaderLoop()
         {
-            if (_serialPort == null || !_serialPort.IsOpen)
+            while (!_readerStop)
             {
-                HandleSerialDisconnection();
-                return;
+                try
+                {
+                    var port = _serialPort;
+                    if (port == null || !port.IsOpen) return;
+
+                    if (port.BytesToRead > 0)
+                        DrainSerialBuffer();
+                    else
+                        Thread.Sleep(ReaderPollMilliseconds);
+                }
+                catch
+                {
+                    // The port was torn down underneath us by a reconnect or a close.
+                    return;
+                }
             }
+        }
+
+        private void ResetStallTracking()
+        {
+            _stallPinnedTicks = 0;
+            _stallPreviousBytes = -1;
+        }
+
+        // Returns true when the byte count has been pinned long enough to cycle the port.
+        private bool TrackStallAndCheckBreaker(int bytesToRead)
+        {
+            var (pinnedTicks, stalled) = SerialStallBreakerPolicy.Advance(
+                _stallPinnedTicks, _stallPreviousBytes, bytesToRead);
+
+            _stallPinnedTicks = pinnedTicks;
+            _stallPreviousBytes = bytesToRead;
+
+            if (stalled)
+            {
+                ResetStallTracking();
+            }
+
+            return stalled;
+        }
+
+        // Runs on the reader thread, and from the watchdog when the reader has stalled.
+        private void DrainSerialBuffer()
+        {
+            if (_serialPort == null || !_serialPort.IsOpen) return;
 
             // Prevent re-entrant entry from the driver
             if (Interlocked.Exchange(ref _reading, 1) == 1)
@@ -619,7 +690,11 @@ namespace DeejNG.Services
                         if (len > 0)
                         {
                             var line = combined.AsSpan(start, len).Trim().ToString();
-                            if (line.Length > 0 && line.Length <= MaxLineLength)
+                            if (_discardFirstLine)
+                            {
+                                _discardFirstLine = false;
+                            }
+                            else if (line.Length > 0 && line.Length <= MaxLineLength)
                             {
                                 ProcessSerialLine(line);
 

@@ -18,6 +18,69 @@
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="/Themes/Styles.xaml" />
             </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+            <Style TargetType="TextBox">
+                <Setter Property="Background" Value="{DynamicResource SurfaceHighlightBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="CaretBrush" Value="{DynamicResource TextPrimaryBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+                <Setter Property="Padding" Value="4,2"/>
+            </Style>
+
+            <!-- Editor for one action (used for both short press and long press) -->
+            <DataTemplate x:Key="ActionBindingTemplate">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <ComboBox ItemsSource="{Binding ActionOptions}"
+                                  DisplayMemberPath="Label"
+                                  SelectedValuePath="Value"
+                                  SelectedValue="{Binding Action, Mode=TwoWay}"
+                                  Style="{StaticResource ModernComboBox}"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0"
+                                    Visibility="{Binding NeedsTargetChannel, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="Channel" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBox Width="50" VerticalContentAlignment="Center"
+                                     Text="{Binding TargetChannelDisplay, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="Target channel (1-based)"
+                                     PreviewTextInput="NumberValidationTextBox"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid Margin="0,6,0,0" Visibility="{Binding IsSendKeys, Converter={StaticResource BoolToVis}}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox VerticalContentAlignment="Center" MinHeight="28"
+                                 Text="{Binding KeyCombo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 PreviewKeyDown="KeyComboBox_PreviewKeyDown"
+                                 ToolTip="e.g. Ctrl+Shift+M, F13, Alt+F4 or a sequence: Ctrl+K, Ctrl+C. Click Record and press the combination to capture it."/>
+                        <Button Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource ModernButton}"
+                                Content="{Binding RecordButtonText}" Click="RecordKeys_Click"/>
+                    </Grid>
+
+                    <Grid Margin="0,6,0,0" Visibility="{Binding IsRunCommand, Converter={StaticResource BoolToVis}}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox VerticalContentAlignment="Center" MinHeight="28"
+                                 Text="{Binding Command, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 ToolTip="Runs via cmd.exe /c, e.g. C:\scripts\scene.bat, powershell -File C:\x.ps1 or start spotify:"/>
+                        <Button Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource ModernButton}"
+                                Content="Browse…" Click="BrowseCommand_Click"/>
+                        <Button Grid.Column="2" Margin="8,0,0,0" Style="{StaticResource ModernButton}"
+                                Content="Test" Click="TestCommand_Click"/>
+                    </Grid>
+                </StackPanel>
+            </DataTemplate>
+
             <shell:WindowChrome x:Key="Chrome" CaptionHeight="0" CornerRadius="8,8,8,8" ResizeBorderThickness="0" GlassFrameThickness="0" UseAeroCaptionButtons="False" />
         </ResourceDictionary>
     </Window.Resources>
@@ -44,92 +107,138 @@
             </Grid>
         </Border>
 
+        <!-- Save/Cancel stay visible below the scrolling list -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="20,10,20,0">
+            <Button Content="Save" Style="{StaticResource ModernButton}" Click="Save_Click" Margin="0,0,10,0"/>
+            <Button Content="Cancel" Style="{StaticResource ModernButton}" Click="Cancel_Click"/>
+        </StackPanel>
+
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <Grid Margin="20">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
+            <StackPanel Margin="20">
+                <TextBlock Text="Physical Buttons (Experimental)" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
+                <Border Style="{StaticResource Card}" Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="Configure physical buttons on your controller"
+                                   Style="{StaticResource SubtitleTextBlock}"
+                                   Margin="0,0,0,8"/>
 
-                <StackPanel Grid.Row="0">
-                    <TextBlock Text="Physical Buttons (Experimental)" Style="{StaticResource TitleTextBlock}" FontSize="18" Margin="0,0,0,16"/>
-                    <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,20">
-                        <StackPanel>
-                            <TextBlock Text="Configure physical buttons on your controller"
-                                       Style="{StaticResource SubtitleTextBlock}"
-                                       Margin="0,0,0,8"/>
+                        <Border Background="{DynamicResource InfoBackgroundBrush}"
+                                BorderBrush="{DynamicResource InfoBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="12"
+                                Margin="0,0,0,16">
+                            <TextBlock TextWrapping="Wrap" Style="{StaticResource SubtitleTextBlock}">
+                                <Run Text="ℹ️ Buttons are auto-detected from your Arduino." FontWeight="SemiBold"/>
+                                <LineBreak/>
+                                <Run Text="Send 10000 (OFF) or 10001 (ON) for each button after your slider values."/>
+                                <LineBreak/>
+                                <Run Text="Example: 512|768|400|10000|10001 (3 sliders + 2 buttons)"/>
+                                <LineBreak/>
+                                <LineBreak/>
+                                <Run Text="Press" FontWeight="SemiBold"/><Run Text=" runs immediately, unless a long press or hold layer is set. Then it runs on release if the button was only tapped."/>
+                                <LineBreak/>
+                                <Run Text="Double press" FontWeight="SemiBold"/><Run Text=" runs when the button is pressed twice quickly. If set, a single press waits for the double-press window before running."/>
+                                <LineBreak/>
+                                <Run Text="Long press" FontWeight="SemiBold"/><Run Text=" runs when the button is held longer than the threshold below."/>
+                                <LineBreak/>
+                                <Run Text="Hold layer" FontWeight="SemiBold"/><Run Text=" sends sliders to other targets while the button is held. A slider only takes over once it actually moves, so volumes never jump. If a layer slider was moved, no press action runs on release."/>
+                            </TextBlock>
+                        </Border>
 
-                            <Border Background="{DynamicResource InfoBackgroundBrush}"
-                                    BorderBrush="{DynamicResource InfoBorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="4"
-                                    Padding="12"
-                                    Margin="0,0,0,16">
-                                <StackPanel>
-                                    <TextBlock TextWrapping="Wrap" Style="{StaticResource SubtitleTextBlock}">
-                                    <Run Text="ℹ️ Buttons are auto-detected from your Arduino." FontWeight="SemiBold"/>
-                                    <LineBreak/>
-                                    <Run Text="Send 10000 (OFF) or 10001 (ON) for each button after your slider values."/>
-                                    <LineBreak/>
-                                    <Run Text="Example: 512|768|400|10000|10001 (3 sliders + 2 buttons)"/>
-                                    </TextBlock>
-                                </StackPanel>
-                            </Border>
-
-                            <ItemsControl x:Name="ButtonMappingsItemsControl" Margin="0,8,0,0">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border BorderBrush="{DynamicResource BorderBrush}"
-                                                BorderThickness="1"
-                                                CornerRadius="4"
-                                                Padding="12"
-                                                Margin="0,0,0,8">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="80"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="100"/>
-                                                </Grid.ColumnDefinitions>
-
-                                                <TextBlock Grid.Column="0"
-                                                           Text="{Binding ButtonIndexDisplay}"
-                                                           Style="{StaticResource LabelTextBlock}"
-                                                           VerticalAlignment="Center"/>
-
-                                                <ComboBox Grid.Column="1"
-                                                          SelectedIndex="{Binding ActionIndex, Mode=TwoWay}"
-                                                          Style="{StaticResource ModernComboBox}"
-                                                          Margin="8,0"
-                                                          SelectionChanged="ButtonAction_SelectionChanged">
-                                                    <ComboBoxItem Content="None"/>
-                                                    <ComboBoxItem Content="Media Play/Pause"/>
-                                                    <ComboBoxItem Content="Media Next"/>
-                                                    <ComboBoxItem Content="Media Previous"/>
-                                                    <ComboBoxItem Content="Media Stop"/>
-                                                    <ComboBoxItem Content="Mute Channel"/>
-                                                    <ComboBoxItem Content="Global Mute"/>
-                                                </ComboBox>
-
-                                                <TextBox Grid.Column="2"
-                                                         Text="{Binding TargetChannelDisplay, Mode=TwoWay}"
-                                                         IsEnabled="{Binding NeedsTargetChannel}"
-                                                         ToolTip="Target channel (1-based)"
-                                                         PreviewTextInput="NumberValidationTextBox"/>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="Long press threshold (ms):" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center"/>
+                            <TextBox x:Name="LongPressThresholdBox" Width="70" Margin="8,0,0,0" VerticalContentAlignment="Center"
+                                     PreviewTextInput="NumberValidationTextBox"/>
+                            <TextBlock Text="Double press window (ms):" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Margin="24,0,0,0"/>
+                            <TextBox x:Name="DoublePressWindowBox" Width="70" Margin="8,0,0,0" VerticalContentAlignment="Center"
+                                     PreviewTextInput="NumberValidationTextBox"/>
                         </StackPanel>
-                    </Border>
-                </StackPanel>
 
-                <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,0">
-                    <Button Content="Save" Style="{StaticResource ModernButton}" Click="Save_Click" Margin="0,0,10,0"/>
-                    <Button Content="Cancel" Style="{StaticResource ModernButton}" Click="Cancel_Click"/>
-                </StackPanel>
-            </Grid>
+                        <ItemsControl x:Name="ButtonMappingsItemsControl" Margin="0,8,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{DynamicResource BorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            Padding="12"
+                                            Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="100"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.ColumnSpan="2"
+                                                       Text="{Binding ButtonIndexDisplay}"
+                                                       Style="{StaticResource LabelTextBlock}"
+                                                       FontWeight="SemiBold"
+                                                       Margin="0,0,0,8"/>
+
+                                            <TextBlock Grid.Row="1" Text="Press" Style="{StaticResource LabelTextBlock}" Margin="0,8,0,0"/>
+                                            <ContentControl Grid.Row="1" Grid.Column="1" Margin="0,0,0,8"
+                                                            Content="{Binding Short}"
+                                                            ContentTemplate="{StaticResource ActionBindingTemplate}"/>
+
+                                            <TextBlock Grid.Row="2" Text="Double press" Style="{StaticResource LabelTextBlock}" Margin="0,8,0,0"/>
+                                            <ContentControl Grid.Row="2" Grid.Column="1" Margin="0,0,0,8"
+                                                            Content="{Binding Double}"
+                                                            ContentTemplate="{StaticResource ActionBindingTemplate}"/>
+
+                                            <TextBlock Grid.Row="3" Text="Long press" Style="{StaticResource LabelTextBlock}" Margin="0,8,0,0"/>
+                                            <ContentControl Grid.Row="3" Grid.Column="1" Margin="0,0,0,8"
+                                                            Content="{Binding Long}"
+                                                            ContentTemplate="{StaticResource ActionBindingTemplate}"/>
+
+                                            <TextBlock Grid.Row="4" Text="Hold layer" Style="{StaticResource LabelTextBlock}" Margin="0,6,0,0"/>
+                                            <StackPanel Grid.Row="4" Grid.Column="1">
+                                                <ItemsControl ItemsSource="{Binding Layers}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid Margin="0,0,0,6">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Text="Slider" Style="{StaticResource LabelTextBlock}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                                <TextBox Grid.Column="1" Width="40" VerticalContentAlignment="Center"
+                                                                         Text="{Binding ChannelDisplay, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                         ToolTip="Slider number (1-based)"
+                                                                         PreviewTextInput="NumberValidationTextBox"/>
+                                                                <TextBlock Grid.Column="2" Margin="10,0" VerticalAlignment="Center"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           Text="{Binding TargetsSummary}"
+                                                                           ToolTip="{Binding TargetsSummary}"
+                                                                           Style="{StaticResource SubtitleTextBlock}"/>
+                                                                <Button Grid.Column="3" Content="Targets…" Style="{StaticResource ModernButton}"
+                                                                        Click="PickLayerTargets_Click"/>
+                                                                <Button Grid.Column="4" Content="✕" Style="{StaticResource IconButton}" Margin="6,0,0,0"
+                                                                        ToolTip="Remove" Click="RemoveLayer_Click"/>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <Button Content="+ Slider override" Style="{StaticResource ModernButton}"
+                                                        HorizontalAlignment="Left" Click="AddLayer_Click"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
         </ScrollViewer>
     </DockPanel>
 </Window>

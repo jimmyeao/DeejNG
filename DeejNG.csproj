@@ -20,6 +20,14 @@
     <None Remove="Square150x150Logo.scale-200.ico" />
   </ItemGroup>
 
+  <!-- The test project lives under this directory and would otherwise be picked up by the
+       default glob below and compiled into the application. -->
+  <ItemGroup>
+    <Compile Remove="DeejNG.Tests/**" />
+    <None Remove="DeejNG.Tests/**" />
+    <Page Remove="DeejNG.Tests/**" />
+  </ItemGroup>
+
   <ItemGroup>
     <Content Include="Square150x150Logo.scale-200.ico">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
