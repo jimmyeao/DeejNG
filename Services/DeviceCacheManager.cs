@@ -38,7 +38,8 @@ namespace DeejNG.Services
 
         #region Public Methods
 
-        public void ApplyInputDeviceVolume(string deviceName, float level, bool isMuted)
+        /// <param name="isMuted">Mute state to apply; null keeps the device's current mute state.</param>
+        public void ApplyInputDeviceVolume(string deviceName, float level, bool? isMuted)
         {
             var key = deviceName.ToLowerInvariant();
             if (_inputBackoffUntil.TryGetValue(key, out var until) && DateTime.Now < until)
@@ -59,7 +60,8 @@ namespace DeejNG.Services
                 {
                     try
                     {
-                        mic.AudioEndpointVolume.Mute = isMuted || level <= VolumeChangeThreshold;
+                        if (isMuted is bool mute)
+                            mic.AudioEndpointVolume.Mute = mute || level <= VolumeChangeThreshold;
                         mic.AudioEndpointVolume.MasterVolumeLevelScalar = level;
                         _lastInputVolume[deviceName] = level;
                     }
@@ -73,7 +75,8 @@ namespace DeejNG.Services
             }
         }
 
-        public void ApplyOutputDeviceVolume(string deviceName, float level, bool isMuted)
+        /// <param name="isMuted">Mute state to apply; null keeps the device's current mute state.</param>
+        public void ApplyOutputDeviceVolume(string deviceName, float level, bool? isMuted)
         {
             var key = deviceName.ToLowerInvariant();
             if (_outputBackoffUntil.TryGetValue(key, out var until) && DateTime.Now < until)
@@ -88,7 +91,8 @@ namespace DeejNG.Services
             {
                 try
                 {
-                    spkr.AudioEndpointVolume.Mute = isMuted;
+                    if (isMuted is bool mute)
+                        spkr.AudioEndpointVolume.Mute = mute;
                     spkr.AudioEndpointVolume.MasterVolumeLevelScalar = level;
                 }
                 catch (Exception ex)

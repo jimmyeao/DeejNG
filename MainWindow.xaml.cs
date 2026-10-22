@@ -138,6 +138,8 @@ namespace DeejNG
 
         private ButtonActionHandler _buttonActionHandler;
 
+        private ButtonGestureController _buttonGestures;
+
         private ObservableCollection<ButtonIndicatorViewModel> _buttonIndicators = new();
 
         private MMDevice _cachedAudioDevice;
@@ -260,6 +262,8 @@ namespace DeejNG
             _serialManager.ButtonStateChanged += HandleButtonPress;
             _serialManager.Connected += () =>
             {
+                // Normal priority, queued before any button event of the new connection
+                Dispatcher.BeginInvoke(ResetButtonGestures);
                 Dispatcher.BeginInvoke(() =>
                 {
                     UpdateConnectionStatus();
@@ -277,6 +281,7 @@ namespace DeejNG
             _serialManager.Disconnected += () =>
             {
                 _allowVolumeApplication = false;
+                Dispatcher.BeginInvoke(ResetButtonGestures);
                 Dispatcher.BeginInvoke(() =>
                 {
                     UpdateConnectionStatus();
@@ -415,6 +420,18 @@ namespace DeejNG
             foreach (var control in _channelControls)
             {
                 foreach (var target in control.AudioTargets)
+                {
+                    if (!target.IsInputDevice && !string.IsNullOrEmpty(target.Name))
+                    {
+                        _tempStringSet.Add(target.Name.ToLowerInvariant());
+                    }
+                }
+            }
+
+            // Apps controlled by a held layer are mapped too, otherwise Unmapped would fight the layer
+            if (_buttonGestures != null)
+            {
+                foreach (var target in _buttonGestures.GetActiveLayerTargets())
                 {
                     if (!target.IsInputDevice && !string.IsNullOrEmpty(target.Name))
                     {
@@ -605,6 +622,8 @@ namespace DeejNG
             // Update button configuration
             _settingsManager.AppSettings.NumberOfButtons = newSettings.NumberOfButtons;
             _settingsManager.AppSettings.ButtonMappings = newSettings.ButtonMappings;
+            _settingsManager.AppSettings.LongPressThresholdMs = newSettings.LongPressThresholdMs;
+            _settingsManager.AppSettings.DoublePressWindowMs = newSettings.DoublePressWindowMs;
 
             // BUGFIX: Update baud rate from SettingsWindow
             // This ensures baud rate changes from the UI are persisted
@@ -817,7 +836,11 @@ namespace DeejNG
             }
         }
 
-        private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level)
+        private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level) =>
+            ApplyVolumeToTargets(ctrl, targets, level, ctrl.IsMuted);
+
+        /// <param name="isMuted">Mute state to apply; null keeps each target's current mute state.</param>
+        private void ApplyVolumeToTargets(ChannelControl ctrl, List<AudioTarget> targets, float level, bool? isMuted)
         {
             if (!_allowVolumeApplication) return;
 
@@ -827,11 +850,11 @@ namespace DeejNG
                 {
                     if (target.IsInputDevice)
                     {
-                        _deviceManager.ApplyInputDeviceVolume(target.Name, level, ctrl.IsMuted);
+                        _deviceManager.ApplyInputDeviceVolume(target.Name, level, isMuted);
                     }
                     else if (target.IsOutputDevice)
                     {
-                        _deviceManager.ApplyOutputDeviceVolume(target.Name, level, ctrl.IsMuted);
+                        _deviceManager.ApplyOutputDeviceVolume(target.Name, level, isMuted);
                     }
                     else if (string.Equals(target.Name, "unmapped", StringComparison.OrdinalIgnoreCase))
                     {
@@ -855,16 +878,16 @@ namespace DeejNG
                                 }
                             }
                             var excludedApps = _settingsManager.AppSettings?.ExcludedFromUnmapped;
-                            _audioService.ApplyVolumeToUnmappedApplications(level, ctrl.IsMuted, mappedApps, excludedApps);
+                            _audioService.ApplyVolumeToUnmappedApplications(level, isMuted, mappedApps, excludedApps);
                         }
                     }
                     else if (string.Equals(target.Name, "current", StringComparison.OrdinalIgnoreCase))
                     {
-                        _audioService.ApplyVolumeToCurrent(level, ctrl.IsMuted);
+                        _audioService.ApplyVolumeToCurrent(level, isMuted);
                     }
                     else
                     {
-                        _audioService.ApplyVolumeToTarget(target.Name, level, ctrl.IsMuted);
+                        _audioService.ApplyVolumeToTarget(target.Name, level, isMuted);
                     }
                 }
                 catch (Exception ex)
@@ -976,22 +999,10 @@ namespace DeejNG
                     var mapping = settings.ButtonMappings.FirstOrDefault(m => m.ButtonIndex == viewModel.ButtonIndex);
                     if (mapping == null || mapping.Action == ButtonAction.None) return;
 
-                    // Ensure button handler is initialized
-                    if (_buttonActionHandler == null)
-                    {
-                        _buttonActionHandler = new ButtonActionHandler(_channelControls);
-                    }
+                    EnsureButtonHandlers();
 
-                    // Determine button type
-                    bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
-                                       mapping.Action == ButtonAction.GlobalMute;
-                    bool isPlayPauseAction = mapping.Action == ButtonAction.MediaPlayPause;
-                    bool isMomentaryAction = mapping.Action == ButtonAction.MediaNext ||
-                                            mapping.Action == ButtonAction.MediaPrevious ||
-                                            mapping.Action == ButtonAction.MediaStop;
-
-                    // For momentary buttons, briefly show pressed state
-                    if (isMomentaryAction)
+                    // For non-latched buttons, briefly show pressed state
+                    if (!IsLatchedIndicator(mapping))
                     {
                         viewModel.IsPressed = true;
 
@@ -1005,39 +1016,13 @@ namespace DeejNG
                         });
                     }
 
-
-
-                    // Execute the action
-                    _buttonActionHandler.ExecuteAction(mapping);
-
-                    // Update indicator for latched buttons
-                    if (isMuteAction)
-                    {
-                        bool muteState = false;
-
-                        if (mapping.Action == ButtonAction.MuteChannel &&
-                            mapping.TargetChannelIndex >= 0 &&
-                            mapping.TargetChannelIndex < _channelControls.Count)
-                        {
-                            muteState = _channelControls[mapping.TargetChannelIndex].IsMuted;
-                        }
-                        else if (mapping.Action == ButtonAction.GlobalMute)
-                        {
-                            muteState = _channelControls.Any(c => c.IsMuted);
-                        }
-
-                        viewModel.IsPressed = muteState;
-                    }
-                    else if (isPlayPauseAction)
-                    {
-                        _playPauseState = !_playPauseState;
-                        viewModel.IsPressed = _playPauseState;
-                    }
+                    // Clicking the indicator always runs the short-press action
+                    ExecuteButtonBinding(mapping, mapping);
                 }
             }
             catch (Exception ex)
             {
-
+                Debug.WriteLine($"[Button] Indicator click failed: {ex.Message}");
             }
         }
 
@@ -1161,11 +1146,8 @@ namespace DeejNG
                 // Buttons are now auto-detected from serial protocol (10000/10001 values)
                 // No need to configure serial manager - it auto-detects
 
-                // Initialize button handler lazily if not yet created
-                if (_buttonActionHandler == null)
-                {
-                    _buttonActionHandler = new ButtonActionHandler(_channelControls);
-                }
+                EnsureButtonHandlers();
+                _buttonGestures.Reset();
 
                 // Update button indicators UI
                 UpdateButtonIndicators();
@@ -1563,37 +1545,67 @@ namespace DeejNG
                 ButtonAction.MuteChannel => "🔇",
                 ButtonAction.GlobalMute => "🔕",
                 ButtonAction.ToggleInputOutput => "🔄",
+                ButtonAction.SendKeys => "⌨",
+                ButtonAction.RunCommand => "⚙",
                 _ => "🔘"
             };
         }
 
         private string GetButtonActionText(ButtonMapping mapping)
         {
-            if (mapping.Action == ButtonAction.None)
-                return "Not assigned";
+            if (mapping.IsAssigned)
+                return GetBindingText(mapping);
+            if (mapping.HasLongPress)
+                return "Hold: " + GetBindingText(mapping.LongPress);
+            if (mapping.HasDoublePress)
+                return "2x: " + GetBindingText(mapping.DoublePress);
+            if (mapping.HasHoldLayer)
+                return "Layer";
+            return "Not assigned";
+        }
 
-            string actionText = mapping.Action switch
+        private static string GetBindingText(ButtonActionBinding binding)
+        {
+            return binding.Action switch
             {
+                ButtonAction.None => "Not assigned",
                 ButtonAction.MediaPlayPause => "Play/Pause",
                 ButtonAction.MediaNext => "Next Track",
                 ButtonAction.MediaPrevious => "Previous Track",
                 ButtonAction.MediaStop => "Stop",
-                ButtonAction.MuteChannel => $"Mute Ch{mapping.TargetChannelIndex + 1}",
+                ButtonAction.MuteChannel => $"Mute Ch{binding.TargetChannelIndex + 1}",
                 ButtonAction.GlobalMute => "Global Mute",
                 ButtonAction.ToggleInputOutput => "Toggle I/O",
-                _ => mapping.Action.ToString()
+                ButtonAction.SendKeys => string.IsNullOrWhiteSpace(binding.KeyCombo) ? "Keys" : binding.KeyCombo,
+                ButtonAction.RunCommand => "Run",
+                _ => binding.Action.ToString()
             };
-
-            return actionText;
         }
 
         private string GetButtonActionTooltip(ButtonMapping mapping)
         {
-            if (mapping.Action == ButtonAction.None)
+            if (!mapping.HasAnything)
                 return "No action assigned to this button";
 
-            return $"Button {mapping.ButtonIndex + 1}: {GetButtonActionText(mapping)}";
+            var lines = new List<string> { $"Button {mapping.ButtonIndex + 1}" };
+
+            if (mapping.IsAssigned)
+                lines.Add((mapping.HasLongPress || mapping.HasDoublePress || mapping.HasHoldLayer ? "Press: " : "") + GetBindingTooltip(mapping));
+            if (mapping.HasDoublePress)
+                lines.Add("Double press: " + GetBindingTooltip(mapping.DoublePress));
+            if (mapping.HasLongPress)
+                lines.Add("Hold: " + GetBindingTooltip(mapping.LongPress));
+            if (mapping.HasHoldLayer)
+            {
+                foreach (var layer in mapping.HoldLayer.Where(l => l.Targets?.Count > 0))
+                    lines.Add($"While held, Ch{layer.ChannelIndex + 1} → {string.Join(", ", layer.Targets.Select(t => t.Name))}");
+            }
+
+            return string.Join(Environment.NewLine, lines);
         }
+
+        private static string GetBindingTooltip(ButtonActionBinding binding) =>
+            binding.Action == ButtonAction.RunCommand ? $"Run: {binding.Command}" : GetBindingText(binding);
 
         private float GetUnmappedApplicationsPeakLevelOptimized(HashSet<string> mappedApplications, SessionCollection sessions)
         {
@@ -1643,103 +1655,99 @@ namespace DeejNG
 
         /// <summary>
         /// Handles button press events from the serial manager.
-        /// OPTIMIZATION: Uses single dispatcher call to reduce handle accumulation over time.
+        /// Gesture detection (short/long press, hold layers) is delegated to ButtonGestureController,
+        /// which calls back into ExecuteButtonBinding.
         /// </summary>
         private void HandleButtonPress(int buttonIndex, bool isPressed)
         {
-
             try
             {
                 var settings = _settingsManager.AppSettings;
                 if (settings == null || settings.ButtonMappings == null) return;
 
-                // Find the mapping for this button
                 var mapping = settings.ButtonMappings.FirstOrDefault(m => m.ButtonIndex == buttonIndex);
                 if (mapping == null) return;
 
-                // Determine button type:
-                // - Mute actions: Latched (show mute state)
-                // - Play/Pause: Latched (show play state toggle)
-                // - Next/Prev/Stop: Momentary (show press state only)
-                bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
-                                   mapping.Action == ButtonAction.GlobalMute;
-                bool isPlayPauseAction = mapping.Action == ButtonAction.MediaPlayPause;
-                bool isMomentaryAction = mapping.Action == ButtonAction.MediaNext ||
-                                        mapping.Action == ButtonAction.MediaPrevious ||
-                                        mapping.Action == ButtonAction.MediaStop;
-
-                // Ensure button handler is initialized (do this outside dispatcher to avoid repeated checks)
-                if (_buttonActionHandler == null)
-                {
-                    _buttonActionHandler = new ButtonActionHandler(_channelControls);
-                }
-
-                // OPTIMIZATION: Single dispatcher call handles all UI updates and action execution
-                // This reduces handle accumulation from repeated BeginInvoke calls
+                // Single dispatcher call handles all UI updates and action execution
                 Dispatcher.BeginInvoke(() =>
                 {
+                    EnsureButtonHandlers();
+
+                    // Non-latched indicators mirror the physical button state
                     var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == buttonIndex);
-
-                    // For momentary buttons: always update press state (for both press and release)
-                    if (isMomentaryAction && indicator != null)
+                    if (indicator != null && !IsLatchedIndicator(mapping) && indicator.IsPressed != isPressed)
                     {
-                        if (indicator.IsPressed != isPressed)
-                        {
-                            indicator.IsPressed = isPressed;
-                        }
+                        indicator.IsPressed = isPressed;
                     }
 
-                    // Only process actions on button press (not release)
-                    if (!isPressed) return;
-
-                    if (mapping.Action == ButtonAction.None)
-                    {
-
-                        return;
-                    }
-
-                    // Execute the action
-                    _buttonActionHandler.ExecuteAction(mapping);
-
-                    // Update indicator based on button type
-                    if (indicator != null)
-                    {
-                        // For mute actions, show the actual mute state
-                        if (isMuteAction)
-                        {
-                            bool muteState = false;
-
-                            if (mapping.Action == ButtonAction.MuteChannel &&
-                                mapping.TargetChannelIndex >= 0 &&
-                                mapping.TargetChannelIndex < _channelControls.Count)
-                            {
-                                muteState = _channelControls[mapping.TargetChannelIndex].IsMuted;
-                            }
-                            else if (mapping.Action == ButtonAction.GlobalMute)
-                            {
-                                // Global mute - check if any channel is muted
-                                muteState = _channelControls.Any(c => c.IsMuted);
-                            }
-
-                            if (indicator.IsPressed != muteState)
-                            {
-                                indicator.IsPressed = muteState;
-
-                            }
-                        }
-                        // For play/pause, toggle the state
-                        else if (isPlayPauseAction)
-                        {
-                            _playPauseState = !_playPauseState;
-                            indicator.IsPressed = _playPauseState;
-
-                        }
-                    }
+                    _buttonGestures.OnButtonChanged(mapping, isPressed);
                 });
             }
             catch (Exception ex)
             {
+                Debug.WriteLine($"[Button] HandleButtonPress failed: {ex.Message}");
+            }
+        }
 
+        /// <summary>
+        /// Cancels held layers and pending gestures and clears pressed indicators,
+        /// e.g. when the serial port disconnects or is reopened. Must be called on the UI thread.
+        /// </summary>
+        private void ResetButtonGestures()
+        {
+            _buttonGestures?.Reset();
+
+            var mappings = _settingsManager.AppSettings?.ButtonMappings;
+            foreach (var indicator in _buttonIndicators)
+            {
+                var mapping = mappings?.FirstOrDefault(m => m.ButtonIndex == indicator.ButtonIndex);
+                if (mapping != null && !IsLatchedIndicator(mapping))
+                    indicator.IsPressed = false;
+            }
+        }
+
+        /// <summary>
+        /// Creates the button action handler and gesture controller on first use.
+        /// </summary>
+        private void EnsureButtonHandlers()
+        {
+            _buttonActionHandler ??= new ButtonActionHandler(_channelControls);
+            _buttonGestures ??= new ButtonGestureController(
+                () => _settingsManager.AppSettings?.LongPressThresholdMs ?? 500,
+                () => _settingsManager.AppSettings?.DoublePressWindowMs ?? 300,
+                ExecuteButtonBinding);
+        }
+
+        /// <summary>
+        /// Latched indicators show a state (mute / play) instead of the physical press.
+        /// Buttons with a hold layer always show the physical press so the active layer is visible.
+        /// </summary>
+        private static bool IsLatchedIndicator(ButtonMapping mapping) =>
+            !mapping.HasHoldLayer &&
+            mapping.Action is ButtonAction.MuteChannel or ButtonAction.GlobalMute or ButtonAction.MediaPlayPause;
+
+        /// <summary>
+        /// Executes a short- or long-press binding of a button and refreshes latched indicators.
+        /// Must be called on the UI thread.
+        /// </summary>
+        private void ExecuteButtonBinding(ButtonMapping mapping, ButtonActionBinding binding)
+        {
+            EnsureButtonHandlers();
+            _buttonActionHandler.ExecuteAction(binding);
+
+            if (binding.Action is ButtonAction.MuteChannel or ButtonAction.GlobalMute)
+            {
+                UpdateMuteButtonIndicatorsCore();
+            }
+            else if (binding.Action == ButtonAction.MediaPlayPause)
+            {
+                _playPauseState = !_playPauseState;
+
+                var indicator = _buttonIndicators.FirstOrDefault(b => b.ButtonIndex == mapping.ButtonIndex);
+                if (indicator != null && IsLatchedIndicator(mapping))
+                {
+                    indicator.IsPressed = _playPauseState;
+                }
             }
         }
 
@@ -1817,8 +1825,6 @@ namespace DeejNG
                             var ctrl = _channelControls[i];
                             var targets = ctrl.AudioTargets;
 
-                            if (targets.Count == 0) continue;
-
                             // Check for inline mute trigger (9999)
                             if (rawValue >= INLINE_MUTE_TRIGGER - 0.5f && rawValue <= INLINE_MUTE_TRIGGER + 0.5f)
                             {
@@ -1856,6 +1862,23 @@ namespace DeejNG
 
                             if (_useExponentialVolume)
                                 level = (MathF.Pow(_exponentialVolumeFactor, level) / (_exponentialVolumeFactor - 1)) - (1 / (_exponentialVolumeFactor - 1));
+
+                            // Hold layers: a held button may redirect this slider to other targets.
+                            // After any routing switch the value is ignored until the slider actually moves.
+                            if (_buttonGestures != null && _allowVolumeApplication)
+                            {
+                                if (!_buttonGestures.RouteSliderValue(i, level, out var layerTargets))
+                                    continue;
+
+                                if (layerTargets != null)
+                                {
+                                    // The layer has no mute of its own: leave each destination's mute state alone
+                                    ApplyVolumeToTargets(ctrl, layerTargets, level, isMuted: null);
+                                    continue;
+                                }
+                            }
+
+                            if (targets.Count == 0) continue;
 
                             float currentVolume = ctrl.CurrentVolume;
                             if (Math.Abs(currentVolume - level) < 0.01f) continue;
@@ -4057,12 +4080,12 @@ namespace DeejNG
                 // Show indicators for all configured button mappings
                 if (settings?.ButtonMappings != null && settings.ButtonMappings.Count > 0)
                 {
-                    foreach (var mapping in settings.ButtonMappings.OrderBy(m => m.ButtonIndex))
+                    foreach (var mapping in settings.ButtonMappings.Where(m => m.HasAnything).OrderBy(m => m.ButtonIndex))
                     {
                         // For mute buttons, initialize indicator to show current mute state
                         bool initialState = false;
-                        bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
-                                           mapping.Action == ButtonAction.GlobalMute;
+                        bool isMuteAction = IsLatchedIndicator(mapping) &&
+                                            mapping.Action is ButtonAction.MuteChannel or ButtonAction.GlobalMute;
 
                         if (isMuteAction)
                         {
@@ -4083,7 +4106,7 @@ namespace DeejNG
                             ButtonIndex = mapping.ButtonIndex,
                             Action = mapping.Action,
                             ActionText = GetButtonActionText(mapping),
-                            Icon = GetButtonActionIcon(mapping.Action),
+                            Icon = GetButtonActionIcon(mapping.IsAssigned ? mapping.Action : mapping.HasLongPress ? mapping.LongPress.Action : mapping.DoublePress?.Action ?? ButtonAction.None),
                             ToolTip = GetButtonActionTooltip(mapping),
                             IsPressed = initialState
                         };
@@ -4368,8 +4391,8 @@ namespace DeejNG
 
                 foreach (var mapping in settings.ButtonMappings)
                 {
-                    bool isMuteAction = mapping.Action == ButtonAction.MuteChannel ||
-                                       mapping.Action == ButtonAction.GlobalMute;
+                    bool isMuteAction = IsLatchedIndicator(mapping) &&
+                                        mapping.Action is ButtonAction.MuteChannel or ButtonAction.GlobalMute;
 
                     if (!isMuteAction) continue;
 
