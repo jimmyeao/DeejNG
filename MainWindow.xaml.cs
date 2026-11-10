@@ -180,6 +180,11 @@ namespace DeejNG
         private bool _playPauseState = false;
 
         private Dictionary<string, IAudioSessionEventsHandler> _registeredHandlers = new();
+        private readonly Dictionary<string, AudioSessionControl> _registeredHandlerSessions = new();
+
+        // Newest serial slider frame not yet applied, and whether a UI update for it is queued.
+        private string[]? _pendingSliderFrame;
+        private int _sliderFrameQueued;
 
         private int _sessionCacheHitCount = 0;
 
@@ -502,12 +507,8 @@ namespace DeejNG
         {
             try
             {
-                // Clean up the handler registration
-                if (_registeredHandlers.TryGetValue(targetName, out var handler))
-                {
-                    _registeredHandlers.Remove(targetName);
-
-                }
+                // The session is gone, so only drop our references
+                RemoveSessionHandler(targetName, unregister: false);
             }
             catch (Exception ex)
             {
@@ -720,8 +721,7 @@ namespace DeejNG
             {
                 try
                 {
-                    _registeredHandlers.Remove(target);
-
+                    RemoveSessionHandler(target, unregister: true);
                 }
                 catch (Exception ex)
                 {
@@ -1050,8 +1050,7 @@ namespace DeejNG
 
                 foreach (var target in handlersToRemove)
                 {
-                    _registeredHandlers.Remove(target);
-
+                    RemoveSessionHandler(target, unregister: true);
                 }
             }
             catch (Exception ex)
@@ -1475,12 +1474,8 @@ namespace DeejNG
 
                 control.SessionDisconnected += (sender, target) =>
                 {
-
-                    if (_registeredHandlers.TryGetValue(target, out var handler))
-                    {
-                        _registeredHandlers.Remove(target);
-
-                    }
+                    // The session is gone, so only drop our references
+                    RemoveSessionHandler(target, unregister: false);
                 };
 
                 _channelControls.Add(control);
@@ -1763,12 +1758,24 @@ namespace DeejNG
                     return;
                 }
 
-                string[] parts = data.Split('|');
-                if (parts.Length == 0) return;
+                string[] frame = data.Split('|');
+                if (frame.Length == 0) return;
+
+                // Keep only the newest frame and queue at most one UI update. Each frame holds every
+                // slider's absolute position, so skipping older ones loses nothing. Queueing every
+                // frame (about 80 a second) builds an ever-growing backlog when volume calls are
+                // slow, and the sliders then lag or keep moving long after the hardware stopped.
+                Interlocked.Exchange(ref _pendingSliderFrame, frame);
+                if (Interlocked.Exchange(ref _sliderFrameQueued, 1) == 1) return;
 
                 // REVERT: Use normal priority for responsive UI
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
+                    // Clear the flag before taking the frame, so a frame that arrives meanwhile queues a new update
+                    Interlocked.Exchange(ref _sliderFrameQueued, 0);
+                    var parts = Interlocked.Exchange(ref _pendingSliderFrame, null);
+                    if (parts == null) return;
+
                     try
                     {
                         if (SliderLayoutReconciler.IsRebuildWarranted(_channelControls.Count, parts.Length))
@@ -3829,6 +3836,29 @@ namespace DeejNG
             _timerCoordinator.StartSessionCache();
         }
 
+        /// <summary>
+        /// Forgets a target's session event handler. With unregister, also stops Windows from
+        /// notifying it; skip that when the session is already gone (calling it from inside a
+        /// session callback can deadlock).
+        /// </summary>
+        private void RemoveSessionHandler(string target, bool unregister)
+        {
+            _registeredHandlers.Remove(target, out var handler);
+            if (!_registeredHandlerSessions.Remove(target, out var session) || !unregister || handler == null)
+            {
+                return;
+            }
+
+            try
+            {
+                session.UnRegisterEventClient(handler);
+            }
+            catch (Exception)
+            {
+                // The session may have expired in the meantime; nothing left to unregister
+            }
+        }
+
         private void SyncMuteStates()
         {
             if (!_allowVolumeApplication)
@@ -3842,21 +3872,12 @@ namespace DeejNG
                 var audioDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var sessions = audioDevice.AudioSessionManager.Sessions;
 
-                // Clean up existing handlers
-                var handlersToRemove = new List<string>(_registeredHandlers.Keys);
-                foreach (var target in handlersToRemove)
+                // Clean up existing handlers. They must be unregistered from Windows too, or every
+                // volume change keeps notifying all of the old ones.
+                foreach (var target in _registeredHandlers.Keys.ToList())
                 {
-                    try
-                    {
-                        _registeredHandlers.Remove(target);
-
-                    }
-                    catch (Exception ex)
-                    {
-
-                    }
+                    RemoveSessionHandler(target, unregister: true);
                 }
-                _registeredHandlers.Clear();
 
                 var allMappedApps = GetAllMappedApplications();
                 var processDict = new Dictionary<int, string>();
@@ -3915,6 +3936,7 @@ namespace DeejNG
                             var handler = new DecoupledAudioSessionEventsHandler(this, targetName);
                             matchedSession.RegisterEventClient(handler);
                             _registeredHandlers[targetName] = handler;
+                            _registeredHandlerSessions[targetName] = matchedSession;
 
                         }
                         catch (Exception ex)
@@ -4553,9 +4575,12 @@ namespace DeejNG
             public void OnIconPathChanged(string iconPath)
             { }
 
+            // These run on a Windows Audio notification thread. Queue the work instead of waiting
+            // for the UI thread: a blocked callback holds up Audiosrv's notification delivery while
+            // the UI thread itself may be waiting on a volume call into Audiosrv.
             public void OnSessionDisconnected(AudioSessionDisconnectReason disconnectReason)
             {
-                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                 {
 
                     _mainWindow.HandleSessionDisconnected(_targetName);
@@ -4564,7 +4589,7 @@ namespace DeejNG
 
             public void OnSimpleVolumeChanged(float volume, bool mute)
             {
-                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     var control = _mainWindow.FindControlForTarget(_targetName);
                     control?.SetMuted(mute, applyToAudio: false);
@@ -4575,7 +4600,7 @@ namespace DeejNG
             {
                 if (state == AudioSessionState.AudioSessionStateExpired)
                 {
-                    System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                    System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                     {
                         var control = _mainWindow.FindControlForTarget(_targetName);
                         control?.HandleSessionExpired();
@@ -4585,7 +4610,7 @@ namespace DeejNG
 
             public void OnVolumeChanged(float volume, bool mute)
             {
-                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     var control = _mainWindow.FindControlForTarget(_targetName);
                     control?.SetMuted(mute, applyToAudio: false);
